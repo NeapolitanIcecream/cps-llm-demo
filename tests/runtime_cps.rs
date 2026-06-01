@@ -7,7 +7,7 @@ use cps_llm_demo::domain::{
 };
 use cps_llm_demo::effects::{Continuation, EffectFrame, ThinkDecision};
 use cps_llm_demo::models::{StrongModel, WeakModel};
-use cps_llm_demo::runtime::{Runtime, deterministic_prefilter};
+use cps_llm_demo::runtime::{CapturePolicy, Runtime, deterministic_prefilter};
 use cps_llm_demo::trace::TraceCollector;
 
 struct StaticWeak {
@@ -18,6 +18,33 @@ struct StaticWeak {
 impl WeakModel for StaticWeak {
     async fn classify_message(&self, _event: &MessageEvent) -> Result<WeakIntentGuess> {
         self.result.clone().map_err(|message| anyhow!(message))
+    }
+}
+
+#[derive(Clone)]
+struct CountingWeak {
+    result: WeakIntentGuess,
+    calls: Arc<Mutex<Vec<MessageEvent>>>,
+}
+
+impl CountingWeak {
+    fn new(result: WeakIntentGuess) -> Self {
+        Self {
+            result,
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.lock().unwrap().len()
+    }
+}
+
+#[async_trait]
+impl WeakModel for CountingWeak {
+    async fn classify_message(&self, event: &MessageEvent) -> Result<WeakIntentGuess> {
+        self.calls.lock().unwrap().push(event.clone());
+        Ok(self.result.clone())
     }
 }
 
@@ -54,84 +81,80 @@ fn continuation_is_serializable_data() {
 }
 
 #[test]
-fn verification_code_is_deterministic_ignore() {
+fn empty_message_is_deterministic_ignore() {
+    let event = MessageEvent {
+        event_id: "m0".to_owned(),
+        text: "   ".to_owned(),
+    };
+
+    let draft = deterministic_prefilter(&event).unwrap();
+    assert_eq!(draft.source, DecisionSource::DeterministicCode);
+    assert_eq!(draft.kind, IntentKind::Ignore);
+}
+
+#[test]
+fn semantic_messages_are_not_deterministically_prefiltered() {
     for text in [
         "验证码 839201，五分钟内有效",
         "Your OTP is 839201",
         "Use OTP839201 to sign in",
         "Your verification code is 839201",
-        "Use 839201 as your verification code",
-        "Enter the verification code to sign in",
+        "verification code UX review",
+        "Schedule unsubscribe flow review Friday 3pm",
+        "hotpot dinner",
+        "周五下午 3 点开产品评审会",
+        "明天 10 点前把新版 proposal 发我一下",
+        "你看看这个方向是不是可以继续推进？",
     ] {
         let event = MessageEvent {
-            event_id: "m3".to_owned(),
+            event_id: "case".to_owned(),
             text: text.to_owned(),
         };
 
-        let draft = deterministic_prefilter(&event).unwrap();
-        assert_eq!(draft.source, DecisionSource::DeterministicCode);
-        assert_eq!(draft.kind, IntentKind::Ignore);
+        assert!(
+            deterministic_prefilter(&event).is_none(),
+            "message should reach weak model, but was prefiltered: {text}"
+        );
     }
 }
 
-#[test]
-fn embedded_otp_word_is_not_deterministic_ignore() {
-    let event = MessageEvent {
-        event_id: "m7".to_owned(),
-        text: "hotpot dinner Friday 7pm".to_owned(),
-    };
-
-    assert!(deterministic_prefilter(&event).is_none());
-}
-
-#[test]
-fn verification_code_work_item_is_not_deterministic_ignore() {
-    let event = MessageEvent {
-        event_id: "m9".to_owned(),
-        text: "Schedule review of verification code UX Friday 3pm".to_owned(),
-    };
-
-    assert!(deterministic_prefilter(&event).is_none());
-}
-
 #[tokio::test]
-async fn cps_runtime_captures_and_resumes_for_guarded_message() {
+async fn always_after_weak_policy_captures_without_reading_message_text() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let trace = TraceCollector::default();
     let runtime = Runtime::new(
-        StaticWeak {
-            result: Ok(WeakIntentGuess {
-                kind: IntentKind::DraftReply,
-                title: Some("回复 proposal 请求".to_owned()),
-                datetime_hint: None,
-                confidence: 0.99,
-                rationale: "simple".to_owned(),
-            }),
-        },
+        CountingWeak::new(WeakIntentGuess {
+            kind: IntentKind::CreateCalendarEvent,
+            title: Some("some event".to_owned()),
+            datetime_hint: Some("tomorrow".to_owned()),
+            confidence: 0.99,
+            rationale: "high confidence".to_owned(),
+        }),
         RecordingStrong {
             decision: Ok(ThinkDecision::Value(ResolvedIntent {
-                kind: IntentKind::CreateTask,
-                title: "发送新版 proposal".to_owned(),
-                datetime_hint: Some("明天 10 点前".to_owned()),
-                confidence: 0.88,
+                kind: IntentKind::CreateCalendarEvent,
+                title: "confirmed by strong".to_owned(),
+                datetime_hint: Some("tomorrow".to_owned()),
+                confidence: 0.99,
                 source: DecisionSource::StrongThink,
             })),
             calls: calls.clone(),
         },
         0.75,
+        CapturePolicy::AlwaysAfterWeak,
         trace.clone(),
     );
 
     let draft = runtime
         .run_one(MessageEvent {
             event_id: "m1".to_owned(),
-            text: "明天 10 点前把新版 proposal 发我一下".to_owned(),
+            text: "arbitrary text with no special marker".to_owned(),
         })
         .await
         .unwrap();
 
     assert_eq!(draft.source, DecisionSource::StrongThink);
-    assert_eq!(draft.kind, IntentKind::CreateTask);
+    assert_eq!(draft.kind, IntentKind::CreateCalendarEvent);
     assert_eq!(calls.lock().unwrap().len(), 1);
 
     let events: Vec<_> = trace.events().into_iter().map(|item| item.event).collect();
@@ -158,6 +181,7 @@ async fn weak_only_path_does_not_call_strong() {
             calls: calls.clone(),
         },
         0.75,
+        CapturePolicy::ConfidenceOnly,
         TraceCollector::default(),
     );
 
@@ -172,6 +196,47 @@ async fn weak_only_path_does_not_call_strong() {
     assert_eq!(draft.source, DecisionSource::WeakModel);
     assert_eq!(draft.kind, IntentKind::CreateCalendarEvent);
     assert!(calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn every_non_empty_message_reaches_weak_model_first() {
+    let weak = CountingWeak::new(WeakIntentGuess {
+        kind: IntentKind::Ignore,
+        title: Some("model decided ignore".to_owned()),
+        datetime_hint: None,
+        confidence: 0.90,
+        rationale: "semantic classification by weak model".to_owned(),
+    });
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let runtime = Runtime::new(
+        weak.clone(),
+        RecordingStrong {
+            decision: Err("should not be called".to_owned()),
+            calls,
+        },
+        0.75,
+        CapturePolicy::ConfidenceOnly,
+        TraceCollector::default(),
+    );
+
+    let messages = [
+        "验证码 839201，五分钟内有效",
+        "verification code UX review",
+        "unsubscribe flow review",
+        "周五下午 3 点开产品评审会",
+    ];
+
+    for (index, text) in messages.iter().enumerate() {
+        let _ = runtime
+            .run_one(MessageEvent {
+                event_id: format!("m{index}"),
+                text: text.to_string(),
+            })
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(weak.call_count(), messages.len());
 }
 
 #[tokio::test]
@@ -198,6 +263,7 @@ async fn out_of_range_weak_confidence_captures_continuation() {
             calls: calls.clone(),
         },
         0.75,
+        CapturePolicy::ConfidenceOnly,
         TraceCollector::default(),
     );
 
@@ -233,6 +299,7 @@ async fn weak_error_becomes_think_effect() {
             calls: calls.clone(),
         },
         0.75,
+        CapturePolicy::ConfidenceOnly,
         TraceCollector::default(),
     );
 
@@ -277,6 +344,7 @@ async fn invalid_weak_contract_captures_continuation() {
             calls: calls.clone(),
         },
         0.75,
+        CapturePolicy::ConfidenceOnly,
         TraceCollector::default(),
     );
 
@@ -311,6 +379,7 @@ async fn strong_error_returns_user_fallback() {
             calls: Arc::new(Mutex::new(Vec::new())),
         },
         0.75,
+        CapturePolicy::ConfidenceOnly,
         TraceCollector::default(),
     );
 

@@ -8,6 +8,12 @@ use crate::effects::{
 use crate::models::{StrongModel, WeakModel};
 use crate::trace::TraceCollector;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapturePolicy {
+    ConfidenceOnly,
+    AlwaysAfterWeak,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
     Done(ActionDraft),
@@ -18,6 +24,7 @@ pub struct Runtime<W, S> {
     pub weak: W,
     pub strong: S,
     pub threshold: f32,
+    pub capture_policy: CapturePolicy,
     pub trace: TraceCollector,
 }
 
@@ -26,11 +33,18 @@ where
     W: WeakModel,
     S: StrongModel,
 {
-    pub fn new(weak: W, strong: S, threshold: f32, trace: TraceCollector) -> Self {
+    pub fn new(
+        weak: W,
+        strong: S,
+        threshold: f32,
+        capture_policy: CapturePolicy,
+        trace: TraceCollector,
+    ) -> Self {
         Self {
             weak,
             strong,
             threshold,
+            capture_policy,
             trace,
         }
     }
@@ -93,7 +107,7 @@ where
                     json!({ "kind": weak_guess.kind, "confidence": weak_guess.confidence }),
                 );
 
-                if let Some(reason) = self.capture_reason(&event, &weak_guess) {
+                if let Some(reason) = self.capture_reason(&weak_guess) {
                     self.trace.emit(
                         "capture_continuation",
                         &event.event_id,
@@ -130,11 +144,7 @@ where
         }
     }
 
-    fn capture_reason(
-        &self,
-        event: &MessageEvent,
-        guess: &WeakIntentGuess,
-    ) -> Option<&'static str> {
+    fn capture_reason(&self, guess: &WeakIntentGuess) -> Option<&'static str> {
         if !is_probability(guess.confidence)
             || !is_probability(self.threshold)
             || guess.confidence < self.threshold
@@ -156,16 +166,23 @@ where
             return Some("invalid_weak_contract");
         }
 
-        let text = event.text.to_lowercase();
-        let force_think_markers = ["proposal", "方向", "推进"];
-        if force_think_markers
-            .iter()
-            .any(|marker| text.contains(marker))
-        {
-            return Some("runtime_guard");
+        if self.should_capture(guess) {
+            return Some("capture_policy");
         }
 
         None
+    }
+
+    fn should_capture(&self, guess: &WeakIntentGuess) -> bool {
+        match self.capture_policy {
+            CapturePolicy::AlwaysAfterWeak => true,
+            CapturePolicy::ConfidenceOnly => {
+                !is_probability(guess.confidence)
+                    || !is_probability(self.threshold)
+                    || guess.confidence < self.threshold
+                    || guess.kind == IntentKind::NeedStrongThink
+            }
+        }
     }
 
     fn resume(&self, cont: Continuation, decision: ThinkDecision) -> Result<Step> {
@@ -207,133 +224,11 @@ fn is_probability(value: f32) -> bool {
 }
 
 pub fn deterministic_prefilter(event: &MessageEvent) -> Option<ActionDraft> {
-    let text = event.text.trim().to_lowercase();
-
-    if text.is_empty() {
+    if event.text.trim().is_empty() {
         return Some(ignore(event, "empty message"));
     }
 
-    if has_otp_marker(&text) || has_verification_code_marker(&text) {
-        return Some(ignore(event, "verification code"));
-    }
-
-    if text.contains("unsubscribe") {
-        return Some(ignore(event, "unsubscribe notice"));
-    }
-
     None
-}
-
-fn has_otp_marker(text: &str) -> bool {
-    text.split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(|token| token == "otp" || has_code_like_otp_token(token))
-}
-
-fn has_verification_code_marker(text: &str) -> bool {
-    has_english_verification_code_marker(text) || has_chinese_verification_code_marker(text)
-}
-
-fn has_english_verification_code_marker(text: &str) -> bool {
-    let tokens: Vec<&str> = text
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter(|token| !token.is_empty())
-        .collect();
-
-    let has_verification_code_phrase = tokens
-        .windows(2)
-        .any(|window| window == ["verification", "code"]);
-
-    has_verification_code_phrase
-        && (has_code_like_value_near_verification_code(&tokens) || has_auth_message_pattern(text))
-}
-
-fn has_chinese_verification_code_marker(text: &str) -> bool {
-    text.contains("验证码") && (has_code_like_value(text) || has_chinese_auth_message_pattern(text))
-}
-
-fn has_code_like_value_near_verification_code(tokens: &[&str]) -> bool {
-    tokens.windows(2).enumerate().any(|(index, window)| {
-        if window != ["verification", "code"] {
-            return false;
-        }
-
-        let before = &tokens[index.saturating_sub(4)..index];
-        let after_start = index + 2;
-        let after_end = (after_start + 5).min(tokens.len());
-        let after = &tokens[after_start..after_end];
-
-        has_code_like_value_before_phrase(before) || has_code_like_value_after_phrase(after)
-    })
-}
-
-fn has_code_like_value_before_phrase(tokens: &[&str]) -> bool {
-    tokens
-        .iter()
-        .rev()
-        .take_while(|token| is_verification_code_connector(token) || is_code_like_value(token))
-        .any(|token| is_code_like_value(token))
-}
-
-fn has_code_like_value_after_phrase(tokens: &[&str]) -> bool {
-    tokens
-        .iter()
-        .take_while(|token| is_verification_code_connector(token) || is_code_like_value(token))
-        .any(|token| is_code_like_value(token))
-}
-
-fn has_code_like_value(text: &str) -> bool {
-    text.split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(is_code_like_value)
-}
-
-fn has_auth_message_pattern(text: &str) -> bool {
-    [
-        "use this verification code",
-        "use the verification code",
-        "enter this verification code",
-        "enter the verification code",
-        "verification code to sign in",
-        "verification code to log in",
-        "verification code for your account",
-        "verification code expires",
-        "verification code will expire",
-    ]
-    .iter()
-    .any(|pattern| text.contains(pattern))
-}
-
-fn has_chinese_auth_message_pattern(text: &str) -> bool {
-    ["登录", "登陆", "账号", "账户", "有效", "分钟"]
-        .iter()
-        .any(|pattern| text.contains(pattern))
-}
-
-fn is_verification_code_connector(token: &str) -> bool {
-    matches!(
-        token,
-        "is" | "as" | "for" | "to" | "the" | "this" | "your" | "my" | "account"
-    )
-}
-
-fn has_code_like_otp_token(token: &str) -> bool {
-    token.strip_prefix("otp").is_some_and(is_code_like_digits)
-        || token.strip_suffix("otp").is_some_and(is_code_like_digits)
-}
-
-fn is_code_like_value(value: &str) -> bool {
-    is_code_like_digits(value) || is_code_like_alphanumeric(value)
-}
-
-fn is_code_like_digits(value: &str) -> bool {
-    value.len() >= 4 && value.chars().all(|ch| ch.is_ascii_digit())
-}
-
-fn is_code_like_alphanumeric(value: &str) -> bool {
-    value.len() >= 6
-        && value.len() <= 12
-        && value.chars().all(|ch| ch.is_ascii_alphanumeric())
-        && value.chars().any(|ch| ch.is_ascii_alphabetic())
-        && value.chars().any(|ch| ch.is_ascii_digit())
 }
 
 pub(crate) fn make_effect_frame(

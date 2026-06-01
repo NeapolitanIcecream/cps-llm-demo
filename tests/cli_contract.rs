@@ -86,6 +86,8 @@ fn cli_run_against_mock_responses_endpoint_outputs_json_array_and_trace() {
         .arg("fake-classifier")
         .arg("--strong-model")
         .arg("fake-thinker")
+        .arg("--capture-policy")
+        .arg("always-after-weak")
         .arg("--trace-json")
         .assert()
         .success()

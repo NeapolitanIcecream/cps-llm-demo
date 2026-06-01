@@ -2,7 +2,7 @@
 
 Minimal Rust CLI demo for a defunctionalized CPS / typed-effect LLM runtime.
 
-This is not a product agent. It is a runtime semantics demo: deterministic code handles cheap cases, a small classifier fills a typed semantic hole, and the runtime captures a stuck continuation as an `EffectFrame` when guard conditions require deeper handling. The Think handler receives that frame, returns a typed `ThinkDecision`, and the runtime resumes.
+This is not a product agent. It is a runtime semantics demo: a weak classifier fills a typed semantic hole, and the runtime captures a stuck continuation as an `EffectFrame` when structural guard conditions require deeper handling. The Think handler receives that frame, returns a typed `ThinkDecision`, and the runtime resumes.
 
 ## Setup
 
@@ -28,13 +28,16 @@ All model IDs and the OpenAI-compatible base URL can be overridden with CLI flag
 cargo run -- schema
 cargo run -- probe-models
 cargo run -- run examples/messages.json --trace-json
+cargo run -- run examples/messages.json --trace-json --capture-policy always-after-weak
 ```
 
 `run` writes final `ActionDraft[]` JSON to stdout. With `--trace-json`, it writes runtime trace JSONL to stderr, so the streams can be split:
 
 ```bash
-cargo run -- run examples/messages.json --trace-json 1>out.json 2>trace.jsonl
+cargo run -- run examples/messages.json --trace-json --capture-policy always-after-weak 1>out.json 2>trace.jsonl
 ```
+
+`--capture-policy confidence-only` is the default and captures only when the weak model returns low confidence, `need_strong_think`, or invalid structured output. `--capture-policy always-after-weak` is for demos and debugging: every non-empty message still reaches the real weak model first, then the runtime captures the typed weak result as a continuation for the strong Think handler.
 
 ## What To Look For
 
@@ -51,7 +54,7 @@ resume_continuation:
   runtime resumes execution with the typed ThinkDecision.
 ```
 
-The deterministic guard forces messages containing `proposal`, `方向`, or `推进` through the Think effect so the demo reliably shows continuation capture. Verification-code messages are handled without any model call.
+The runtime does not branch on business keywords such as OTPs, meetings, proposals, or unsubscribe notices. Empty or whitespace-only input is the structural deterministic path; non-empty semantic messages go to the weak model first. Use `--capture-policy always-after-weak` when you want the trace to reliably show continuation capture without adding message-text rules to the runtime.
 
 ## Why This Is CPS
 

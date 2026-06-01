@@ -10,7 +10,7 @@ use crate::config::{
 use crate::domain::{DecisionSource, MessageEvent, ResolvedIntent};
 use crate::effects::ThinkDecision;
 use crate::models::{ResponsesStrongModel, ResponsesWeakModel, StrongModel, WeakModel};
-use crate::runtime::{Runtime, make_effect_frame};
+use crate::runtime::{CapturePolicy, Runtime, make_effect_frame};
 use crate::schema::schema_bundle;
 use crate::trace::TraceCollector;
 
@@ -41,6 +41,13 @@ pub enum Command {
         #[arg(long, env = "CPS_THRESHOLD", default_value_t = DEFAULT_THRESHOLD)]
         threshold: f32,
 
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = CapturePolicyArg::ConfidenceOnly
+        )]
+        capture_policy: CapturePolicyArg,
+
         #[arg(long)]
         trace_json: bool,
     },
@@ -60,6 +67,21 @@ pub enum Command {
     },
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum CapturePolicyArg {
+    ConfidenceOnly,
+    AlwaysAfterWeak,
+}
+
+impl From<CapturePolicyArg> for CapturePolicy {
+    fn from(value: CapturePolicyArg) -> Self {
+        match value {
+            CapturePolicyArg::ConfidenceOnly => Self::ConfidenceOnly,
+            CapturePolicyArg::AlwaysAfterWeak => Self::AlwaysAfterWeak,
+        }
+    }
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
@@ -71,6 +93,7 @@ pub async fn run() -> Result<()> {
             weak_model,
             strong_model,
             threshold,
+            capture_policy,
             trace_json,
         } => {
             let config = ModelConfig::new(base_url, api_key, weak_model, strong_model, threshold)?;
@@ -79,7 +102,13 @@ pub async fn run() -> Result<()> {
             let client = config.responses_client();
             let weak = ResponsesWeakModel::new(client.clone(), config.weak_model);
             let strong = ResponsesStrongModel::new(client, config.strong_model);
-            let runtime = Runtime::new(weak, strong, config.threshold, trace.clone());
+            let runtime = Runtime::new(
+                weak,
+                strong,
+                config.threshold,
+                capture_policy.into(),
+                trace.clone(),
+            );
 
             let mut outputs = Vec::with_capacity(messages.len());
             for message in messages {
