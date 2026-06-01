@@ -21,6 +21,12 @@ fn write_temp_messages() -> std::path::PathBuf {
     path
 }
 
+fn make_temp_workdir() -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("cps-llm-demo-workdir-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&path).unwrap();
+    path
+}
+
 #[test]
 fn cli_schema_outputs_json() {
     let mut cmd = Command::cargo_bin("cps-llm-demo").unwrap();
@@ -54,13 +60,15 @@ fn cli_run_against_mock_responses_endpoint_outputs_json_array_and_trace() {
         );
         then.status(200).json_body(json!({
             "output_text": serde_json::to_string(&json!({
-                "decision": "value",
-                "data": {
-                    "kind": "create_task",
-                    "title": "发送新版 proposal",
-                    "datetime_hint": "明天 10 点前",
-                    "confidence": 0.88,
-                    "source": "strong_think"
+                "think_decision": {
+                    "decision": "value",
+                    "data": {
+                        "kind": "create_task",
+                        "title": "发送新版 proposal",
+                        "datetime_hint": "明天 10 点前",
+                        "confidence": 0.88,
+                        "source": "strong_think"
+                    }
                 }
             })).unwrap()
         }));
@@ -95,15 +103,19 @@ fn cli_run_against_mock_responses_endpoint_outputs_json_array_and_trace() {
 #[test]
 fn cli_run_without_api_key_has_clear_error() {
     let input = write_temp_messages();
+    let workdir = make_temp_workdir();
     let mut cmd = Command::cargo_bin("cps-llm-demo").unwrap();
     cmd.arg("run")
         .arg(&input)
         .arg("--base-url")
         .arg("http://localhost:1/v1")
+        .current_dir(&workdir)
+        .env_remove("OPENAI_API_KEY")
         .assert()
         .failure()
         .stderr(predicate::str::contains(
             "OPENAI_API_KEY is required. Set it via env or --api-key.",
         ));
     let _ = fs::remove_file(input);
+    let _ = fs::remove_dir(workdir);
 }

@@ -2,11 +2,44 @@ use anyhow::{Context, Result};
 use schemars::schema_for;
 use serde_json::{Value, json};
 
-use crate::domain::WeakIntentGuess;
 use crate::effects::{Continuation, EffectFrame};
 
 pub fn weak_intent_guess_schema() -> Value {
-    schema_value(schema_for!(WeakIntentGuess))
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": {
+                "type": "string",
+                "enum": [
+                    "ignore",
+                    "create_task",
+                    "create_calendar_event",
+                    "draft_reply",
+                    "need_strong_think"
+                ]
+            },
+            "title": {
+                "type": ["string", "null"]
+            },
+            "datetime_hint": {
+                "type": ["string", "null"]
+            },
+            "confidence": {
+                "type": "number"
+            },
+            "rationale": {
+                "type": "string"
+            }
+        },
+        "required": [
+            "kind",
+            "title",
+            "datetime_hint",
+            "confidence",
+            "rationale"
+        ]
+    })
 }
 
 pub fn think_decision_schema() -> Value {
@@ -56,36 +89,43 @@ pub fn think_decision_schema() -> Value {
         "required": ["reason"]
     });
 
-    json!({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "ThinkDecision",
+    let value_decision = json!({
         "type": "object",
-        "oneOf": [
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "decision": {
-                        "type": "string",
-                        "enum": ["value"]
-                    },
-                    "data": resolved_intent
-                },
-                "required": ["decision", "data"]
+        "additionalProperties": false,
+        "properties": {
+            "decision": {
+                "type": "string",
+                "enum": ["value"]
             },
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "decision": {
-                        "type": "string",
-                        "enum": ["abort"]
-                    },
-                    "data": abort_reason
-                },
-                "required": ["decision", "data"]
+            "data": resolved_intent
+        },
+        "required": ["decision", "data"]
+    });
+    let abort_decision = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "decision": {
+                "type": "string",
+                "enum": ["abort"]
+            },
+            "data": abort_reason
+        },
+        "required": ["decision", "data"]
+    });
+
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "think_decision": {
+                "anyOf": [
+                    value_decision,
+                    abort_decision
+                ]
             }
-        ]
+        },
+        "required": ["think_decision"]
     })
 }
 
@@ -122,6 +162,17 @@ fn schema_value(schema: impl serde::Serialize) -> Value {
 fn make_strict_structured_output_schema(value: &mut Value) {
     match value {
         Value::Object(map) => {
+            let has_numeric_type = match map.get("type") {
+                Some(Value::String(type_name)) => type_name == "number" || type_name == "integer",
+                Some(Value::Array(type_names)) => type_names
+                    .iter()
+                    .any(|type_name| matches!(type_name.as_str(), Some("number" | "integer"))),
+                _ => false,
+            };
+            if has_numeric_type {
+                map.remove("format");
+            }
+
             let property_names = map
                 .get("properties")
                 .and_then(Value::as_object)
