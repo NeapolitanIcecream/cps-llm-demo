@@ -206,7 +206,7 @@ pub fn deterministic_prefilter(event: &MessageEvent) -> Option<ActionDraft> {
         return Some(ignore(event, "empty message"));
     }
 
-    if text.contains("验证码") || text.contains("otp") || text.contains("verification code") {
+    if text.contains("验证码") || has_otp_marker(&text) || text.contains("verification code") {
         return Some(ignore(event, "verification code"));
     }
 
@@ -215,6 +215,20 @@ pub fn deterministic_prefilter(event: &MessageEvent) -> Option<ActionDraft> {
     }
 
     None
+}
+
+fn has_otp_marker(text: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| token == "otp" || has_code_like_otp_token(token))
+}
+
+fn has_code_like_otp_token(token: &str) -> bool {
+    token.strip_prefix("otp").is_some_and(is_code_like_digits)
+        || token.strip_suffix("otp").is_some_and(is_code_like_digits)
+}
+
+fn is_code_like_digits(value: &str) -> bool {
+    value.len() >= 4 && value.chars().all(|ch| ch.is_ascii_digit())
 }
 
 pub(crate) fn make_effect_frame(

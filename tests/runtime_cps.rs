@@ -55,14 +55,30 @@ fn continuation_is_serializable_data() {
 
 #[test]
 fn verification_code_is_deterministic_ignore() {
+    for text in [
+        "验证码 839201，五分钟内有效",
+        "Your OTP is 839201",
+        "Use OTP839201 to sign in",
+    ] {
+        let event = MessageEvent {
+            event_id: "m3".to_owned(),
+            text: text.to_owned(),
+        };
+
+        let draft = deterministic_prefilter(&event).unwrap();
+        assert_eq!(draft.source, DecisionSource::DeterministicCode);
+        assert_eq!(draft.kind, IntentKind::Ignore);
+    }
+}
+
+#[test]
+fn embedded_otp_word_is_not_deterministic_ignore() {
     let event = MessageEvent {
-        event_id: "m3".to_owned(),
-        text: "验证码 839201，五分钟内有效".to_owned(),
+        event_id: "m7".to_owned(),
+        text: "hotpot dinner Friday 7pm".to_owned(),
     };
 
-    let draft = deterministic_prefilter(&event).unwrap();
-    assert_eq!(draft.source, DecisionSource::DeterministicCode);
-    assert_eq!(draft.kind, IntentKind::Ignore);
+    assert!(deterministic_prefilter(&event).is_none());
 }
 
 #[tokio::test]
