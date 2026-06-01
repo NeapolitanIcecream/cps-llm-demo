@@ -162,6 +162,47 @@ async fn weak_only_path_does_not_call_strong() {
 }
 
 #[tokio::test]
+async fn out_of_range_weak_confidence_captures_continuation() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let runtime = Runtime::new(
+        StaticWeak {
+            result: Ok(WeakIntentGuess {
+                kind: IntentKind::CreateTask,
+                title: Some("Send proposal".to_owned()),
+                datetime_hint: Some("tomorrow".to_owned()),
+                confidence: 75.0,
+                rationale: "bad percent value".to_owned(),
+            }),
+        },
+        RecordingStrong {
+            decision: Ok(ThinkDecision::Value(ResolvedIntent {
+                kind: IntentKind::CreateTask,
+                title: "Send proposal".to_owned(),
+                datetime_hint: Some("tomorrow".to_owned()),
+                confidence: 0.9,
+                source: DecisionSource::StrongThink,
+            })),
+            calls: calls.clone(),
+        },
+        0.75,
+        TraceCollector::default(),
+    );
+
+    let draft = runtime
+        .run_one(MessageEvent {
+            event_id: "m8".to_owned(),
+            text: "Please send the proposal tomorrow".to_owned(),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(draft.source, DecisionSource::StrongThink);
+    let frames = calls.lock().unwrap();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].frame.reason, "low_confidence");
+}
+
+#[tokio::test]
 async fn weak_error_becomes_think_effect() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let runtime = Runtime::new(

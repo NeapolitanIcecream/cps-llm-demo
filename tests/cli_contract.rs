@@ -119,3 +119,45 @@ fn cli_run_without_api_key_has_clear_error() {
     let _ = fs::remove_file(input);
     let _ = fs::remove_dir(workdir);
 }
+
+#[test]
+fn cli_run_rejects_invalid_threshold_values() {
+    let input = write_temp_messages();
+    let workdir = make_temp_workdir();
+
+    let mut cli_arg = Command::cargo_bin("cps-llm-demo").unwrap();
+    cli_arg
+        .arg("run")
+        .arg(&input)
+        .arg("--base-url")
+        .arg("http://localhost:1/v1")
+        .arg("--api-key")
+        .arg("test-key")
+        .arg("--threshold")
+        .arg("NaN")
+        .current_dir(&workdir)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "CPS_THRESHOLD must be a finite probability",
+        ));
+
+    let mut env_value = Command::cargo_bin("cps-llm-demo").unwrap();
+    env_value
+        .arg("run")
+        .arg(&input)
+        .arg("--base-url")
+        .arg("http://localhost:1/v1")
+        .arg("--api-key")
+        .arg("test-key")
+        .current_dir(&workdir)
+        .env("CPS_THRESHOLD", "1.01")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "CPS_THRESHOLD must be a finite probability",
+        ));
+
+    let _ = fs::remove_file(input);
+    let _ = fs::remove_dir(workdir);
+}

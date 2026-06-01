@@ -104,6 +104,34 @@ fn think_decision_schema_binds_decision_to_payload_shape() {
     assert!(validate_value(&schema, &mismatched_decision).is_err());
 }
 
+#[test]
+fn weak_classifier_schema_rejects_confidence_outside_probability_range() {
+    let schema = weak_intent_guess_schema();
+    let valid_guess = json!({
+        "kind": "create_task",
+        "title": "Send proposal",
+        "datetime_hint": null,
+        "confidence": 1.0,
+        "rationale": "clear request"
+    });
+    validate_value(&schema, &valid_guess).unwrap();
+
+    for confidence in [-0.01, 1.01, 75.0] {
+        let invalid_guess = json!({
+            "kind": "create_task",
+            "title": "Send proposal",
+            "datetime_hint": null,
+            "confidence": confidence,
+            "rationale": "clear request"
+        });
+
+        assert!(
+            validate_value(&schema, &invalid_guess).is_err(),
+            "confidence {confidence} must be rejected"
+        );
+    }
+}
+
 fn assert_no_one_of(value: &Value, path: &str) {
     match value {
         Value::Object(map) => {

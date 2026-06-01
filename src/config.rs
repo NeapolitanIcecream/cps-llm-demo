@@ -27,6 +27,10 @@ impl ModelConfig {
         strong_model: String,
         threshold: f32,
     ) -> Result<Self> {
+        if !is_probability(threshold) {
+            return Err(DemoError::InvalidThreshold.into());
+        }
+
         let api_key = api_key
             .filter(|value| !value.trim().is_empty())
             .ok_or(DemoError::MissingApiKey)?;
@@ -46,4 +50,8 @@ impl ModelConfig {
             api_key: self.api_key.clone(),
         })
     }
+}
+
+fn is_probability(value: f32) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
 }

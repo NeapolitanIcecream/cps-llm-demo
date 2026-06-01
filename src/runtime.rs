@@ -135,7 +135,10 @@ where
         event: &MessageEvent,
         guess: &WeakIntentGuess,
     ) -> Option<&'static str> {
-        if !guess.confidence.is_finite() || guess.confidence < self.threshold {
+        if !is_probability(guess.confidence)
+            || !is_probability(self.threshold)
+            || guess.confidence < self.threshold
+        {
             return Some("low_confidence");
         }
 
@@ -197,6 +200,10 @@ where
             }
         }
     }
+}
+
+fn is_probability(value: f32) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
 }
 
 pub fn deterministic_prefilter(event: &MessageEvent) -> Option<ActionDraft> {

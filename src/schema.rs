@@ -26,7 +26,9 @@ pub fn weak_intent_guess_schema() -> Value {
                 "type": ["string", "null"]
             },
             "confidence": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0
             },
             "rationale": {
                 "type": "string"
