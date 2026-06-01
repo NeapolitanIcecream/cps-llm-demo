@@ -59,6 +59,9 @@ fn verification_code_is_deterministic_ignore() {
         "验证码 839201，五分钟内有效",
         "Your OTP is 839201",
         "Use OTP839201 to sign in",
+        "Your verification code is 839201",
+        "Use 839201 as your verification code",
+        "Enter the verification code to sign in",
     ] {
         let event = MessageEvent {
             event_id: "m3".to_owned(),
@@ -76,6 +79,16 @@ fn embedded_otp_word_is_not_deterministic_ignore() {
     let event = MessageEvent {
         event_id: "m7".to_owned(),
         text: "hotpot dinner Friday 7pm".to_owned(),
+    };
+
+    assert!(deterministic_prefilter(&event).is_none());
+}
+
+#[test]
+fn verification_code_work_item_is_not_deterministic_ignore() {
+    let event = MessageEvent {
+        event_id: "m9".to_owned(),
+        text: "Schedule review of verification code UX Friday 3pm".to_owned(),
     };
 
     assert!(deterministic_prefilter(&event).is_none());

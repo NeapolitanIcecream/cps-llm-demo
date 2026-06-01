@@ -213,7 +213,7 @@ pub fn deterministic_prefilter(event: &MessageEvent) -> Option<ActionDraft> {
         return Some(ignore(event, "empty message"));
     }
 
-    if text.contains("验证码") || has_otp_marker(&text) || text.contains("verification code") {
+    if has_otp_marker(&text) || has_verification_code_marker(&text) {
         return Some(ignore(event, "verification code"));
     }
 
@@ -229,13 +229,111 @@ fn has_otp_marker(text: &str) -> bool {
         .any(|token| token == "otp" || has_code_like_otp_token(token))
 }
 
+fn has_verification_code_marker(text: &str) -> bool {
+    has_english_verification_code_marker(text) || has_chinese_verification_code_marker(text)
+}
+
+fn has_english_verification_code_marker(text: &str) -> bool {
+    let tokens: Vec<&str> = text
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect();
+
+    let has_verification_code_phrase = tokens
+        .windows(2)
+        .any(|window| window == ["verification", "code"]);
+
+    has_verification_code_phrase
+        && (has_code_like_value_near_verification_code(&tokens) || has_auth_message_pattern(text))
+}
+
+fn has_chinese_verification_code_marker(text: &str) -> bool {
+    text.contains("验证码") && (has_code_like_value(text) || has_chinese_auth_message_pattern(text))
+}
+
+fn has_code_like_value_near_verification_code(tokens: &[&str]) -> bool {
+    tokens.windows(2).enumerate().any(|(index, window)| {
+        if window != ["verification", "code"] {
+            return false;
+        }
+
+        let before = &tokens[index.saturating_sub(4)..index];
+        let after_start = index + 2;
+        let after_end = (after_start + 5).min(tokens.len());
+        let after = &tokens[after_start..after_end];
+
+        has_code_like_value_before_phrase(before) || has_code_like_value_after_phrase(after)
+    })
+}
+
+fn has_code_like_value_before_phrase(tokens: &[&str]) -> bool {
+    tokens
+        .iter()
+        .rev()
+        .take_while(|token| is_verification_code_connector(token) || is_code_like_value(token))
+        .any(|token| is_code_like_value(token))
+}
+
+fn has_code_like_value_after_phrase(tokens: &[&str]) -> bool {
+    tokens
+        .iter()
+        .take_while(|token| is_verification_code_connector(token) || is_code_like_value(token))
+        .any(|token| is_code_like_value(token))
+}
+
+fn has_code_like_value(text: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(is_code_like_value)
+}
+
+fn has_auth_message_pattern(text: &str) -> bool {
+    [
+        "use this verification code",
+        "use the verification code",
+        "enter this verification code",
+        "enter the verification code",
+        "verification code to sign in",
+        "verification code to log in",
+        "verification code for your account",
+        "verification code expires",
+        "verification code will expire",
+    ]
+    .iter()
+    .any(|pattern| text.contains(pattern))
+}
+
+fn has_chinese_auth_message_pattern(text: &str) -> bool {
+    ["登录", "登陆", "账号", "账户", "有效", "分钟"]
+        .iter()
+        .any(|pattern| text.contains(pattern))
+}
+
+fn is_verification_code_connector(token: &str) -> bool {
+    matches!(
+        token,
+        "is" | "as" | "for" | "to" | "the" | "this" | "your" | "my" | "account"
+    )
+}
+
 fn has_code_like_otp_token(token: &str) -> bool {
     token.strip_prefix("otp").is_some_and(is_code_like_digits)
         || token.strip_suffix("otp").is_some_and(is_code_like_digits)
 }
 
+fn is_code_like_value(value: &str) -> bool {
+    is_code_like_digits(value) || is_code_like_alphanumeric(value)
+}
+
 fn is_code_like_digits(value: &str) -> bool {
     value.len() >= 4 && value.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn is_code_like_alphanumeric(value: &str) -> bool {
+    value.len() >= 6
+        && value.len() <= 12
+        && value.chars().all(|ch| ch.is_ascii_alphanumeric())
+        && value.chars().any(|ch| ch.is_ascii_alphabetic())
+        && value.chars().any(|ch| ch.is_ascii_digit())
 }
 
 pub(crate) fn make_effect_frame(
