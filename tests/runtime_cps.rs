@@ -288,6 +288,66 @@ fn duplicate_function_params_are_rejected_during_validation() {
 }
 
 #[test]
+fn input_var_cannot_be_declared_as_function_param() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: message_event_schema(),
+            body: vec![
+                Instr::Call {
+                    out: "helper_output".to_owned(),
+                    function: "helper".to_owned(),
+                    args: vec![
+                        JsonExpr::Var {
+                            name: "message".to_owned(),
+                        },
+                        JsonExpr::Literal {
+                            value: message("m2", "second value"),
+                        },
+                    ],
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "helper_output".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    functions.insert(
+        "helper".to_owned(),
+        FunctionDef {
+            params: vec!["x".to_owned(), "$input".to_owned()],
+            output_schema: message_event_schema(),
+            body: vec![Instr::Return {
+                value: JsonExpr::Var {
+                    name: "$input".to_owned(),
+                },
+            }],
+        },
+    );
+    let program = Program {
+        program_id: "explicit_input_param".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: message_event_schema(),
+        functions,
+        allowed_effects: Vec::new(),
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("function helper parameter $input is reserved")
+    );
+}
+
+#[test]
 fn functions_must_end_with_return_during_validation() {
     let mut functions = BTreeMap::new();
     functions.insert(
@@ -625,6 +685,42 @@ async fn weak_model_batched_action_drafts_are_source_stamped() {
     assert_eq!(output[1]["source"], "weak_model");
     assert_eq!(weak.calls().len(), 1);
     assert!(strong.calls().is_empty());
+}
+
+#[tokio::test]
+async fn weak_model_action_draft_schema_combinators_are_source_stamped() {
+    let schemas = vec![
+        (
+            "anyOf",
+            json!({ "anyOf": [action_draft_schema(), { "type": "null" }] }),
+        ),
+        (
+            "oneOf",
+            json!({ "oneOf": [action_draft_schema(), { "type": "null" }] }),
+        ),
+        ("allOf", json!({ "allOf": [action_draft_schema()] })),
+    ];
+
+    for (keyword, expected_schema) in schemas {
+        let weak = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.91))]);
+        let strong = SequenceHandler::empty();
+        let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+        let output = runtime
+            .run_program(
+                single_weak_program_with_expected_schema(
+                    &format!("single_weak_{keyword}"),
+                    expected_schema,
+                ),
+                message("m1", "send proposal"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output["source"], "weak_model", "{keyword}");
+        assert_eq!(weak.calls().len(), 1, "{keyword}");
+        assert!(strong.calls().is_empty(), "{keyword}");
+    }
 }
 
 #[tokio::test]
@@ -1526,6 +1622,33 @@ fn single_weak_program() -> Program {
             EffectPermission::Think,
         ],
     }
+}
+
+fn single_weak_program_with_expected_schema(program_id: &str, expected_schema: Value) -> Program {
+    let mut program = single_weak_program();
+    program.program_id = program_id.to_owned();
+    program.output_schema = expected_schema.clone();
+    program.allowed_effects = vec![EffectPermission::ModelTask {
+        strength: ModelStrength::Weak,
+    }];
+
+    let main = program
+        .functions
+        .get_mut("main")
+        .expect("single weak program has main");
+    main.output_schema = expected_schema.clone();
+    let Instr::Perform {
+        expected_schema: perform_schema,
+        acceptance,
+        ..
+    } = &mut main.body[0]
+    else {
+        panic!("single weak program starts with perform");
+    };
+    *perform_schema = expected_schema;
+    *acceptance = accept_abort(0.8);
+
+    program
 }
 
 fn batched_weak_program() -> Program {

@@ -9,6 +9,7 @@ use crate::program::{
 };
 
 const MAX_INSTRUCTIONS_PER_FUNCTION: usize = 1024;
+const INPUT_VAR: &str = "$input";
 
 pub fn validate_program(program: &Program) -> Result<()> {
     validate_program_with_entry_input(program, true)
@@ -122,12 +123,17 @@ fn validate_function(
 
     let mut defined = BTreeSet::new();
     for param in &function.params {
+        if param == INPUT_VAR {
+            return Err(anyhow!(
+                "function {name} parameter {INPUT_VAR} is reserved for runtime input"
+            ));
+        }
         if !defined.insert(param.clone()) {
             return Err(anyhow!("function {name} has duplicate parameter {param}"));
         }
     }
     if input_is_bound {
-        defined.insert("$input".to_owned());
+        defined.insert(INPUT_VAR.to_owned());
     }
 
     for (pc, instr) in function.body.iter().enumerate() {

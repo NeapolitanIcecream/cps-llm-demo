@@ -1472,6 +1472,14 @@ fn stamp_schema_source(value: &mut Value, schema: &Value, source: &str) {
         }
     }
 
+    for keyword in ["anyOf", "oneOf", "allOf"] {
+        if let Some(subschemas) = schema.get(keyword).and_then(Value::as_array) {
+            for subschema in subschemas {
+                stamp_schema_source(value, subschema, source);
+            }
+        }
+    }
+
     match value {
         Value::Array(items) => {
             if let Some(item_schema) = schema.get("items") {
