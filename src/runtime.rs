@@ -684,6 +684,14 @@ where
                         mode,
                         ..
                     } => {
+                        if matches!(mode, EffectReturnMode::ReenterHandler { .. })
+                            && reentries >= state.budget.max_handler_reentries
+                        {
+                            return Err(anyhow!(
+                                "handler reentry limit {} exceeded",
+                                state.budget.max_handler_reentries
+                            ));
+                        }
                         if !effect_allowed(&state.program.allowed_effects, &requested_effect) {
                             return Err(anyhow!(
                                 "effect {} is not allowed by program {}",
@@ -748,18 +756,13 @@ where
                                         "nested effect result failed requested expected_schema"
                                     ));
                                 }
-                                if reentries >= state.budget.max_handler_reentries {
-                                    return Err(anyhow!(
-                                        "handler reentry limit {} exceeded",
-                                        state.budget.max_handler_reentries
-                                    ));
-                                }
                                 reentries += 1;
                                 request.observations.push(Observation {
                                     name: observation_name.clone(),
                                     value: nested.value,
                                     source: nested.source,
                                 });
+                                request.budget.effects_remaining = state.effects_remaining;
                                 request.budget.handler_reentries_remaining =
                                     state.budget.max_handler_reentries - reentries;
                                 self.trace.emit(

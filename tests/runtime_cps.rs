@@ -5,7 +5,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use cps_llm_demo::effects::{
     AllowedDecision, Continuation, EffectReturnMode, HandlerDecision, HandlerRequest, ReturnSlot,
-    RuntimeFrame,
+    RuntimeBudget, RuntimeFrame,
 };
 use cps_llm_demo::models::EffectHandler;
 use cps_llm_demo::program::{
@@ -1487,6 +1487,132 @@ async fn strong_handler_can_request_weak_probe_and_reenter() {
         event.event == "reenter_handler"
             && event.detail["observation_name"] == "datetime_candidates"
     }));
+}
+
+#[tokio::test]
+async fn reenter_handler_budget_is_checked_before_nested_effect() {
+    let weak = SequenceHandler::new(vec![
+        Ok(return_value(action_value("m1", "weak_model"), 0.20)),
+        Ok(return_value(
+            json!({ "candidates": ["tomorrow 10am"] }),
+            0.91,
+        )),
+    ]);
+    let strong = SequenceHandler::new(vec![Ok(HandlerDecision::RequestEffect {
+        effect: EffectCall::ModelTask {
+            strength: ModelStrength::Weak,
+            task: ModelTaskSpec {
+                name: "extract_datetime_candidates".to_owned(),
+                instructions: "Extract datetime candidates only.".to_owned(),
+            },
+        },
+        input: message("m1", "send proposal tomorrow 10am"),
+        expected_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["candidates"],
+            "properties": {
+                "candidates": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                }
+            }
+        }),
+        mode: EffectReturnMode::ReenterHandler {
+            observation_name: "datetime_candidates".to_owned(),
+        },
+        rationale: "need cheap local probe".to_owned(),
+    })]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::with_budget(
+        weak.clone(),
+        strong.clone(),
+        trace.clone(),
+        RuntimeBudget {
+            max_handler_reentries: 0,
+            ..RuntimeBudget::default()
+        },
+    );
+
+    let error = runtime
+        .run_program(single_weak_program(), message("m1", "send proposal"))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("handler reentry limit 0 exceeded")
+    );
+    assert_eq!(weak.calls().len(), 1);
+    assert_eq!(strong.calls().len(), 1);
+    assert!(
+        !trace
+            .events()
+            .iter()
+            .any(|event| event.event == "request_nested_effect")
+    );
+}
+
+#[tokio::test]
+async fn reentered_handler_request_refreshes_effect_budget() {
+    let weak = SequenceHandler::new(vec![
+        Ok(return_value(action_value("m1", "weak_model"), 0.20)),
+        Ok(return_value(
+            json!({ "candidates": ["tomorrow 10am"] }),
+            0.91,
+        )),
+    ]);
+    let strong = SequenceHandler::new(vec![
+        Ok(HandlerDecision::RequestEffect {
+            effect: EffectCall::ModelTask {
+                strength: ModelStrength::Weak,
+                task: ModelTaskSpec {
+                    name: "extract_datetime_candidates".to_owned(),
+                    instructions: "Extract datetime candidates only.".to_owned(),
+                },
+            },
+            input: message("m1", "send proposal tomorrow 10am"),
+            expected_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["candidates"],
+                "properties": {
+                    "candidates": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    }
+                }
+            }),
+            mode: EffectReturnMode::ReenterHandler {
+                observation_name: "datetime_candidates".to_owned(),
+            },
+            rationale: "need cheap local probe".to_owned(),
+        }),
+        Ok(return_value(action_value("m1", "strong_think"), 0.91)),
+    ]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::with_budget(
+        weak.clone(),
+        strong.clone(),
+        trace,
+        RuntimeBudget {
+            max_effects: 4,
+            ..RuntimeBudget::default()
+        },
+    );
+
+    let output = runtime
+        .run_program(single_weak_program(), message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    assert_eq!(output["source"], "strong_think");
+    assert_eq!(weak.calls().len(), 2);
+    let strong_calls = strong.calls();
+    assert_eq!(strong_calls.len(), 2);
+    assert_eq!(strong_calls[0].budget.effects_remaining, 2);
+    assert_eq!(strong_calls[1].budget.effects_remaining, 1);
 }
 
 #[tokio::test]
