@@ -209,6 +209,42 @@ async fn weak_call_is_instruction_not_runtime_first_step() {
 }
 
 #[tokio::test]
+async fn accepted_weak_action_source_is_runtime_provenance() {
+    let weak = SequenceWeak::new(vec![Ok(weak_result(action_value("strong_think"), 0.95))]);
+    let strong = SequenceStrong::empty();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+    let output = runtime
+        .run_program(single_weak_program(), message())
+        .await
+        .unwrap();
+
+    assert_eq!(output["source"], "weak_model");
+    assert_eq!(weak.calls().len(), 1);
+    assert!(strong.calls().is_empty());
+}
+
+#[tokio::test]
+async fn strong_resume_action_source_is_runtime_provenance() {
+    let weak = SequenceWeak::new(vec![Ok(weak_result(action_value("weak_model"), 0.10))]);
+    let strong = SequenceStrong::new(vec![Ok(ThinkDecision::ResumeWithValue {
+        value: action_value("weak_model"),
+        confidence: 0.90,
+        rationale: "repaired action with stale source".to_owned(),
+    })]);
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+    let output = runtime
+        .run_program(single_weak_program(), message())
+        .await
+        .unwrap();
+
+    assert_eq!(output["source"], "strong_think");
+    assert_eq!(weak.calls().len(), 1);
+    assert_eq!(strong.calls().len(), 1);
+}
+
+#[tokio::test]
 async fn program_with_two_weak_calls_can_capture_second_call() {
     let weak = SequenceWeak::new(vec![
         Ok(weak_result(json!({ "kind": "create_task" }), 0.91)),
@@ -327,7 +363,7 @@ async fn strong_chained_weak_probe_can_reference_prior_probe_output() {
     let weak = SequenceWeak::new(vec![
         Ok(weak_result(action_value("weak_model"), 0.20)),
         Ok(weak_result(json!({ "kind": "create_task" }), 0.92)),
-        Ok(weak_result(action_value("weak_model"), 0.94)),
+        Ok(weak_result(action_value("strong_think"), 0.94)),
     ]);
     let strong = SequenceStrong::new(vec![
         Ok(ThinkDecision::RequestWeakProbe {
@@ -402,6 +438,10 @@ async fn strong_chained_weak_probe_can_reference_prior_probe_output() {
     assert_eq!(
         strong_calls[1].continuation.env["intent"]["kind"],
         "create_task"
+    );
+    assert_eq!(
+        strong_calls[2].continuation.env["draft"]["source"],
+        "weak_model"
     );
 }
 

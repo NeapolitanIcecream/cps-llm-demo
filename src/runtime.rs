@@ -9,6 +9,8 @@ use crate::trace::TraceCollector;
 
 const INPUT_VAR: &str = "$input";
 const MAX_THINK_TURNS_PER_FRAME: usize = 16;
+const WEAK_MODEL_SOURCE: &str = "weak_model";
+const STRONG_THINK_SOURCE: &str = "strong_think";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StepOutcome {
@@ -202,7 +204,7 @@ where
                     .run_weak_task(&task, &input_value, &output_schema)
                     .await
                 {
-                    Ok(result) => {
+                    Ok(mut result) => {
                         let schema_valid = validate_value(&output_schema, &result.value).is_ok();
                         let confidence_valid = is_probability(result.confidence);
                         self.trace.emit(
@@ -214,6 +216,14 @@ where
                                 "schema_valid": schema_valid,
                             }),
                         );
+
+                        if schema_valid {
+                            stamp_schema_source(
+                                &mut result.value,
+                                &output_schema,
+                                WEAK_MODEL_SOURCE,
+                            );
+                        }
 
                         if confidence_valid && result.confidence >= min_confidence && schema_valid {
                             state.env.insert(out, result.value);
@@ -311,9 +321,14 @@ where
             );
 
             match decision {
-                ThinkDecision::ResumeWithValue { value, .. } => {
+                ThinkDecision::ResumeWithValue { mut value, .. } => {
                     validate_value(&frame.continuation.expected_schema, &value)
                         .context("strong ResumeWithValue failed expected schema")?;
+                    stamp_schema_source(
+                        &mut value,
+                        &frame.continuation.expected_schema,
+                        STRONG_THINK_SOURCE,
+                    );
                     return Ok((frame.continuation, value));
                 }
                 ThinkDecision::RequestWeakProbe {
@@ -332,13 +347,20 @@ where
                         .await;
 
                     match probe {
-                        Ok(result) => {
+                        Ok(mut result) => {
                             let schema_valid =
                                 validate_value(&output_schema, &result.value).is_ok();
                             let confidence_valid = is_probability(result.confidence);
                             let should_bind = confidence_valid
                                 && result.confidence >= min_confidence
                                 && schema_valid;
+                            if schema_valid {
+                                stamp_schema_source(
+                                    &mut result.value,
+                                    &output_schema,
+                                    WEAK_MODEL_SOURCE,
+                                );
+                            }
                             self.trace.emit(
                                 "weak_probe",
                                 trace_id,
@@ -503,4 +525,32 @@ fn ensure_probability(value: f32, name: &str) -> Result<()> {
     } else {
         Err(anyhow!("{name} must be a finite probability"))
     }
+}
+
+fn stamp_schema_source(value: &mut Value, schema: &Value, source: &str) {
+    if !schema_allows_source(schema, source) {
+        return;
+    }
+
+    let Value::Object(object) = value else {
+        return;
+    };
+
+    if object.contains_key("source") {
+        object.insert("source".to_owned(), Value::String(source.to_owned()));
+    }
+}
+
+fn schema_allows_source(schema: &Value, source: &str) -> bool {
+    schema
+        .get("properties")
+        .and_then(|properties| properties.get("source"))
+        .and_then(|source_schema| source_schema.get("enum"))
+        .and_then(Value::as_array)
+        .map(|allowed| {
+            allowed
+                .iter()
+                .any(|allowed_source| allowed_source.as_str() == Some(source))
+        })
+        .unwrap_or(false)
 }
