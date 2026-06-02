@@ -35,6 +35,7 @@ pub enum StepOutcome {
 #[derive(Debug, Clone)]
 struct ProgramState {
     boundary_id: String,
+    host_program: Program,
     program: Program,
     stack: Vec<RuntimeFrame>,
     trace_id: String,
@@ -81,9 +82,11 @@ impl ProgramState {
             env,
             return_to: None,
         };
+        let host_program = program.clone();
 
         Ok(Self {
             boundary_id,
+            host_program,
             program,
             stack: vec![entry_frame],
             trace_id,
@@ -620,7 +623,7 @@ where
                         Some(validate_fragment(fragment).is_ok())
                     }
                     HandlerDecision::ReturnProgramPatch { patch, .. } => {
-                        Some(validate_patch(&state.program, patch).is_ok())
+                        Some(validate_patch(&state.host_program, patch).is_ok())
                     }
                     HandlerDecision::RequestEffect { .. } | HandlerDecision::Abort { .. } => None,
                 };
@@ -800,7 +803,7 @@ where
                                 "operation_count": patch.operations.len(),
                             }),
                         );
-                        match validate_patch(&state.program, &patch) {
+                        match validate_patch(&state.host_program, &patch) {
                             Ok(patched) => {
                                 self.trace.emit(
                                     "patch_validated",

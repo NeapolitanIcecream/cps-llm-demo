@@ -840,6 +840,63 @@ async fn dynamic_fragment_rejects_unenforceable_multi_param_input_contract() {
 }
 
 #[tokio::test]
+async fn dynamic_fragment_patch_must_validate_against_host_program() {
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgramPatch {
+        patch: ProgramPatch {
+            target_program_id: "dynamic_fragment_patch".to_owned(),
+            patch_id: "p1".to_owned(),
+            operations: vec![PatchOp::UpdateAcceptancePolicy {
+                function: "__fragment_0__generated_processor".to_owned(),
+                pc: 0,
+                acceptance: accept(0.1),
+            }],
+            rationale: "patch should target future host runs only".to_owned(),
+        },
+        rationale: "propose patch from generated code".to_owned(),
+    })]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak, strong, trace.clone());
+
+    let error = runtime
+        .run_program(dynamic_fragment_patch_program(), json!({}))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("handler returned invalid ProgramPatch")
+    );
+    let patch_invalid = trace
+        .events()
+        .into_iter()
+        .find(|event| event.event == "patch_invalid")
+        .expect("patch should be rejected against the stable host program");
+    assert!(
+        patch_invalid.detail["reason"]
+            .as_str()
+            .unwrap()
+            .contains("function __fragment_0__generated_processor does not exist")
+    );
+    let decision = trace
+        .events()
+        .into_iter()
+        .find(|event| {
+            event.event == "handler_decision"
+                && event.detail["decision"] == json!("return_program_patch")
+        })
+        .expect("return_program_patch decision should be traced");
+    assert_eq!(decision.detail["schema_valid"], json!(false));
+    assert!(
+        !trace
+            .events()
+            .iter()
+            .any(|event| event.event == "patch_validated")
+    );
+}
+
+#[tokio::test]
 async fn program_patch_is_validated_and_recorded_without_mutating_active_stack() {
     let weak = SequenceHandler::empty();
     let strong = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgramPatch {
@@ -1348,6 +1405,81 @@ fn dynamic_fragment_multi_param_schema_program() -> Program {
         output_schema: json!({}),
         functions,
         allowed_effects: Vec::new(),
+    }
+}
+
+fn dynamic_fragment_patch_program() -> Program {
+    let mut fragment_functions = BTreeMap::new();
+    fragment_functions.insert(
+        "generated_processor".to_owned(),
+        FunctionDef {
+            params: vec!["input".to_owned()],
+            output_schema: json!({ "type": "null" }),
+            body: vec![
+                Instr::Perform {
+                    out: "patch_ack".to_owned(),
+                    effect: EffectCall::Think {
+                        reason: "generated code proposes a future patch".to_owned(),
+                    },
+                    input: JsonExpr::Var {
+                        name: "input".to_owned(),
+                    },
+                    expected_schema: json!({ "type": "null" }),
+                    acceptance: accept(0.0),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "patch_ack".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    let fragment = ProgramFragment {
+        functions: fragment_functions,
+        entry: "generated_processor".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({ "type": "null" }),
+        allowed_effects: vec![EffectPermission::Think],
+    };
+
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({ "type": "null" }),
+            body: vec![
+                Instr::Let {
+                    var: "processor".to_owned(),
+                    expr: JsonExpr::Literal {
+                        value: serde_json::to_value(fragment).unwrap(),
+                    },
+                },
+                Instr::CallDynamic {
+                    out: "patch_ack".to_owned(),
+                    fragment: JsonExpr::Var {
+                        name: "processor".to_owned(),
+                    },
+                    args: vec![JsonExpr::Literal { value: json!({}) }],
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "patch_ack".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+
+    Program {
+        program_id: "dynamic_fragment_patch".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({ "type": "null" }),
+        functions,
+        allowed_effects: vec![EffectPermission::Think],
     }
 }
 
