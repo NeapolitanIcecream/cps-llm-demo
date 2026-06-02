@@ -724,6 +724,33 @@ async fn weak_model_action_draft_schema_combinators_are_source_stamped() {
 }
 
 #[tokio::test]
+async fn weak_model_action_draft_map_values_are_source_stamped() {
+    let expected_schema = action_draft_map_schema();
+    let weak = SequenceHandler::new(vec![Ok(return_value(
+        json!({
+            "primary": action_without_source("m1"),
+            "secondary": action_without_source("m2"),
+        }),
+        0.91,
+    ))]);
+    let strong = SequenceHandler::empty();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+    let output = runtime
+        .run_program(
+            single_weak_program_with_expected_schema("single_weak_map", expected_schema),
+            message("m1", "send proposal"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output["primary"]["source"], "weak_model");
+    assert_eq!(output["secondary"]["source"], "weak_model");
+    assert_eq!(weak.calls().len(), 1);
+    assert!(strong.calls().is_empty());
+}
+
+#[tokio::test]
 async fn strong_model_task_action_draft_shapes_use_schema_accepted_source() {
     let cases = vec![
         ("object", action_draft_schema(), action_without_source("m1")),
@@ -772,6 +799,39 @@ async fn strong_model_task_action_draft_shapes_use_schema_accepted_source() {
         }));
         replay_trace_events(&trace.events()).unwrap();
     }
+}
+
+#[tokio::test]
+async fn strong_model_task_action_draft_map_uses_schema_accepted_source() {
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::new(vec![Ok(return_value(
+        json!({ "primary": action_without_source("m1") }),
+        0.94,
+    ))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let output = runtime
+        .run_program(
+            single_strong_program_with_expected_schema(
+                "single_strong_map",
+                action_draft_map_schema(),
+            ),
+            message("m1", "send proposal"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output["primary"]["source"], "strong_think");
+    assert!(weak.calls().is_empty());
+    assert_eq!(strong.calls().len(), 1);
+    assert!(trace.events().iter().any(|event| {
+        event.event == "handler_decision"
+            && event.detail["handler"] == "strong_model"
+            && event.detail["decision"] == "return_value"
+            && event.detail["schema_valid"] == true
+    }));
+    replay_trace_events(&trace.events()).unwrap();
 }
 
 #[tokio::test]
@@ -1656,6 +1716,13 @@ fn action_schema_with_sources(sources: &[&str]) -> Value {
     schema["properties"]["source"]["enum"] =
         Value::Array(sources.iter().map(|source| json!(source)).collect());
     schema
+}
+
+fn action_draft_map_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": action_draft_schema()
+    })
 }
 
 fn pure_program() -> Program {

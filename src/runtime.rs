@@ -1516,25 +1516,85 @@ fn stamp_schema_source(value: &mut Value, schema: &Value, source: &str) {
     }
 
     match value {
-        Value::Array(items) => {
-            if let Some(item_schema) = schema.get("items") {
-                for item in items {
+        Value::Array(items) => stamp_schema_items_source(items, schema, source),
+        Value::Object(object) => stamp_schema_object_source(object, schema, source),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn stamp_schema_items_source(items: &mut [Value], schema: &Value, source: &str) {
+    let prefix_len = schema
+        .get("prefixItems")
+        .and_then(Value::as_array)
+        .map(|prefix_items| {
+            for (item, item_schema) in items.iter_mut().zip(prefix_items) {
+                stamp_schema_source(item, item_schema, source);
+            }
+            prefix_items.len()
+        })
+        .unwrap_or(0);
+
+    if let Some(item_schemas) = schema.get("items") {
+        match item_schemas {
+            Value::Array(tuple_schemas) => {
+                for (item, item_schema) in items.iter_mut().zip(tuple_schemas) {
+                    stamp_schema_source(item, item_schema, source);
+                }
+                if let Some(additional_items) = schema.get("additionalItems") {
+                    for item in items.iter_mut().skip(tuple_schemas.len()) {
+                        stamp_schema_source(item, additional_items, source);
+                    }
+                }
+            }
+            item_schema => {
+                let start = if prefix_len > 0 {
+                    prefix_len.min(items.len())
+                } else {
+                    0
+                };
+                for item in items.iter_mut().skip(start) {
                     stamp_schema_source(item, item_schema, source);
                 }
             }
         }
-        Value::Object(object) => {
-            let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
-                return;
-            };
-            for (property, property_schema) in properties {
-                if let Some(child) = object.get_mut(property) {
-                    stamp_schema_source(child, property_schema, source);
+    }
+}
+
+fn stamp_schema_object_source(object: &mut Map<String, Value>, schema: &Value, source: &str) {
+    let properties = schema.get("properties").and_then(Value::as_object);
+    if let Some(properties) = properties {
+        for (property, property_schema) in properties {
+            if let Some(child) = object.get_mut(property) {
+                stamp_schema_source(child, property_schema, source);
+            }
+        }
+    }
+
+    let additional_properties = schema.get("additionalProperties");
+    let pattern_properties = schema.get("patternProperties").and_then(Value::as_object);
+    for (property, child) in object {
+        let named_property =
+            properties.is_some_and(|properties| properties.contains_key(property.as_str()));
+        let mut pattern_property = false;
+        if let Some(pattern_properties) = pattern_properties {
+            for (pattern, pattern_schema) in pattern_properties {
+                if schema_pattern_matches(pattern, property) {
+                    pattern_property = true;
+                    stamp_schema_source(child, pattern_schema, source);
                 }
             }
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        if named_property || pattern_property {
+            continue;
+        }
+        if let Some(property_schema) = additional_properties {
+            stamp_schema_source(child, property_schema, source);
+        }
     }
+}
+
+fn schema_pattern_matches(pattern: &str, property: &str) -> bool {
+    regex::Regex::new(pattern).is_ok_and(|regex| regex.is_match(property))
 }
 
 fn schema_allows_source(schema: &Value, source: &str) -> bool {
@@ -1570,6 +1630,51 @@ fn schema_contains_source(schema: &Value, source: &str) -> bool {
         }
     }
 
+    if schema_items_contain_source(schema, source) {
+        return true;
+    }
+
+    if schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .is_some_and(|properties| {
+            properties
+                .values()
+                .any(|property_schema| schema_contains_source(property_schema, source))
+        })
+    {
+        return true;
+    }
+
+    if let Some(additional_properties) = schema.get("additionalProperties") {
+        if schema_contains_source(additional_properties, source) {
+            return true;
+        }
+    }
+
+    schema
+        .get("patternProperties")
+        .and_then(Value::as_object)
+        .is_some_and(|pattern_properties| {
+            pattern_properties
+                .values()
+                .any(|property_schema| schema_contains_source(property_schema, source))
+        })
+}
+
+fn schema_items_contain_source(schema: &Value, source: &str) -> bool {
+    if schema
+        .get("prefixItems")
+        .and_then(Value::as_array)
+        .is_some_and(|prefix_items| {
+            prefix_items
+                .iter()
+                .any(|item_schema| schema_contains_source(item_schema, source))
+        })
+    {
+        return true;
+    }
+
     if let Some(items) = schema.get("items") {
         match items {
             Value::Array(item_schemas) => {
@@ -1589,11 +1694,6 @@ fn schema_contains_source(schema: &Value, source: &str) -> bool {
     }
 
     schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .is_some_and(|properties| {
-            properties
-                .values()
-                .any(|property_schema| schema_contains_source(property_schema, source))
-        })
+        .get("additionalItems")
+        .is_some_and(|item_schema| schema_contains_source(item_schema, source))
 }

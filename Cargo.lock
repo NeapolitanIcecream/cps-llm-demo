@@ -390,6 +390,7 @@ dependencies = [
  "insta",
  "jsonschema",
  "predicates",
+ "regex",
  "reqwest",
  "schemars",
  "secrecy",
