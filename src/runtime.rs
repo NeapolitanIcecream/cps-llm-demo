@@ -673,7 +673,7 @@ where
                                 "depth": depth + 1,
                             }),
                         );
-                        let nested = self
+                        let mut nested = self
                             .resolve_effect(
                                 state,
                                 EffectWork {
@@ -686,6 +686,11 @@ where
                                 },
                             )
                             .await?;
+                        stamp_schema_source(
+                            &mut nested.value,
+                            &requested_schema,
+                            nested.source_label,
+                        );
                         let schema_valid = validate_value(&requested_schema, &nested.value).is_ok();
                         self.trace.emit(
                             "nested_effect_result",
@@ -770,6 +775,11 @@ where
                         });
                     }
                     HandlerDecision::ReturnProgramPatch { patch, .. } => {
+                        if !schema_accepts_null(&expected_schema) {
+                            return Err(anyhow!(
+                                "return_program_patch cannot satisfy expected_schema that rejects null"
+                            ));
+                        }
                         if state.patch_attempts >= state.budget.max_patch_attempts {
                             return Err(anyhow!(
                                 "program patch attempt limit {} exceeded",
@@ -899,6 +909,13 @@ where
             }),
         );
 
+        let mut allowed_decisions =
+            vec![AllowedDecision::ReturnValue, AllowedDecision::RequestEffect];
+        if schema_accepts_null(&capture.expected_schema) {
+            allowed_decisions.push(AllowedDecision::ReturnProgramPatch);
+        }
+        allowed_decisions.push(AllowedDecision::Abort);
+
         Ok(EffectFrame {
             effect_id,
             boundary_id: state.boundary_id.clone(),
@@ -917,12 +934,7 @@ where
                 effect_depth: capture.effect_depth,
             },
             observations: capture.observations,
-            allowed_decisions: vec![
-                AllowedDecision::ReturnValue,
-                AllowedDecision::RequestEffect,
-                AllowedDecision::ReturnProgramPatch,
-                AllowedDecision::Abort,
-            ],
+            allowed_decisions,
         })
     }
 
@@ -1257,6 +1269,10 @@ fn accepted_by_policy(
     let schema_pass =
         !acceptance.require_schema_valid || validate_value(expected_schema, value).is_ok();
     confidence_pass && schema_pass
+}
+
+fn schema_accepts_null(schema: &Value) -> bool {
+    validate_value(schema, &Value::Null).is_ok()
 }
 
 fn source_for_effect(effect: &EffectCall) -> (ObservationSource, &'static str) {

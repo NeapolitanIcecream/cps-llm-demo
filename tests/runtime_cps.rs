@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use cps_llm_demo::effects::{
-    Continuation, EffectReturnMode, HandlerDecision, HandlerRequest, ReturnSlot, RuntimeFrame,
+    AllowedDecision, Continuation, EffectReturnMode, HandlerDecision, HandlerRequest, ReturnSlot,
+    RuntimeFrame,
 };
 use cps_llm_demo::models::EffectHandler;
 use cps_llm_demo::program::{
@@ -307,6 +308,36 @@ async fn weak_handler_can_request_strong_think_via_runtime() {
 }
 
 #[tokio::test]
+async fn nested_effect_result_is_stamped_before_requested_schema_validation() {
+    let weak = SequenceHandler::new(vec![Ok(HandlerDecision::RequestEffect {
+        effect: EffectCall::Think {
+            reason: "weak handler cannot resolve ambiguous action".to_owned(),
+        },
+        input: message("m1", "send proposal"),
+        expected_schema: action_draft_schema(),
+        mode: EffectReturnMode::UseAsValue,
+        rationale: "needs stronger reasoning".to_owned(),
+    })]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.93))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let output = runtime
+        .run_program(single_weak_program(), message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    assert_eq!(output["source"], "strong_think");
+    assert_eq!(weak.calls().len(), 1);
+    assert_eq!(strong.calls().len(), 1);
+    assert!(trace.events().iter().any(|event| {
+        event.event == "nested_effect_result"
+            && event.detail["schema_valid"] == true
+            && event.detail["source"] == "strong_think"
+    }));
+}
+
+#[tokio::test]
 async fn handler_requested_nested_effect_must_be_allowed_by_program_boundary() {
     let weak = SequenceHandler::new(vec![Ok(HandlerDecision::RequestEffect {
         effect: EffectCall::Think {
@@ -532,6 +563,52 @@ async fn program_patch_is_validated_and_recorded_without_mutating_active_stack()
 }
 
 #[tokio::test]
+async fn program_patch_cannot_resume_non_null_captured_continuation() {
+    let weak = SequenceHandler::new(vec![Ok(return_value(
+        action_value("m1", "weak_model"),
+        0.20,
+    ))]);
+    let strong = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgramPatch {
+        patch: ProgramPatch {
+            target_program_id: "single_weak".to_owned(),
+            patch_id: "p1".to_owned(),
+            operations: vec![PatchOp::UpdateAcceptancePolicy {
+                function: "main".to_owned(),
+                pc: 0,
+                acceptance: accept(0.1),
+            }],
+            rationale: "future runs can lower confidence threshold".to_owned(),
+        },
+        rationale: "propose patch".to_owned(),
+    })]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let error = runtime
+        .run_program(single_weak_program(), message("m1", "send proposal"))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("return_program_patch cannot satisfy expected_schema that rejects null")
+    );
+    let frame = strong.calls()[0].effect_frame.as_ref().unwrap().clone();
+    assert!(
+        !frame
+            .allowed_decisions
+            .contains(&AllowedDecision::ReturnProgramPatch)
+    );
+    assert!(
+        !trace
+            .events()
+            .iter()
+            .any(|event| event.event == "patch_validated")
+    );
+}
+
+#[tokio::test]
 async fn strong_return_value_must_match_expected_schema_before_resume() {
     let weak = SequenceHandler::new(vec![Ok(return_value(
         action_value("m1", "weak_model"),
@@ -571,6 +648,15 @@ fn action_value(event_id: &str, source: &str) -> Value {
         "title": "Send proposal",
         "datetime_hint": null,
         "source": source,
+    })
+}
+
+fn action_without_source(event_id: &str) -> Value {
+    json!({
+        "event_id": event_id,
+        "kind": "create_task",
+        "title": "Send proposal",
+        "datetime_hint": null,
     })
 }
 
