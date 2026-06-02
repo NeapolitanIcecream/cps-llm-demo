@@ -418,8 +418,16 @@ fn eval_expr(env: &Map<String, Value>, expr: &JsonExpr) -> Result<Value> {
             .ok_or_else(|| anyhow!("variable {name} is not defined")),
         JsonExpr::Object { fields } => {
             let mut object = Map::new();
-            for (key, value_expr) in fields {
-                object.insert(key.clone(), eval_expr(env, value_expr)?);
+            for field in fields {
+                if object
+                    .insert(field.name.clone(), eval_expr(env, &field.value)?)
+                    .is_some()
+                {
+                    return Err(anyhow!(
+                        "object expression field {} was defined more than once",
+                        field.name
+                    ));
+                }
             }
             Ok(Value::Object(object))
         }

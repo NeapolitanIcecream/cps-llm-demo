@@ -69,6 +69,7 @@ fn live_structured_output_schemas_follow_openai_strict_subset() {
         assert_no_boolean_schema(&schema, name);
         assert_no_root_schema_keyword(&schema, name);
         assert_no_numeric_format(&schema, name);
+        assert_strict_object_schemas_disallow_additional_properties(&schema, name);
     }
 }
 
@@ -101,8 +102,23 @@ fn think_decision_schema_binds_decision_to_payload_shape() {
                 "instructions": "Extract possible datetime hints."
             },
             "input": {
-                "kind": "var",
-                "name": "$input"
+                "kind": "object",
+                "fields": [
+                    {
+                        "name": "message",
+                        "value": {
+                            "kind": "var",
+                            "name": "$input"
+                        }
+                    },
+                    {
+                        "name": "fallback",
+                        "value": {
+                            "kind": "literal",
+                            "value": null
+                        }
+                    }
+                ]
             },
             "output_schema": {
                 "type": "object"
@@ -300,4 +316,42 @@ fn assert_no_root_schema_keyword(value: &Value, name: &str) {
         value.get("$schema").is_none(),
         "{name} must not include root $schema metadata"
     );
+}
+
+fn assert_strict_object_schemas_disallow_additional_properties(value: &Value, path: &str) {
+    match value {
+        Value::Object(map) => {
+            let is_object_schema = match map.get("type") {
+                Some(Value::String(type_name)) => type_name == "object",
+                Some(Value::Array(type_names)) => type_names
+                    .iter()
+                    .any(|type_name| type_name.as_str() == Some("object")),
+                _ => map.contains_key("properties"),
+            };
+
+            if is_object_schema {
+                assert_eq!(
+                    map.get("additionalProperties"),
+                    Some(&Value::Bool(false)),
+                    "strict object schema must set additionalProperties=false at {path}"
+                );
+            }
+
+            for (key, child) in map {
+                assert_strict_object_schemas_disallow_additional_properties(
+                    child,
+                    &format!("{path}.{key}"),
+                );
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                assert_strict_object_schemas_disallow_additional_properties(
+                    child,
+                    &format!("{path}[{index}]"),
+                );
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
 }

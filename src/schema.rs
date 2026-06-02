@@ -68,36 +68,50 @@ pub fn think_decision_schema() -> Value {
         "required": ["name", "instructions"]
     });
 
-    let json_expr = json!({
-        "anyOf": [
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "kind": { "type": "string", "enum": ["literal"] },
-                    "value": {}
+    let json_expr_defs = json!({
+        "JsonExpr": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": { "type": "string", "enum": ["literal"] },
+                        "value": {}
+                    },
+                    "required": ["kind", "value"]
                 },
-                "required": ["kind", "value"]
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": { "type": "string", "enum": ["var"] },
+                        "name": { "type": "string" }
+                    },
+                    "required": ["kind", "name"]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": { "type": "string", "enum": ["object"] },
+                        "fields": {
+                            "type": "array",
+                            "items": { "$ref": "#/$defs/JsonObjectField" }
+                        }
+                    },
+                    "required": ["kind", "fields"]
+                }
+            ]
+        },
+        "JsonObjectField": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "name": { "type": "string" },
+                "value": { "$ref": "#/$defs/JsonExpr" }
             },
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "kind": { "type": "string", "enum": ["var"] },
-                    "name": { "type": "string" }
-                },
-                "required": ["kind", "name"]
-            },
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "kind": { "type": "string", "enum": ["object"] },
-                    "fields": { "type": "object" }
-                },
-                "required": ["kind", "fields"]
-            }
-        ]
+            "required": ["name", "value"]
+        }
     });
 
     let resume = json!({
@@ -123,7 +137,7 @@ pub fn think_decision_schema() -> Value {
             "decision": { "type": "string", "enum": ["request_weak_probe"] },
             "out": { "type": "string" },
             "task": weak_task_spec,
-            "input": json_expr,
+            "input": { "$ref": "#/$defs/JsonExpr" },
             "output_schema": {},
             "min_confidence": {
                 "type": "number",
@@ -156,6 +170,7 @@ pub fn think_decision_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
+        "$defs": json_expr_defs,
         "properties": {
             "think_decision": {
                 "anyOf": [

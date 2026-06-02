@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use cps_llm_demo::effects::{Continuation, EffectFrame, ThinkDecision};
 use cps_llm_demo::models::{StrongModel, WeakModel, WeakTaskResult};
-use cps_llm_demo::program::{Instr, JsonExpr, Program, WeakTaskSpec};
+use cps_llm_demo::program::{Instr, JsonExpr, JsonObjectField, Program, WeakTaskSpec};
 use cps_llm_demo::runtime::Runtime;
 use cps_llm_demo::schema::{action_draft_schema, message_event_schema};
 use cps_llm_demo::trace::TraceCollector;
@@ -449,19 +449,20 @@ fn single_weak_program() -> Program {
 }
 
 fn two_stage_program() -> Program {
-    let mut fields = BTreeMap::new();
-    fields.insert(
-        "message".to_owned(),
-        JsonExpr::Var {
-            name: "$input".to_owned(),
+    let fields = vec![
+        JsonObjectField {
+            name: "message".to_owned(),
+            value: JsonExpr::Var {
+                name: "$input".to_owned(),
+            },
         },
-    );
-    fields.insert(
-        "intent".to_owned(),
-        JsonExpr::Var {
+        JsonObjectField {
             name: "intent".to_owned(),
+            value: JsonExpr::Var {
+                name: "intent".to_owned(),
+            },
         },
-    );
+    ];
 
     Program {
         program_id: "message_action_two_stage_v1".to_owned(),

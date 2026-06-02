@@ -63,16 +63,22 @@
       },
       "input": {
         "kind": "object",
-        "fields": {
-          "message": {
-            "kind": "var",
-            "name": "$input"
+        "fields": [
+          {
+            "name": "message",
+            "value": {
+              "kind": "var",
+              "name": "$input"
+            }
           },
-          "intent": {
-            "kind": "var",
-            "name": "intent"
+          {
+            "name": "intent",
+            "value": {
+              "kind": "var",
+              "name": "intent"
+            }
           }
-        }
+        ]
       },
       "output_schema": {
         "type": "object",

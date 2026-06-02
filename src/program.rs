@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -65,7 +63,13 @@ impl Instr {
 pub enum JsonExpr {
     Literal { value: Value },
     Var { name: String },
-    Object { fields: BTreeMap<String, JsonExpr> },
+    Object { fields: Vec<JsonObjectField> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct JsonObjectField {
+    pub name: String,
+    pub value: JsonExpr,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
