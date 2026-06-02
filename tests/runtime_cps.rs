@@ -1105,11 +1105,11 @@ async fn nested_non_compile_return_program_decision_is_rejected() {
 }
 
 #[tokio::test]
-async fn compile_program_return_program_decision_is_allowed() {
+async fn compile_program_return_program_decision_uses_requested_contract() {
     let weak = SequenceHandler::empty();
     let strong = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgram {
         program: pure_program(),
-        rationale: "compiled Program IR".to_owned(),
+        rationale: "compiled Program IR with stale schemas".to_owned(),
     })]);
     let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
 
@@ -1119,6 +1119,8 @@ async fn compile_program_return_program_decision_is_allowed() {
         .unwrap();
 
     assert_eq!(output["program_id"], json!("pure_projection"));
+    assert_eq!(output["input_schema"], message_event_schema());
+    assert_eq!(output["output_schema"], action_draft_schema());
     assert!(weak.calls().is_empty());
     assert_eq!(strong.calls().len(), 1);
     assert!(matches!(
@@ -1128,6 +1130,49 @@ async fn compile_program_return_program_decision_is_allowed() {
             ..
         }
     ));
+}
+
+#[tokio::test]
+async fn nested_compile_program_return_program_decision_uses_requested_contract() {
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::new(vec![
+        Ok(HandlerDecision::RequestEffect {
+            effect: EffectCall::CompileProgram {
+                strength: ModelStrength::Strong,
+                task_spec: "compile a nested processor".to_owned(),
+                input_schema: message_event_schema(),
+                output_schema: action_draft_schema(),
+            },
+            input: json!({}),
+            expected_schema: program_schema(),
+            mode: EffectReturnMode::UseAsValue,
+            rationale: "ask a nested compiler".to_owned(),
+        }),
+        Ok(HandlerDecision::ReturnProgram {
+            program: pure_program(),
+            rationale: "nested compiled Program IR with stale schemas".to_owned(),
+        }),
+    ]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let output = runtime
+        .run_program(nested_compile_program_return_program_program(), json!({}))
+        .await
+        .unwrap();
+
+    assert_eq!(output["program_id"], json!("pure_projection"));
+    assert_eq!(output["input_schema"], message_event_schema());
+    assert_eq!(output["output_schema"], action_draft_schema());
+    assert!(weak.calls().is_empty());
+    assert_eq!(strong.calls().len(), 2);
+    assert!(
+        trace
+            .events()
+            .iter()
+            .any(|event| event.event == "request_nested_effect"
+                && event.detail["to_effect"] == json!("compile_program"))
+    );
 }
 
 #[tokio::test]
@@ -1881,8 +1926,8 @@ fn compile_program_return_program_program() -> Program {
                     effect: EffectCall::CompileProgram {
                         strength: ModelStrength::Strong,
                         task_spec: "compile a pure projection program".to_owned(),
-                        input_schema: json!({}),
-                        output_schema: json!({}),
+                        input_schema: message_event_schema(),
+                        output_schema: action_draft_schema(),
                     },
                     input: JsonExpr::Literal { value: json!({}) },
                     expected_schema: program_schema(),
@@ -1906,6 +1951,47 @@ fn compile_program_return_program_program() -> Program {
         allowed_effects: vec![EffectPermission::CompileProgram {
             strength: ModelStrength::Strong,
         }],
+    }
+}
+
+fn nested_compile_program_return_program_program() -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: program_schema(),
+            body: vec![
+                Instr::Perform {
+                    out: "compiled".to_owned(),
+                    effect: strong_task("nested_compile_program"),
+                    input: JsonExpr::Literal { value: json!({}) },
+                    expected_schema: program_schema(),
+                    acceptance: accept(0.0),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "compiled".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    Program {
+        program_id: "nested_compile_program_return_program".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: program_schema(),
+        functions,
+        allowed_effects: vec![
+            EffectPermission::ModelTask {
+                strength: ModelStrength::Strong,
+            },
+            EffectPermission::CompileProgram {
+                strength: ModelStrength::Strong,
+            },
+        ],
     }
 }
 

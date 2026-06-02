@@ -617,7 +617,14 @@ where
                         trace_return_value_schema_valid(&effect, &expected_schema, value),
                     ),
                     HandlerDecision::ReturnProgram { program, .. } => Some(
-                        validate_value(&program_schema(), &serde_json::to_value(program)?).is_ok(),
+                        validate_value(
+                            &program_schema(),
+                            &serde_json::to_value(program_with_compile_contract(
+                                &effect,
+                                program.clone(),
+                            ))?,
+                        )
+                        .is_ok(),
                     ),
                     HandlerDecision::ReturnProgramFragment { fragment, .. } => {
                         Some(validate_fragment(fragment).is_ok())
@@ -759,6 +766,7 @@ where
                         }
                     }
                     HandlerDecision::ReturnProgram { program, .. } => {
+                        let program = program_with_compile_contract(&effect, program);
                         validate_program(&program).context("handler returned invalid Program")?;
                         return Ok(EffectResolution {
                             value: serde_json::to_value(program)?,
@@ -1420,6 +1428,21 @@ fn source_for_effect(effect: &EffectCall) -> (ObservationSource, &'static str) {
         } => (ObservationSource::WeakModel, WEAK_MODEL_SOURCE),
         EffectCall::LocalTool { .. } => (ObservationSource::LocalTool, LOCAL_TOOL_SOURCE),
     }
+}
+
+fn program_with_compile_contract(effect: &EffectCall, mut program: Program) -> Program {
+    let EffectCall::CompileProgram {
+        input_schema,
+        output_schema,
+        ..
+    } = effect
+    else {
+        return program;
+    };
+
+    program.input_schema = input_schema.clone();
+    program.output_schema = output_schema.clone();
+    program
 }
 
 fn is_probability(value: f32) -> bool {
