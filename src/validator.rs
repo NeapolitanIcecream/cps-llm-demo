@@ -116,6 +116,10 @@ fn validate_function(
     validate_json_schema(&function.output_schema)
         .map_err(|err| anyhow!("function {name} output_schema is invalid: {err}"))?;
 
+    if !matches!(function.body.last(), Some(Instr::Return { .. })) {
+        return Err(anyhow!("function {name} must end with return"));
+    }
+
     let mut defined = function.params.iter().cloned().collect::<BTreeSet<_>>();
     if input_is_bound {
         defined.insert("$input".to_owned());

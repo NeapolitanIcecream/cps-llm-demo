@@ -456,6 +456,7 @@ where
                         caller_function: state.top_frame()?.function.clone(),
                         caller_pc: pc + 1,
                         var: out,
+                        expected_schema: None,
                     },
                 )?;
                 Ok(StepOutcome::Continue)
@@ -517,6 +518,7 @@ where
                         "function_count": fragment.functions.len(),
                     }),
                 );
+                let fragment_output_schema = fragment.output_schema.clone();
                 let entry = self.install_fragment(state, fragment)?;
                 let arg_values = eval_exprs(&state.top_frame()?.env, &args)?;
                 self.push_call_frame(
@@ -527,6 +529,7 @@ where
                         caller_function: state.top_frame()?.function.clone(),
                         caller_pc: pc + 1,
                         var: out,
+                        expected_schema: Some(fragment_output_schema),
                     },
                 )?;
                 Ok(StepOutcome::Continue)
@@ -1048,7 +1051,16 @@ where
 
         state.stack.pop();
         match return_to {
-            ReturnSlot::Call { caller_pc, var, .. } => {
+            ReturnSlot::Call {
+                caller_pc,
+                var,
+                expected_schema,
+                ..
+            } => {
+                if let Some(expected_schema) = expected_schema {
+                    validate_value(&expected_schema, &output)
+                        .context("dynamic call output failed fragment output_schema")?;
+                }
                 let caller = state.top_frame_mut()?;
                 caller.env.insert(var, output);
                 caller.pc = caller_pc;

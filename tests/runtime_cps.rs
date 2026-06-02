@@ -225,6 +225,52 @@ fn zero_param_helper_cannot_reference_input() {
 }
 
 #[test]
+fn functions_must_end_with_return_during_validation() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: message_event_schema(),
+            body: vec![Instr::Let {
+                var: "copy".to_owned(),
+                expr: JsonExpr::Var {
+                    name: "message".to_owned(),
+                },
+            }],
+        },
+    );
+    functions.insert(
+        "empty_helper".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({}),
+            body: Vec::new(),
+        },
+    );
+    let program = Program {
+        program_id: "missing_terminal_return".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: message_event_schema(),
+        functions,
+        allowed_effects: Vec::new(),
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("function empty_helper must end with return")
+            || error
+                .to_string()
+                .contains("function main must end with return")
+    );
+}
+
+#[test]
 fn local_tool_perform_is_rejected_during_validation() {
     let mut functions = BTreeMap::new();
     functions.insert(
@@ -663,6 +709,27 @@ async fn generated_program_fragment_cannot_expand_effect_boundary() {
 }
 
 #[tokio::test]
+async fn dynamic_fragment_return_must_match_fragment_output_schema() {
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::empty();
+    let runtime = Runtime::new(weak, strong, TraceCollector::default());
+
+    let error = runtime
+        .run_program(
+            dynamic_fragment_schema_program(),
+            message("m1", "send proposal"),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("dynamic call output failed fragment output_schema")
+    );
+}
+
+#[tokio::test]
 async fn program_patch_is_validated_and_recorded_without_mutating_active_stack() {
     let weak = SequenceHandler::empty();
     let strong = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgramPatch {
@@ -974,6 +1041,70 @@ fn generated_processor_fragment() -> ProgramFragment {
         input_schema: message_event_schema(),
         output_schema: action_draft_schema(),
         allowed_effects: vec![EffectPermission::Think],
+    }
+}
+
+fn dynamic_fragment_schema_program() -> Program {
+    let mut fragment_functions = BTreeMap::new();
+    fragment_functions.insert(
+        "generated_processor".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: json!({}),
+            body: vec![Instr::Return {
+                value: JsonExpr::Literal {
+                    value: json!({ "not": "a string" }),
+                },
+            }],
+        },
+    );
+    let fragment = ProgramFragment {
+        functions: fragment_functions,
+        entry: "generated_processor".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: json!({ "type": "string" }),
+        allowed_effects: Vec::new(),
+    };
+
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: json!({}),
+            body: vec![
+                Instr::Let {
+                    var: "processor".to_owned(),
+                    expr: JsonExpr::Literal {
+                        value: serde_json::to_value(fragment).unwrap(),
+                    },
+                },
+                Instr::CallDynamic {
+                    out: "result".to_owned(),
+                    fragment: JsonExpr::Var {
+                        name: "processor".to_owned(),
+                    },
+                    args: vec![JsonExpr::Var {
+                        name: "message".to_owned(),
+                    }],
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "result".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+
+    Program {
+        program_id: "dynamic_fragment_schema".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: json!({}),
+        functions,
+        allowed_effects: Vec::new(),
     }
 }
 
