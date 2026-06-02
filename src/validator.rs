@@ -277,12 +277,20 @@ fn validate_supported_effect_call(
                 "weak compile_program effects are not supported until weak compile handlers are implemented at {function_name}:{pc}"
             ));
         }
-        EffectCall::ModelTask { .. }
-        | EffectCall::Think { .. }
-        | EffectCall::CompileProgram {
+        EffectCall::CompileProgram {
             strength: ModelStrength::Strong,
+            input_schema,
+            output_schema,
             ..
-        } => {}
+        } => {
+            validate_json_schema(input_schema).map_err(|err| {
+                anyhow!("compile_program input_schema is invalid at {function_name}:{pc}: {err}")
+            })?;
+            validate_json_schema(output_schema).map_err(|err| {
+                anyhow!("compile_program output_schema is invalid at {function_name}:{pc}: {err}")
+            })?;
+        }
+        EffectCall::ModelTask { .. } | EffectCall::Think { .. } => {}
     }
     Ok(())
 }

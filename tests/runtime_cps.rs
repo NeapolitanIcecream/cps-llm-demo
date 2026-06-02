@@ -430,6 +430,56 @@ fn weak_compile_program_is_rejected_during_validation() {
     );
 }
 
+#[test]
+fn strong_compile_program_contract_schemas_are_validated() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["request".to_owned()],
+            output_schema: json!({}),
+            body: vec![
+                Instr::Perform {
+                    out: "compiled".to_owned(),
+                    effect: EffectCall::CompileProgram {
+                        strength: ModelStrength::Strong,
+                        task_spec: "compile a tiny demo program".to_owned(),
+                        input_schema: json!({ "type": "object" }),
+                        output_schema: json!({ "type": "not_a_json_schema_type" }),
+                    },
+                    input: JsonExpr::Literal { value: json!({}) },
+                    expected_schema: json!({}),
+                    acceptance: accept(0.0),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "compiled".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    let program = Program {
+        program_id: "strong_compile_invalid_contract".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({ "type": "object" }),
+        output_schema: json!({}),
+        functions,
+        allowed_effects: vec![EffectPermission::CompileProgram {
+            strength: ModelStrength::Strong,
+        }],
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("compile_program output_schema is invalid")
+    );
+}
+
 #[tokio::test]
 async fn weak_model_only_runs_when_program_performs_weak_effect() {
     let weak = SequenceHandler::new(vec![Ok(return_value(
@@ -934,6 +984,52 @@ async fn program_patch_is_validated_and_recorded_without_mutating_active_stack()
             .events()
             .iter()
             .any(|event| event.event == "patch_validated")
+    );
+}
+
+#[tokio::test]
+async fn weak_model_patch_decision_is_rejected_for_direct_requests() {
+    let weak = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgramPatch {
+        patch: ProgramPatch {
+            target_program_id: "direct_weak_patch".to_owned(),
+            patch_id: "p1".to_owned(),
+            operations: vec![PatchOp::UpdateAcceptancePolicy {
+                function: "main".to_owned(),
+                pc: 0,
+                acceptance: accept(0.1),
+            }],
+            rationale: "weak handler should not be able to propose host patches".to_owned(),
+        },
+        rationale: "try to propose patch from direct weak task".to_owned(),
+    })]);
+    let strong = SequenceHandler::empty();
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let error = runtime
+        .run_program(direct_weak_patch_program(), json!({}))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "handler decision return_program_patch is not allowed for weak_model request"
+        )
+    );
+    assert_eq!(weak.calls().len(), 1);
+    assert!(strong.calls().is_empty());
+    assert!(
+        trace
+            .events()
+            .iter()
+            .any(|event| event.event == "handler_decision"
+                && event.detail["decision"] == json!("return_program_patch"))
+    );
+    assert!(
+        !trace
+            .events()
+            .iter()
+            .any(|event| event.event == "patch_proposed" || event.event == "patch_validated")
     );
 }
 
@@ -1559,6 +1655,42 @@ fn patch_program() -> Program {
         output_schema: json!({ "type": "null" }),
         functions,
         allowed_effects: vec![EffectPermission::Think],
+    }
+}
+
+fn direct_weak_patch_program() -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({ "type": "null" }),
+            body: vec![
+                Instr::Perform {
+                    out: "patch_ack".to_owned(),
+                    effect: weak_task("direct_patch_attempt"),
+                    input: JsonExpr::Literal { value: json!({}) },
+                    expected_schema: json!({ "type": "null" }),
+                    acceptance: accept(0.0),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "patch_ack".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    Program {
+        program_id: "direct_weak_patch".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({ "type": "null" }),
+        functions,
+        allowed_effects: vec![EffectPermission::ModelTask {
+            strength: ModelStrength::Weak,
+        }],
     }
 }
 

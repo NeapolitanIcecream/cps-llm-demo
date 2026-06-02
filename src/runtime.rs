@@ -639,7 +639,11 @@ where
                         "depth": depth,
                     }),
                 );
-                ensure_captured_decision_allowed(request.effect_frame.as_ref(), &decision)?;
+                ensure_handler_decision_allowed(
+                    handler_name,
+                    request.effect_frame.as_ref(),
+                    &decision,
+                )?;
 
                 match decision {
                     HandlerDecision::ReturnValue {
@@ -1350,6 +1354,23 @@ fn ensure_captured_decision_allowed(
             frame.effect_id
         ))
     }
+}
+
+fn ensure_handler_decision_allowed(
+    handler_name: &str,
+    effect_frame: Option<&EffectFrame>,
+    decision: &HandlerDecision,
+) -> Result<()> {
+    ensure_captured_decision_allowed(effect_frame, decision)?;
+    if effect_frame.is_none()
+        && handler_name != "strong_model"
+        && matches!(decision, HandlerDecision::ReturnProgramPatch { .. })
+    {
+        return Err(anyhow!(
+            "handler decision return_program_patch is not allowed for {handler_name} request"
+        ));
+    }
+    Ok(())
 }
 
 fn allowed_decision_for(decision: &HandlerDecision) -> Option<AllowedDecision> {
