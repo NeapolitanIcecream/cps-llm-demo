@@ -406,6 +406,104 @@ async fn strong_chained_weak_probe_can_reference_prior_probe_output() {
 }
 
 #[tokio::test]
+async fn weak_probe_binding_survives_resume_for_program_continuation() {
+    let weak = SequenceWeak::new(vec![
+        Ok(weak_result(action_value("weak_model"), 0.20)),
+        Ok(weak_result(json!({ "kind": "create_task" }), 0.92)),
+    ]);
+    let strong = SequenceStrong::new(vec![
+        Ok(ThinkDecision::RequestWeakProbe {
+            out: "intent".to_owned(),
+            task: WeakTaskSpec {
+                name: "classify_intent".to_owned(),
+                instructions: "Classify intent only.".to_owned(),
+            },
+            input: JsonExpr::Var {
+                name: "$input".to_owned(),
+            },
+            output_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind"],
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+                    }
+                }
+            }),
+            min_confidence: 0.50,
+            rationale: "need intent before resuming".to_owned(),
+        }),
+        Ok(ThinkDecision::ResumeWithValue {
+            value: action_value("strong_think"),
+            confidence: 0.86,
+            rationale: "resume with repaired draft".to_owned(),
+        }),
+    ]);
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+    let program = Program {
+        program_id: "probe_binding_survives_resume".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["draft", "intent_kind"],
+            "properties": {
+                "draft": action_draft_schema(),
+                "intent_kind": { "type": "string" }
+            }
+        }),
+        instructions: vec![
+            Instr::WeakCall {
+                out: "draft".to_owned(),
+                task: WeakTaskSpec {
+                    name: "classify_and_extract_action_draft".to_owned(),
+                    instructions: "Return a complete action draft.".to_owned(),
+                },
+                input: JsonExpr::Var {
+                    name: "$input".to_owned(),
+                },
+                output_schema: action_draft_schema(),
+                min_confidence: 0.80,
+            },
+            Instr::Project {
+                out: "intent_kind".to_owned(),
+                from: JsonExpr::Var {
+                    name: "intent".to_owned(),
+                },
+                path: vec!["kind".to_owned()],
+            },
+            Instr::Finish {
+                value: JsonExpr::Object {
+                    fields: vec![
+                        JsonObjectField {
+                            name: "draft".to_owned(),
+                            value: JsonExpr::Var {
+                                name: "draft".to_owned(),
+                            },
+                        },
+                        JsonObjectField {
+                            name: "intent_kind".to_owned(),
+                            value: JsonExpr::Var {
+                                name: "intent_kind".to_owned(),
+                            },
+                        },
+                    ],
+                },
+            },
+        ],
+    };
+
+    let output = runtime.run_program(program, message()).await.unwrap();
+
+    assert_eq!(output["draft"]["source"], "strong_think");
+    assert_eq!(output["intent_kind"], "create_task");
+    assert_eq!(weak.calls().len(), 2);
+    assert_eq!(strong.calls().len(), 2);
+}
+
+#[tokio::test]
 async fn guard_think_resumes_with_value_for_failed_schema_contract() {
     let weak = SequenceWeak::empty();
     let strong = SequenceStrong::new(vec![Ok(ThinkDecision::ResumeWithValue {

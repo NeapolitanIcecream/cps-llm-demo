@@ -106,8 +106,7 @@ where
                 StepOutcome::Finished(value) => return Ok(value),
                 StepOutcome::Effect(frame) => {
                     let frame = *frame;
-                    let continuation = frame.continuation.clone();
-                    let value = self.handle_think(frame, &state.trace_id).await?;
+                    let (continuation, value) = self.handle_think(frame, &state.trace_id).await?;
                     self.trace.emit(
                         "resume_continuation",
                         &state.trace_id,
@@ -295,7 +294,11 @@ where
         }
     }
 
-    async fn handle_think(&self, mut frame: EffectFrame, trace_id: &str) -> Result<Value> {
+    async fn handle_think(
+        &self,
+        mut frame: EffectFrame,
+        trace_id: &str,
+    ) -> Result<(Continuation, Value)> {
         for _ in 0..MAX_THINK_TURNS_PER_FRAME {
             let decision = self.strong.think(&frame).await?;
             self.trace.emit(
@@ -311,7 +314,7 @@ where
                 ThinkDecision::ResumeWithValue { value, .. } => {
                     validate_value(&frame.continuation.expected_schema, &value)
                         .context("strong ResumeWithValue failed expected schema")?;
-                    return Ok(value);
+                    return Ok((frame.continuation, value));
                 }
                 ThinkDecision::RequestWeakProbe {
                     out,
