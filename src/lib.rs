@@ -1,9 +1,9 @@
 pub mod cli;
 pub mod config;
-pub mod domain;
 pub mod effects;
 pub mod error;
 pub mod models;
+pub mod program;
 pub mod responses_client;
 pub mod runtime;
 pub mod schema;

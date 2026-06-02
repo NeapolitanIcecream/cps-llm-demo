@@ -1,0 +1,74 @@
+{
+  "program_id": "message_action_v1",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["event_id", "text"],
+    "properties": {
+      "event_id": { "type": "string" },
+      "text": { "type": "string" }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["event_id", "kind", "title", "datetime_hint", "source"],
+    "properties": {
+      "event_id": { "type": "string" },
+      "kind": {
+        "type": "string",
+        "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+      },
+      "title": { "type": "string" },
+      "datetime_hint": {
+        "anyOf": [{ "type": "string" }, { "type": "null" }]
+      },
+      "source": {
+        "type": "string",
+        "enum": ["weak_model", "strong_think"]
+      }
+    }
+  },
+  "instructions": [
+    {
+      "op": "weak_call",
+      "out": "draft",
+      "task": {
+        "name": "classify_and_extract_action_draft",
+        "instructions": "Given one message event, classify whether it should be ignored, converted into a task, converted into a calendar event, or drafted as a reply. Return a complete action draft JSON object. Do not rely on keyword matching alone; interpret the message semantically."
+      },
+      "input": {
+        "kind": "var",
+        "name": "$input"
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "kind", "title", "datetime_hint", "source"],
+        "properties": {
+          "event_id": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+          },
+          "title": { "type": "string" },
+          "datetime_hint": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }]
+          },
+          "source": {
+            "type": "string",
+            "enum": ["weak_model", "strong_think"]
+          }
+        }
+      },
+      "min_confidence": 0.8
+    },
+    {
+      "op": "finish",
+      "value": {
+        "kind": "var",
+        "name": "draft"
+      }
+    }
+  ]
+}
