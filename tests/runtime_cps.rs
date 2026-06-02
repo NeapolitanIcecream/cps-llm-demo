@@ -790,6 +790,56 @@ async fn dynamic_fragment_return_must_match_fragment_output_schema() {
 }
 
 #[tokio::test]
+async fn dynamic_fragment_input_must_match_fragment_input_schema() {
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::empty();
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak, strong, trace.clone());
+
+    let error = runtime
+        .run_program(dynamic_fragment_input_schema_program(), json!({}))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("dynamic call input failed fragment input_schema")
+    );
+    assert!(
+        !trace
+            .events()
+            .iter()
+            .any(|event| event.event == "program_fragment_installed")
+    );
+}
+
+#[tokio::test]
+async fn dynamic_fragment_rejects_unenforceable_multi_param_input_contract() {
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::empty();
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak, strong, trace.clone());
+
+    let error = runtime
+        .run_program(dynamic_fragment_multi_param_schema_program(), json!({}))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("fragment input_schema can only be enforced for exactly one entry parameter")
+    );
+    assert!(
+        !trace
+            .events()
+            .iter()
+            .any(|event| event.event == "program_fragment_installed")
+    );
+}
+
+#[tokio::test]
 async fn program_patch_is_validated_and_recorded_without_mutating_active_stack() {
     let weak = SequenceHandler::empty();
     let strong = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgramPatch {
@@ -1162,6 +1212,139 @@ fn dynamic_fragment_schema_program() -> Program {
         version: "1.0.0".to_owned(),
         entry: "main".to_owned(),
         input_schema: message_event_schema(),
+        output_schema: json!({}),
+        functions,
+        allowed_effects: Vec::new(),
+    }
+}
+
+fn dynamic_fragment_input_schema_program() -> Program {
+    let mut fragment_functions = BTreeMap::new();
+    fragment_functions.insert(
+        "generated_processor".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: json!({}),
+            body: vec![Instr::Return {
+                value: JsonExpr::Var {
+                    name: "message".to_owned(),
+                },
+            }],
+        },
+    );
+    let fragment = ProgramFragment {
+        functions: fragment_functions,
+        entry: "generated_processor".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: json!({}),
+        allowed_effects: Vec::new(),
+    };
+
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({}),
+            body: vec![
+                Instr::Let {
+                    var: "processor".to_owned(),
+                    expr: JsonExpr::Literal {
+                        value: serde_json::to_value(fragment).unwrap(),
+                    },
+                },
+                Instr::CallDynamic {
+                    out: "result".to_owned(),
+                    fragment: JsonExpr::Var {
+                        name: "processor".to_owned(),
+                    },
+                    args: vec![JsonExpr::Literal {
+                        value: json!({ "event_id": "m1" }),
+                    }],
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "result".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+
+    Program {
+        program_id: "dynamic_fragment_input_schema".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({}),
+        functions,
+        allowed_effects: Vec::new(),
+    }
+}
+
+fn dynamic_fragment_multi_param_schema_program() -> Program {
+    let mut fragment_functions = BTreeMap::new();
+    fragment_functions.insert(
+        "generated_processor".to_owned(),
+        FunctionDef {
+            params: vec!["left".to_owned(), "right".to_owned()],
+            output_schema: json!({}),
+            body: vec![Instr::Return {
+                value: JsonExpr::Var {
+                    name: "left".to_owned(),
+                },
+            }],
+        },
+    );
+    let fragment = ProgramFragment {
+        functions: fragment_functions,
+        entry: "generated_processor".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: json!({}),
+        allowed_effects: Vec::new(),
+    };
+
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({}),
+            body: vec![
+                Instr::Let {
+                    var: "processor".to_owned(),
+                    expr: JsonExpr::Literal {
+                        value: serde_json::to_value(fragment).unwrap(),
+                    },
+                },
+                Instr::CallDynamic {
+                    out: "result".to_owned(),
+                    fragment: JsonExpr::Var {
+                        name: "processor".to_owned(),
+                    },
+                    args: vec![
+                        JsonExpr::Literal {
+                            value: json!({ "event_id": "m1", "text": "left" }),
+                        },
+                        JsonExpr::Literal {
+                            value: json!({ "event_id": "m2", "text": "right" }),
+                        },
+                    ],
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "result".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+
+    Program {
+        program_id: "dynamic_fragment_multi_param_schema".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
         output_schema: json!({}),
         functions,
         allowed_effects: Vec::new(),

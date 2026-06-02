@@ -519,8 +519,9 @@ where
                     }),
                 );
                 let fragment_output_schema = fragment.output_schema.clone();
-                let entry = self.install_fragment(state, fragment)?;
                 let arg_values = eval_exprs(&state.top_frame()?.env, &args)?;
+                validate_dynamic_fragment_input_contract(&fragment, &arg_values)?;
+                let entry = self.install_fragment(state, fragment)?;
                 self.push_call_frame(
                     state,
                     entry,
@@ -1197,6 +1198,34 @@ fn bind_params(params: &[String], args: Vec<Value>) -> Map<String, Value> {
         env.insert(INPUT_VAR.to_owned(), first);
     }
     env
+}
+
+fn validate_dynamic_fragment_input_contract(
+    fragment: &ProgramFragment,
+    args: &[Value],
+) -> Result<()> {
+    let entry = fragment
+        .functions
+        .get(&fragment.entry)
+        .ok_or_else(|| anyhow!("fragment entry function {} does not exist", fragment.entry))?;
+
+    if entry.params.len() != 1 {
+        return Err(anyhow!(
+            "dynamic fragment entry {} has {} params; fragment input_schema can only be enforced for exactly one entry parameter",
+            fragment.entry,
+            entry.params.len()
+        ));
+    }
+    if args.len() != 1 {
+        return Err(anyhow!(
+            "dynamic fragment entry {} expects 1 arg but got {}",
+            fragment.entry,
+            args.len()
+        ));
+    }
+
+    validate_value(&fragment.input_schema, &args[0])
+        .context("dynamic call input failed fragment input_schema")
 }
 
 fn prefix_function_refs(function: &mut FunctionDef, prefix: &str) {
