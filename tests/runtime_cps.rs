@@ -14,6 +14,7 @@ use cps_llm_demo::program::{
 use cps_llm_demo::runtime::Runtime;
 use cps_llm_demo::schema::{action_draft_schema, message_event_schema};
 use cps_llm_demo::trace::{TraceCollector, replay_trace_events};
+use cps_llm_demo::validator::validate_program;
 use serde_json::{Map, Value, json};
 
 #[derive(Clone)]
@@ -105,6 +106,87 @@ async fn program_without_perform_calls_no_model() {
     assert_eq!(output, json!("ok"));
     assert!(weak.calls().is_empty());
     assert!(strong.calls().is_empty());
+}
+
+#[test]
+fn zero_param_entry_can_reference_runtime_input() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: message_event_schema(),
+            body: vec![Instr::Return {
+                value: JsonExpr::Var {
+                    name: "$input".to_owned(),
+                },
+            }],
+        },
+    );
+    let program = Program {
+        program_id: "zero_param_entry_input".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: message_event_schema(),
+        functions,
+        allowed_effects: Vec::new(),
+    };
+
+    validate_program(&program).unwrap();
+}
+
+#[test]
+fn zero_param_helper_cannot_reference_input() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: message_event_schema(),
+            body: vec![
+                Instr::Call {
+                    out: "helper_output".to_owned(),
+                    function: "helper".to_owned(),
+                    args: Vec::new(),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "helper_output".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    functions.insert(
+        "helper".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: message_event_schema(),
+            body: vec![Instr::Return {
+                value: JsonExpr::Var {
+                    name: "$input".to_owned(),
+                },
+            }],
+        },
+    );
+    let program = Program {
+        program_id: "zero_param_helper_input".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: message_event_schema(),
+        functions,
+        allowed_effects: Vec::new(),
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("variable $input is used before it is defined")
+    );
 }
 
 #[tokio::test]
@@ -363,6 +445,49 @@ async fn weak_generated_program_fragment_can_call_strong_think() {
             && event.detail["function"] == "__fragment_0__generated_processor"
             && event.detail["op"] == "perform"
     }));
+}
+
+#[tokio::test]
+async fn generated_program_fragment_cannot_expand_effect_boundary() {
+    let weak = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgramFragment {
+        fragment: generated_processor_fragment(),
+        rationale: "generated processor".to_owned(),
+    })]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(
+        action_value("m1", "strong_think"),
+        0.94,
+    ))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+    let mut program = fractal_program();
+    program.allowed_effects = vec![EffectPermission::ModelTask {
+        strength: ModelStrength::Weak,
+    }];
+
+    let error = runtime
+        .run_program(program, message("m1", "send proposal"))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("program fragment declares effect think not allowed by program fractal_test")
+    );
+    assert_eq!(weak.calls().len(), 1);
+    assert!(strong.calls().is_empty());
+    assert!(
+        trace
+            .events()
+            .iter()
+            .any(|event| event.event == "program_fragment_validated")
+    );
+    assert!(
+        !trace
+            .events()
+            .iter()
+            .any(|event| event.event == "program_fragment_installed")
+    );
 }
 
 #[tokio::test]

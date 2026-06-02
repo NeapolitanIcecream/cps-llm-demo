@@ -11,6 +11,10 @@ use crate::program::{
 const MAX_INSTRUCTIONS_PER_FUNCTION: usize = 1024;
 
 pub fn validate_program(program: &Program) -> Result<()> {
+    validate_program_with_entry_input(program, true)
+}
+
+fn validate_program_with_entry_input(program: &Program, entry_binds_input: bool) -> Result<()> {
     if !program.functions.contains_key(&program.entry) {
         return Err(anyhow!("entry function {} does not exist", program.entry));
     }
@@ -21,7 +25,9 @@ pub fn validate_program(program: &Program) -> Result<()> {
         .map_err(|err| anyhow!("program output_schema is not a valid JSON schema: {err}"))?;
 
     for (name, function) in &program.functions {
-        validate_function(program, name, function)?;
+        let input_is_bound =
+            !function.params.is_empty() || (entry_binds_input && name == &program.entry);
+        validate_function(program, name, function, input_is_bound)?;
     }
 
     ensure_no_static_recursion(program)?;
@@ -38,7 +44,7 @@ pub fn validate_fragment(fragment: &ProgramFragment) -> Result<()> {
         functions: fragment.functions.clone(),
         allowed_effects: fragment.allowed_effects.clone(),
     };
-    validate_program(&program)
+    validate_program_with_entry_input(&program, false)
 }
 
 pub fn validate_patch(program: &Program, patch: &ProgramPatch) -> Result<Program> {
@@ -84,7 +90,12 @@ pub fn effect_allowed(allowed: &[EffectPermission], effect: &EffectCall) -> bool
     })
 }
 
-fn validate_function(program: &Program, name: &str, function: &FunctionDef) -> Result<()> {
+fn validate_function(
+    program: &Program,
+    name: &str,
+    function: &FunctionDef,
+    input_is_bound: bool,
+) -> Result<()> {
     if function.body.len() > MAX_INSTRUCTIONS_PER_FUNCTION {
         return Err(anyhow!(
             "function {name} has {} instructions, limit is {MAX_INSTRUCTIONS_PER_FUNCTION}",
@@ -96,7 +107,9 @@ fn validate_function(program: &Program, name: &str, function: &FunctionDef) -> R
         .map_err(|err| anyhow!("function {name} output_schema is invalid: {err}"))?;
 
     let mut defined = function.params.iter().cloned().collect::<BTreeSet<_>>();
-    defined.insert("$input".to_owned());
+    if input_is_bound {
+        defined.insert("$input".to_owned());
+    }
 
     for (pc, instr) in function.body.iter().enumerate() {
         validate_instr(program, name, pc, instr, &defined)?;

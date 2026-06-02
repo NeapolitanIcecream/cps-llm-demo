@@ -1103,6 +1103,15 @@ where
                 state.budget.max_program_fragments
             ));
         }
+        for permission in &fragment.allowed_effects {
+            if !state.program.allowed_effects.contains(permission) {
+                return Err(anyhow!(
+                    "program fragment declares effect {} not allowed by program {}",
+                    effect_permission_name(permission),
+                    state.program.program_id
+                ));
+            }
+        }
         let prefix = format!("__fragment_{}__", state.fragment_count);
         state.fragment_count += 1;
 
@@ -1118,12 +1127,6 @@ where
             }
             state.program.functions.insert(name, function);
         }
-        for permission in fragment.allowed_effects {
-            if !state.program.allowed_effects.contains(&permission) {
-                state.program.allowed_effects.push(permission);
-            }
-        }
-
         self.trace.emit(
             "program_fragment_installed",
             &state.trace_id,
@@ -1133,6 +1136,15 @@ where
             }),
         );
         Ok(entry)
+    }
+}
+
+fn effect_permission_name(permission: &crate::program::EffectPermission) -> &'static str {
+    match permission {
+        crate::program::EffectPermission::ModelTask { .. } => "model_task",
+        crate::program::EffectPermission::Think => "think",
+        crate::program::EffectPermission::CompileProgram { .. } => "compile_program",
+        crate::program::EffectPermission::LocalTool { .. } => "local_tool",
     }
 }
 
