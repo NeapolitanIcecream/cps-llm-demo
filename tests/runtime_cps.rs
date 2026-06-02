@@ -1073,6 +1073,129 @@ async fn strong_model_task_action_draft_map_uses_schema_accepted_source() {
 }
 
 #[tokio::test]
+async fn strong_model_task_source_label_must_validate_stamped_value() {
+    let expected_schema = json!({
+        "anyOf": [
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "source"],
+                "properties": {
+                    "kind": { "const": "diagnostic" },
+                    "source": {
+                        "type": "string",
+                        "enum": ["strong_model"]
+                    }
+                }
+            },
+            action_draft_schema()
+        ]
+    });
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.94))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let output = runtime
+        .run_program(
+            single_strong_program_with_expected_schema(
+                "single_strong_branch_sensitive_source",
+                expected_schema,
+            ),
+            message("m1", "send proposal"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output["source"], "strong_think");
+    assert!(weak.calls().is_empty());
+    assert_eq!(strong.calls().len(), 1);
+    assert!(trace.events().iter().any(|event| {
+        event.event == "handler_decision"
+            && event.detail["handler"] == "strong_model"
+            && event.detail["decision"] == "return_value"
+            && event.detail["schema_valid"] == true
+    }));
+    replay_trace_events(&trace.events()).unwrap();
+}
+
+#[tokio::test]
+async fn think_source_label_must_validate_stamped_value() {
+    let expected_schema = json!({
+        "anyOf": [
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "source"],
+                "properties": {
+                    "kind": { "const": "diagnostic" },
+                    "source": {
+                        "type": "string",
+                        "enum": ["strong_think"]
+                    }
+                }
+            },
+            action_schema_with_sources(&["strong_model"])
+        ]
+    });
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: expected_schema.clone(),
+            body: vec![
+                Instr::Perform {
+                    out: "draft".to_owned(),
+                    effect: EffectCall::Think {
+                        reason: "repair with strong thinking".to_owned(),
+                    },
+                    input: JsonExpr::Var {
+                        name: "message".to_owned(),
+                    },
+                    expected_schema: expected_schema.clone(),
+                    acceptance: accept_abort(0.8),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "draft".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    let program = Program {
+        program_id: "think_branch_sensitive_source".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: expected_schema,
+        functions,
+        allowed_effects: vec![EffectPermission::Think],
+    };
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.94))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let output = runtime
+        .run_program(program, message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    assert_eq!(output["source"], "strong_model");
+    assert!(weak.calls().is_empty());
+    assert_eq!(strong.calls().len(), 1);
+    assert!(trace.events().iter().any(|event| {
+        event.event == "handler_decision"
+            && event.detail["handler"] == "strong_model"
+            && event.detail["decision"] == "return_value"
+            && event.detail["schema_valid"] == true
+    }));
+    replay_trace_events(&trace.events()).unwrap();
+}
+
+#[tokio::test]
 async fn nested_strong_model_task_action_draft_uses_schema_accepted_source() {
     let weak = SequenceHandler::new(vec![Ok(HandlerDecision::RequestEffect {
         effect: strong_task("classify_and_extract_action_draft_strong"),

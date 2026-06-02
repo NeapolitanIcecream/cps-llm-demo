@@ -668,7 +668,7 @@ where
                         value, confidence, ..
                     } => {
                         ensure_probability(confidence, "handler return_value confidence")?;
-                        let source = source_for_effect_value(&effect, &expected_schema);
+                        let source = source_for_effect_value(&effect, &expected_schema, &value);
                         return Ok(EffectResolution {
                             value,
                             confidence,
@@ -1358,7 +1358,7 @@ fn trace_return_value_schema_valid(
     value: &Value,
 ) -> bool {
     let mut stamped = value.clone();
-    let source = source_for_effect_value(effect, expected_schema);
+    let source = source_for_effect_value(effect, expected_schema, value);
     stamp_schema_source(&mut stamped, expected_schema, source.label);
     validate_value(expected_schema, &stamped).is_ok()
 }
@@ -1438,12 +1438,26 @@ fn source_for_effect(effect: &EffectCall) -> EffectSource {
     }
 }
 
-fn source_for_effect_value(effect: &EffectCall, expected_schema: &Value) -> EffectSource {
+fn source_for_effect_value(
+    effect: &EffectCall,
+    expected_schema: &Value,
+    value: &Value,
+) -> EffectSource {
     let (observation, labels) = source_candidates_for_effect(effect);
     let label = labels
         .iter()
         .copied()
-        .find(|candidate| schema_contains_source(expected_schema, candidate))
+        .find(|candidate| {
+            let mut stamped = value.clone();
+            stamp_schema_source(&mut stamped, expected_schema, candidate);
+            validate_value(expected_schema, &stamped).is_ok()
+        })
+        .or_else(|| {
+            labels
+                .iter()
+                .copied()
+                .find(|candidate| schema_contains_source(expected_schema, candidate))
+        })
         .unwrap_or(labels[0]);
     EffectSource { observation, label }
 }
