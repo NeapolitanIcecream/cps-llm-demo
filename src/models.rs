@@ -129,6 +129,7 @@ fn weak_handler_input_json(request: &HandlerRequest) -> Result<Value> {
             remove_weak_effect_strength_from_instruction(failed_instruction);
         }
     }
+    redact_weak_provenance_from_schemas(&mut input_json);
     Ok(input_json)
 }
 
@@ -154,6 +155,43 @@ fn remove_weak_effect_strength_from_instruction(instruction: &mut Value) {
     }
     if let Some(effect) = instruction.get_mut("effect") {
         remove_weak_effect_strength(effect);
+    }
+}
+
+fn redact_weak_provenance_from_schemas(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            let source_allows_weak = object
+                .get("properties")
+                .and_then(Value::as_object)
+                .and_then(|properties| properties.get("source"))
+                .and_then(|source_schema| source_schema.get("enum"))
+                .and_then(Value::as_array)
+                .is_some_and(|allowed_sources| {
+                    allowed_sources
+                        .iter()
+                        .any(|allowed_source| allowed_source.as_str() == Some("weak_model"))
+                });
+            if source_allows_weak {
+                if let Some(properties) =
+                    object.get_mut("properties").and_then(Value::as_object_mut)
+                {
+                    properties.remove("source");
+                }
+                if let Some(required) = object.get_mut("required").and_then(Value::as_array_mut) {
+                    required.retain(|field| field.as_str() != Some("source"));
+                }
+            }
+            for child in object.values_mut() {
+                redact_weak_provenance_from_schemas(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_weak_provenance_from_schemas(item);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 

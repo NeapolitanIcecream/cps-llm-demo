@@ -134,10 +134,7 @@ async fn responses_weak_model_sends_neutral_instructions_and_request_context() {
             input: json!({
                 "message": "Please send the proposal"
             }),
-            expected_schema: json!({
-                "type": "object",
-                "additionalProperties": true
-            }),
+            expected_schema: action_draft_schema(),
             continuation_summary: None,
             effect_frame: None,
             observations: Vec::new(),
@@ -176,6 +173,20 @@ async fn responses_weak_model_sends_neutral_instructions_and_request_context() {
     assert!(
         input_context["effect"].get("strength").is_none(),
         "weak handler request context should omit internal model strength"
+    );
+    assert!(
+        input_context["expected_schema"]["properties"]
+            .get("source")
+            .is_none(),
+        "weak handler request context should omit runtime provenance source schema"
+    );
+    assert!(
+        !input_context["expected_schema"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field.as_str() == Some("source")),
+        "weak handler request context should not require runtime provenance source"
     );
 }
 
