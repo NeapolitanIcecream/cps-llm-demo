@@ -20,7 +20,7 @@ fn schema_bundle_contains_v2_runtime_contracts() {
 }
 
 #[test]
-fn weak_handler_context_uses_effect_handler_contract_names() {
+fn weak_handler_context_uses_neutral_effect_handler_wording() {
     let request_context = json!({
         "instructions": WEAK_HANDLER_INSTRUCTIONS,
         "text": {
@@ -31,9 +31,14 @@ fn weak_handler_context_uses_effect_handler_contract_names() {
         }
     });
 
+    assert!(WEAK_HANDLER_INSTRUCTIONS.contains("effect handler"));
+    assert!(
+        !WEAK_HANDLER_INSTRUCTIONS
+            .to_ascii_lowercase()
+            .contains("weak")
+    );
+
     let body = serde_json::to_string(&request_context).unwrap();
-    assert!(body.contains("WEAK effect handler"));
-    assert!(body.contains("HandlerRequest"));
     assert!(body.contains("request_effect"));
     assert!(body.contains("handler_decision"));
 }

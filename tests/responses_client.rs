@@ -1,10 +1,14 @@
-use cps_llm_demo::models::WeakTaskResult;
+use cps_llm_demo::effects::{HandlerBudget, HandlerRequest};
+use cps_llm_demo::models::{EffectHandler, ResponsesWeakModel, WeakTaskResult};
+use cps_llm_demo::program::{EffectCall, ModelStrength, ModelTaskSpec};
 use cps_llm_demo::responses_client::{ResponsesClient, ResponsesClientConfig, extract_output_text};
 use cps_llm_demo::schema::{action_draft_schema, weak_task_result_schema};
+use httpmock::HttpMockRequest;
 use httpmock::Method::POST;
 use httpmock::MockServer;
 use secrecy::SecretString;
-use serde_json::json;
+use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
 use url::Url;
 
 fn client(server: &MockServer, base_path: &str) -> ResponsesClient {
@@ -27,6 +31,13 @@ fn weak_output_text() -> String {
         rationale: "obvious meeting".to_owned(),
     })
     .unwrap()
+}
+
+fn assert_no_weak_identity(context: &str, label: &str) {
+    assert!(
+        !context.to_ascii_lowercase().contains("weak"),
+        "{label} must not self-identify the handler as weak: {context}"
+    );
 }
 
 #[test]
@@ -78,6 +89,94 @@ async fn create_structured_posts_to_responses_and_parses_top_level_output_text()
 
     assert_eq!(parsed.value["kind"], "create_calendar_event");
     mock.assert();
+}
+
+#[tokio::test]
+async fn responses_weak_model_sends_neutral_instructions_and_request_context() {
+    let server = MockServer::start();
+    let captured_body = Arc::new(Mutex::new(None::<Value>));
+    let captured_body_for_matcher = Arc::clone(&captured_body);
+    let mock = server.mock(move |when, then| {
+        let captured_body = Arc::clone(&captured_body_for_matcher);
+        when.method(POST)
+            .path("/v1/responses")
+            .is_true(move |request: &HttpMockRequest| {
+                let Ok(body) = serde_json::from_slice::<Value>(request.body_ref()) else {
+                    return false;
+                };
+                *captured_body.lock().unwrap() = Some(body);
+                true
+            });
+        then.status(200).json_body(json!({
+            "output_text": serde_json::to_string(&json!({
+                "handler_decision": {
+                    "decision": "return_value",
+                    "value": {
+                        "intent": "send_message"
+                    },
+                    "confidence": 0.91,
+                    "rationale": "clear request"
+                }
+            })).unwrap()
+        }));
+    });
+
+    let handler = ResponsesWeakModel::new(client(&server, "/v1"), "fake-weak");
+    let decision = handler
+        .handle(HandlerRequest {
+            effect: EffectCall::ModelTask {
+                strength: ModelStrength::Weak,
+                task: ModelTaskSpec {
+                    name: "classify_intent".to_owned(),
+                    instructions: "Classify the message intent.".to_owned(),
+                },
+            },
+            input: json!({
+                "message": "Please send the proposal"
+            }),
+            expected_schema: json!({
+                "type": "object",
+                "additionalProperties": true
+            }),
+            continuation_summary: None,
+            effect_frame: None,
+            observations: Vec::new(),
+            budget: HandlerBudget {
+                effect_depth: 0,
+                effects_remaining: 8,
+                handler_reentries_remaining: 2,
+            },
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(decision.decision_name(), "return_value");
+    mock.assert();
+
+    let captured_body = captured_body
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("mock should capture Responses request body");
+    assert_eq!(captured_body["model"], "fake-weak");
+
+    let instructions = captured_body["instructions"]
+        .as_str()
+        .expect("Responses body should include instructions");
+    assert_no_weak_identity(instructions, "weak handler instructions");
+
+    let input_text = captured_body["input"][0]["content"][0]["text"]
+        .as_str()
+        .expect("Responses body should include serialized input text");
+    assert_no_weak_identity(input_text, "weak handler request context");
+
+    let input_context: Value = serde_json::from_str(input_text).unwrap();
+    assert_eq!(input_context["effect"]["kind"], "model_task");
+    assert_eq!(input_context["effect"]["task"]["name"], "classify_intent");
+    assert!(
+        input_context["effect"].get("strength").is_none(),
+        "weak handler request context should omit internal model strength"
+    );
 }
 
 #[tokio::test]
