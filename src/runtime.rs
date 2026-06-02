@@ -639,6 +639,7 @@ where
                         "depth": depth,
                     }),
                 );
+                ensure_captured_decision_allowed(request.effect_frame.as_ref(), &decision)?;
 
                 match decision {
                     HandlerDecision::ReturnValue {
@@ -1324,6 +1325,44 @@ fn trace_return_value_schema_valid(
     let (_, source_label) = source_for_effect(effect);
     stamp_schema_source(&mut stamped, expected_schema, source_label);
     validate_value(expected_schema, &stamped).is_ok()
+}
+
+fn ensure_captured_decision_allowed(
+    effect_frame: Option<&EffectFrame>,
+    decision: &HandlerDecision,
+) -> Result<()> {
+    let Some(frame) = effect_frame else {
+        return Ok(());
+    };
+    let Some(allowed) = allowed_decision_for(decision) else {
+        return Err(anyhow!(
+            "handler decision {} is not allowed for captured effect frame {}",
+            decision.decision_name(),
+            frame.effect_id
+        ));
+    };
+    if frame.allowed_decisions.contains(&allowed) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "handler decision {} is not allowed for captured effect frame {}",
+            decision.decision_name(),
+            frame.effect_id
+        ))
+    }
+}
+
+fn allowed_decision_for(decision: &HandlerDecision) -> Option<AllowedDecision> {
+    match decision {
+        HandlerDecision::ReturnValue { .. } => Some(AllowedDecision::ReturnValue),
+        HandlerDecision::RequestEffect { .. } => Some(AllowedDecision::RequestEffect),
+        HandlerDecision::ReturnProgram { .. } => None,
+        HandlerDecision::ReturnProgramFragment { .. } => {
+            Some(AllowedDecision::ReturnProgramFragment)
+        }
+        HandlerDecision::ReturnProgramPatch { .. } => Some(AllowedDecision::ReturnProgramPatch),
+        HandlerDecision::Abort { .. } => Some(AllowedDecision::Abort),
+    }
 }
 
 fn schema_accepts_null(schema: &Value) -> bool {

@@ -964,11 +964,9 @@ async fn program_patch_cannot_resume_non_null_captured_continuation() {
         .await
         .unwrap_err();
 
-    assert!(
-        error
-            .to_string()
-            .contains("return_program_patch cannot satisfy expected_schema that rejects null")
-    );
+    assert!(error.to_string().contains(
+        "handler decision return_program_patch is not allowed for captured effect frame"
+    ));
     let frame = strong.calls()[0].effect_frame.as_ref().unwrap().clone();
     assert!(
         !frame
@@ -980,6 +978,51 @@ async fn program_patch_cannot_resume_non_null_captured_continuation() {
             .events()
             .iter()
             .any(|event| event.event == "patch_validated")
+    );
+}
+
+#[tokio::test]
+async fn captured_frame_rejects_return_program_decision() {
+    let weak = SequenceHandler::new(vec![Ok(return_value(json!({ "anything": "broad" }), 0.20))]);
+    let strong = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgram {
+        program: pure_program(),
+        rationale: "try to resume with a full program".to_owned(),
+    })]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let error = runtime
+        .run_program(captured_broad_schema_program(), json!({}))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("handler decision return_program is not allowed for captured effect frame")
+    );
+    let frame = strong.calls()[0].effect_frame.as_ref().unwrap().clone();
+    assert!(
+        frame
+            .allowed_decisions
+            .contains(&AllowedDecision::ReturnValue)
+    );
+    assert!(
+        frame
+            .allowed_decisions
+            .contains(&AllowedDecision::RequestEffect)
+    );
+    assert!(
+        frame
+            .allowed_decisions
+            .contains(&AllowedDecision::ReturnProgramPatch)
+    );
+    assert!(frame.allowed_decisions.contains(&AllowedDecision::Abort));
+    assert!(
+        !trace
+            .events()
+            .iter()
+            .any(|event| event.event == "resume_continuation")
     );
 }
 
@@ -1516,6 +1559,45 @@ fn patch_program() -> Program {
         output_schema: json!({ "type": "null" }),
         functions,
         allowed_effects: vec![EffectPermission::Think],
+    }
+}
+
+fn captured_broad_schema_program() -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({}),
+            body: vec![
+                Instr::Perform {
+                    out: "repair".to_owned(),
+                    effect: weak_task("broad_repair"),
+                    input: JsonExpr::Literal { value: json!({}) },
+                    expected_schema: json!({}),
+                    acceptance: accept(0.8),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "repair".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    Program {
+        program_id: "captured_broad_schema".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({}),
+        functions,
+        allowed_effects: vec![
+            EffectPermission::ModelTask {
+                strength: ModelStrength::Weak,
+            },
+            EffectPermission::Think,
+        ],
     }
 }
 
