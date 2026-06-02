@@ -14,7 +14,9 @@ use cps_llm_demo::program::{
     ProgramPatch,
 };
 use cps_llm_demo::runtime::Runtime;
-use cps_llm_demo::schema::{action_draft_schema, message_event_schema, program_schema};
+use cps_llm_demo::schema::{
+    action_draft_schema, action_drafts_schema, message_event_schema, program_schema,
+};
 use cps_llm_demo::trace::{TraceCollector, replay_trace_events};
 use cps_llm_demo::validator::validate_program;
 use serde_json::{Map, Value, json};
@@ -594,6 +596,33 @@ async fn weak_model_only_runs_when_program_performs_weak_effect() {
         .unwrap();
 
     assert_eq!(output["source"], "weak_model");
+    assert_eq!(weak.calls().len(), 1);
+    assert!(strong.calls().is_empty());
+}
+
+#[tokio::test]
+async fn weak_model_batched_action_drafts_are_source_stamped() {
+    let weak = SequenceHandler::new(vec![Ok(return_value(
+        json!([action_without_source("m1"), action_without_source("m2")]),
+        0.91,
+    ))]);
+    let strong = SequenceHandler::empty();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+    let output = runtime
+        .run_program(
+            batched_weak_program(),
+            json!([
+                message("m1", "send proposal"),
+                message("m2", "Friday 3pm review")
+            ]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output.as_array().unwrap().len(), 2);
+    assert_eq!(output[0]["source"], "weak_model");
+    assert_eq!(output[1]["source"], "weak_model");
     assert_eq!(weak.calls().len(), 1);
     assert!(strong.calls().is_empty());
 }
@@ -1496,6 +1525,47 @@ fn single_weak_program() -> Program {
             },
             EffectPermission::Think,
         ],
+    }
+}
+
+fn batched_weak_program() -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["messages".to_owned()],
+            output_schema: action_drafts_schema(),
+            body: vec![
+                Instr::Perform {
+                    out: "drafts".to_owned(),
+                    effect: weak_task("classify_and_extract_action_drafts"),
+                    input: JsonExpr::Var {
+                        name: "messages".to_owned(),
+                    },
+                    expected_schema: action_drafts_schema(),
+                    acceptance: accept_abort(0.8),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "drafts".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    Program {
+        program_id: "batched_weak".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({
+            "type": "array",
+            "items": message_event_schema()
+        }),
+        output_schema: action_drafts_schema(),
+        functions,
+        allowed_effects: vec![EffectPermission::ModelTask {
+            strength: ModelStrength::Weak,
+        }],
     }
 }
 

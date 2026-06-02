@@ -1466,15 +1466,32 @@ fn ensure_probability(value: f32, name: &str) -> Result<()> {
 }
 
 fn stamp_schema_source(value: &mut Value, schema: &Value, source: &str) {
-    if !schema_allows_source(schema, source) {
-        return;
+    if schema_allows_source(schema, source) {
+        if let Value::Object(object) = value {
+            object.insert("source".to_owned(), Value::String(source.to_owned()));
+        }
     }
 
-    let Value::Object(object) = value else {
-        return;
-    };
-
-    object.insert("source".to_owned(), Value::String(source.to_owned()));
+    match value {
+        Value::Array(items) => {
+            if let Some(item_schema) = schema.get("items") {
+                for item in items {
+                    stamp_schema_source(item, item_schema, source);
+                }
+            }
+        }
+        Value::Object(object) => {
+            let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+                return;
+            };
+            for (property, property_schema) in properties {
+                if let Some(child) = object.get_mut(property) {
+                    stamp_schema_source(child, property_schema, source);
+                }
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
 }
 
 fn schema_allows_source(schema: &Value, source: &str) -> bool {
