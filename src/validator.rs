@@ -4,8 +4,8 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 
 use crate::program::{
-    EffectCall, EffectPermission, FunctionDef, Instr, JsonExpr, ModelStrength, PatchOp, Program,
-    ProgramFragment, ProgramPatch,
+    EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardFail, Instr, JsonExpr,
+    ModelStrength, PatchOp, Program, ProgramFragment, ProgramPatch,
 };
 
 const MAX_INSTRUCTIONS_PER_FUNCTION: usize = 1024;
@@ -154,6 +154,7 @@ fn validate_instr(
             effect,
             input,
             expected_schema,
+            acceptance,
             ..
         } => {
             validate_expr(input, defined)?;
@@ -167,17 +168,34 @@ fn validate_instr(
                     effect.kind_name()
                 ));
             }
+            if matches!(
+                &acceptance.on_failure,
+                FailureHandler::CaptureToThink { .. }
+            ) {
+                ensure_think_permission(
+                    program,
+                    function_name,
+                    pc,
+                    "capture_to_think failure handler",
+                )?;
+            }
             Ok(())
         }
-        Instr::Guard { condition, .. } => match condition {
-            crate::program::GuardExpr::VarExists { name } => ensure_defined(name, defined),
-            crate::program::GuardExpr::JsonSchemaValid { var, schema } => {
-                ensure_defined(var, defined)?;
-                validate_json_schema(schema).map_err(|err| {
-                    anyhow!("guard schema is invalid at {function_name}:{pc}: {err}")
-                })
+        Instr::Guard { condition, on_fail } => {
+            match condition {
+                crate::program::GuardExpr::VarExists { name } => ensure_defined(name, defined)?,
+                crate::program::GuardExpr::JsonSchemaValid { var, schema } => {
+                    ensure_defined(var, defined)?;
+                    validate_json_schema(schema).map_err(|err| {
+                        anyhow!("guard schema is invalid at {function_name}:{pc}: {err}")
+                    })?;
+                }
             }
-        },
+            if matches!(on_fail, GuardFail::Think { .. }) {
+                ensure_think_permission(program, function_name, pc, "guard think repair")?;
+            }
+            Ok(())
+        }
         Instr::Call { function, args, .. } => {
             let target = program.functions.get(function).ok_or_else(|| {
                 anyhow!("call target function {function} does not exist at {function_name}:{pc}")
@@ -293,6 +311,25 @@ fn validate_supported_effect_call(
         EffectCall::ModelTask { .. } | EffectCall::Think { .. } => {}
     }
     Ok(())
+}
+
+fn ensure_think_permission(
+    program: &Program,
+    function_name: &str,
+    pc: usize,
+    context: &str,
+) -> Result<()> {
+    if program
+        .allowed_effects
+        .iter()
+        .any(|permission| matches!(permission, EffectPermission::Think))
+    {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "{context} requires think effect permission at {function_name}:{pc}"
+        ))
+    }
 }
 
 fn ensure_defined(name: &str, defined: &BTreeSet<String>) -> Result<()> {

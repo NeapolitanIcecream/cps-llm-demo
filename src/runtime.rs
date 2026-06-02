@@ -865,11 +865,19 @@ where
         let expected_schema = frame.continuation.expected_schema.clone();
         let continuation = frame.continuation.clone();
         let reason = frame.reason.clone();
+        let effect = EffectCall::Think { reason };
+        if !effect_allowed(&state.program.allowed_effects, &effect) {
+            return Err(anyhow!(
+                "effect {} is not allowed by program {}",
+                effect.kind_name(),
+                state.program.program_id
+            ));
+        }
         let mut resolution = self
             .resolve_effect(
                 state,
                 EffectWork {
-                    effect: EffectCall::Think { reason },
+                    effect,
                     input: serde_json::to_value(&frame)?,
                     expected_schema: expected_schema.clone(),
                     effect_frame: Some(frame),

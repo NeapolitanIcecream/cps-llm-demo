@@ -9,8 +9,9 @@ use cps_llm_demo::effects::{
 };
 use cps_llm_demo::models::EffectHandler;
 use cps_llm_demo::program::{
-    AcceptancePolicy, EffectCall, EffectPermission, FailureHandler, FunctionDef, Instr, JsonExpr,
-    ModelStrength, ModelTaskSpec, PatchOp, Program, ProgramFragment, ProgramPatch,
+    AcceptancePolicy, EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardExpr,
+    GuardFail, Instr, JsonExpr, ModelStrength, ModelTaskSpec, PatchOp, Program, ProgramFragment,
+    ProgramPatch,
 };
 use cps_llm_demo::runtime::Runtime;
 use cps_llm_demo::schema::{action_draft_schema, message_event_schema, program_schema};
@@ -480,6 +481,104 @@ fn strong_compile_program_contract_schemas_are_validated() {
     );
 }
 
+#[test]
+fn guard_think_repair_requires_think_permission_during_validation() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: message_event_schema(),
+            body: vec![
+                Instr::Guard {
+                    condition: GuardExpr::JsonSchemaValid {
+                        var: "message".to_owned(),
+                        schema: json!({
+                            "type": "object",
+                            "required": ["missing"],
+                            "properties": {
+                                "missing": { "type": "string" }
+                            }
+                        }),
+                    },
+                    on_fail: GuardFail::Think {
+                        reason: "repair message shape".to_owned(),
+                    },
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "message".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    let program = Program {
+        program_id: "guard_think_without_permission".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: message_event_schema(),
+        functions,
+        allowed_effects: Vec::new(),
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("guard think repair requires think effect permission")
+    );
+}
+
+#[test]
+fn capture_to_think_requires_think_permission_during_validation() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: action_draft_schema(),
+            body: vec![
+                Instr::Perform {
+                    out: "draft".to_owned(),
+                    effect: weak_task("classify_and_extract_action_draft"),
+                    input: JsonExpr::Var {
+                        name: "message".to_owned(),
+                    },
+                    expected_schema: action_draft_schema(),
+                    acceptance: accept(0.8),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "draft".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    let program = Program {
+        program_id: "capture_to_think_without_permission".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: action_draft_schema(),
+        functions,
+        allowed_effects: vec![EffectPermission::ModelTask {
+            strength: ModelStrength::Weak,
+        }],
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("capture_to_think failure handler requires think effect permission")
+    );
+}
+
 #[tokio::test]
 async fn weak_model_only_runs_when_program_performs_weak_effect() {
     let weak = SequenceHandler::new(vec![Ok(return_value(
@@ -652,6 +751,10 @@ async fn handler_requested_nested_effect_must_be_allowed_by_program_boundary() {
     let trace = TraceCollector::default();
     let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
     let mut program = single_weak_program();
+    let main = program.functions.get_mut("main").unwrap();
+    if let Instr::Perform { acceptance, .. } = &mut main.body[0] {
+        *acceptance = accept_abort(0.8);
+    }
     program.allowed_effects = vec![EffectPermission::ModelTask {
         strength: ModelStrength::Weak,
     }];
@@ -1813,7 +1916,7 @@ fn direct_weak_patch_program() -> Program {
                     effect: weak_task("direct_patch_attempt"),
                     input: JsonExpr::Literal { value: json!({}) },
                     expected_schema: json!({ "type": "null" }),
-                    acceptance: accept(0.0),
+                    acceptance: accept_abort(0.0),
                 },
                 Instr::Return {
                     value: JsonExpr::Var {
@@ -1931,7 +2034,7 @@ fn compile_program_return_program_program() -> Program {
                     },
                     input: JsonExpr::Literal { value: json!({}) },
                     expected_schema: program_schema(),
-                    acceptance: accept(0.0),
+                    acceptance: accept_abort(0.0),
                 },
                 Instr::Return {
                     value: JsonExpr::Var {
@@ -1967,7 +2070,7 @@ fn nested_compile_program_return_program_program() -> Program {
                     effect: strong_task("nested_compile_program"),
                     input: JsonExpr::Literal { value: json!({}) },
                     expected_schema: program_schema(),
-                    acceptance: accept(0.0),
+                    acceptance: accept_abort(0.0),
                 },
                 Instr::Return {
                     value: JsonExpr::Var {
@@ -2059,6 +2162,16 @@ fn accept(min_confidence: f32) -> AcceptancePolicy {
         min_confidence: Some(min_confidence),
         require_schema_valid: true,
         on_failure: FailureHandler::CaptureToThink {
+            reason: "effect did not satisfy acceptance".to_owned(),
+        },
+    }
+}
+
+fn accept_abort(min_confidence: f32) -> AcceptancePolicy {
+    AcceptancePolicy {
+        min_confidence: Some(min_confidence),
+        require_schema_valid: true,
+        on_failure: FailureHandler::Abort {
             reason: "effect did not satisfy acceptance".to_owned(),
         },
     }
