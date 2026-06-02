@@ -15,8 +15,16 @@ pub fn validate_program(program: &Program) -> Result<()> {
 }
 
 fn validate_program_with_entry_input(program: &Program, entry_binds_input: bool) -> Result<()> {
-    if !program.functions.contains_key(&program.entry) {
-        return Err(anyhow!("entry function {} does not exist", program.entry));
+    let entry = program
+        .functions
+        .get(&program.entry)
+        .ok_or_else(|| anyhow!("entry function {} does not exist", program.entry))?;
+    if entry_binds_input && entry.params.len() > 1 {
+        return Err(anyhow!(
+            "entry function {} expects {} params; runtime supplies one input value",
+            program.entry,
+            entry.params.len()
+        ));
     }
 
     validate_json_schema(&program.input_schema)

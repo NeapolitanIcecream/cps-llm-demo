@@ -606,9 +606,9 @@ where
                 };
 
                 let schema_valid = match &decision {
-                    HandlerDecision::ReturnValue { value, .. } => {
-                        Some(validate_value(&expected_schema, value).is_ok())
-                    }
+                    HandlerDecision::ReturnValue { value, .. } => Some(
+                        trace_return_value_schema_valid(&effect, &expected_schema, value),
+                    ),
                     HandlerDecision::ReturnProgram { program, .. } => Some(
                         validate_value(&program_schema(), &serde_json::to_value(program)?).is_ok(),
                     ),
@@ -1269,6 +1269,17 @@ fn accepted_by_policy(
     let schema_pass =
         !acceptance.require_schema_valid || validate_value(expected_schema, value).is_ok();
     confidence_pass && schema_pass
+}
+
+fn trace_return_value_schema_valid(
+    effect: &EffectCall,
+    expected_schema: &Value,
+    value: &Value,
+) -> bool {
+    let mut stamped = value.clone();
+    let (_, source_label) = source_for_effect(effect);
+    stamp_schema_source(&mut stamped, expected_schema, source_label);
+    validate_value(expected_schema, &stamped).is_ok()
 }
 
 fn schema_accepts_null(schema: &Value) -> bool {

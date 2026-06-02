@@ -138,6 +138,40 @@ fn zero_param_entry_can_reference_runtime_input() {
 }
 
 #[test]
+fn multi_param_entry_is_rejected_during_validation() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["left".to_owned(), "right".to_owned()],
+            output_schema: message_event_schema(),
+            body: vec![Instr::Return {
+                value: JsonExpr::Var {
+                    name: "left".to_owned(),
+                },
+            }],
+        },
+    );
+    let program = Program {
+        program_id: "multi_param_entry".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: message_event_schema(),
+        functions,
+        allowed_effects: Vec::new(),
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("entry function main expects 2 params")
+    );
+}
+
+#[test]
 fn zero_param_helper_cannot_reference_input() {
     let mut functions = BTreeMap::new();
     functions.insert(
@@ -385,6 +419,13 @@ async fn nested_effect_result_is_stamped_before_requested_schema_validation() {
             && event.detail["schema_valid"] == true
             && event.detail["source"] == "strong_think"
     }));
+    assert!(trace.events().iter().any(|event| {
+        event.event == "handler_decision"
+            && event.detail["handler"] == "strong_model"
+            && event.detail["decision"] == "return_value"
+            && event.detail["schema_valid"] == true
+    }));
+    replay_trace_events(&trace.events()).unwrap();
 }
 
 #[tokio::test]
