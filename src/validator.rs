@@ -123,11 +123,7 @@ fn validate_function(
 
     let mut defined = BTreeSet::new();
     for param in &function.params {
-        if param == INPUT_VAR {
-            return Err(anyhow!(
-                "function {name} parameter {INPUT_VAR} is reserved for runtime input"
-            ));
-        }
+        ensure_not_reserved_input_binding(param, &format!("function {name} parameter"), None)?;
         if !defined.insert(param.clone()) {
             return Err(anyhow!("function {name} has duplicate parameter {param}"));
         }
@@ -139,6 +135,7 @@ fn validate_function(
     for (pc, instr) in function.body.iter().enumerate() {
         validate_instr(program, name, pc, instr, &defined)?;
         if let Some(out) = instr.output_var() {
+            ensure_not_reserved_input_binding(out, "instruction output", Some(name))?;
             defined.insert(out.to_owned());
         }
     }
@@ -199,6 +196,11 @@ fn validate_instr(
             }
             if matches!(on_fail, GuardFail::Think { .. }) {
                 ensure_think_permission(program, function_name, pc, "guard think repair")?;
+                ensure_not_reserved_input_binding(
+                    guard_repair_target(condition),
+                    "guard think repair target",
+                    Some(function_name),
+                )?;
             }
             Ok(())
         }
@@ -216,8 +218,12 @@ fn validate_instr(
             validate_exprs(args, defined)
         }
         Instr::Map {
-            items, function, ..
+            items,
+            function,
+            item_var,
+            ..
         } => {
+            ensure_not_reserved_input_binding(item_var, "map item_var", Some(function_name))?;
             let target = program.functions.get(function).ok_or_else(|| {
                 anyhow!("map target function {function} does not exist at {function_name}:{pc}")
             })?;
@@ -255,6 +261,28 @@ fn validate_exprs(exprs: &[JsonExpr], defined: &BTreeSet<String>) -> Result<()> 
         validate_expr(expr, defined)?;
     }
     Ok(())
+}
+
+fn ensure_not_reserved_input_binding(name: &str, context: &str, owner: Option<&str>) -> Result<()> {
+    if name != INPUT_VAR {
+        return Ok(());
+    }
+
+    match owner {
+        Some(owner) => Err(anyhow!(
+            "{context} {INPUT_VAR} is reserved for runtime input in function {owner}"
+        )),
+        None => Err(anyhow!(
+            "{context} {INPUT_VAR} is reserved for runtime input"
+        )),
+    }
+}
+
+fn guard_repair_target(condition: &crate::program::GuardExpr) -> &str {
+    match condition {
+        crate::program::GuardExpr::VarExists { name } => name,
+        crate::program::GuardExpr::JsonSchemaValid { var, .. } => var,
+    }
 }
 
 fn validate_supported_effect_permissions(program: &Program) -> Result<()> {

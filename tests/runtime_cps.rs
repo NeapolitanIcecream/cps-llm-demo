@@ -348,6 +348,244 @@ fn input_var_cannot_be_declared_as_function_param() {
 }
 
 #[test]
+fn input_var_cannot_be_declared_as_instruction_output() {
+    let helper = FunctionDef {
+        params: vec!["item".to_owned()],
+        output_schema: json!({}),
+        body: vec![Instr::Return {
+            value: JsonExpr::Var {
+                name: "item".to_owned(),
+            },
+        }],
+    };
+
+    let cases = vec![
+        (
+            "let",
+            Instr::Let {
+                var: "$input".to_owned(),
+                expr: JsonExpr::Var {
+                    name: "message".to_owned(),
+                },
+            },
+            Vec::new(),
+            BTreeMap::new(),
+        ),
+        (
+            "project",
+            Instr::Project {
+                out: "$input".to_owned(),
+                from: JsonExpr::Var {
+                    name: "message".to_owned(),
+                },
+                path: vec!["event_id".to_owned()],
+            },
+            Vec::new(),
+            BTreeMap::new(),
+        ),
+        (
+            "perform",
+            Instr::Perform {
+                out: "$input".to_owned(),
+                effect: weak_task("classify_and_extract_action_draft"),
+                input: JsonExpr::Var {
+                    name: "message".to_owned(),
+                },
+                expected_schema: json!({}),
+                acceptance: accept_abort(0.0),
+            },
+            vec![EffectPermission::ModelTask {
+                strength: ModelStrength::Weak,
+            }],
+            BTreeMap::new(),
+        ),
+        (
+            "call",
+            Instr::Call {
+                out: "$input".to_owned(),
+                function: "helper".to_owned(),
+                args: vec![JsonExpr::Var {
+                    name: "message".to_owned(),
+                }],
+            },
+            Vec::new(),
+            BTreeMap::from([("helper".to_owned(), helper.clone())]),
+        ),
+        (
+            "map",
+            Instr::Map {
+                out: "$input".to_owned(),
+                items: JsonExpr::Array {
+                    items: vec![JsonExpr::Var {
+                        name: "message".to_owned(),
+                    }],
+                },
+                item_var: "item".to_owned(),
+                function: "helper".to_owned(),
+            },
+            Vec::new(),
+            BTreeMap::from([("helper".to_owned(), helper.clone())]),
+        ),
+        (
+            "call_dynamic",
+            Instr::CallDynamic {
+                out: "$input".to_owned(),
+                fragment: JsonExpr::Literal { value: json!({}) },
+                args: Vec::new(),
+            },
+            Vec::new(),
+            BTreeMap::new(),
+        ),
+    ];
+
+    for (case, instr, allowed_effects, extra_functions) in cases {
+        let mut functions = extra_functions;
+        functions.insert(
+            "main".to_owned(),
+            FunctionDef {
+                params: vec!["message".to_owned()],
+                output_schema: message_event_schema(),
+                body: vec![
+                    instr,
+                    Instr::Return {
+                        value: JsonExpr::Var {
+                            name: "message".to_owned(),
+                        },
+                    },
+                ],
+            },
+        );
+        let program = Program {
+            program_id: format!("reserved_output_{case}"),
+            version: "1.0.0".to_owned(),
+            entry: "main".to_owned(),
+            input_schema: message_event_schema(),
+            output_schema: message_event_schema(),
+            functions,
+            allowed_effects,
+        };
+
+        let error = validate_program(&program).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("instruction output $input is reserved for runtime input"),
+            "{case} was not rejected as a reserved instruction output: {error}"
+        );
+    }
+}
+
+#[test]
+fn input_var_cannot_be_declared_as_map_item_var() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: json!({ "type": "array" }),
+            body: vec![
+                Instr::Map {
+                    out: "items".to_owned(),
+                    items: JsonExpr::Array {
+                        items: vec![JsonExpr::Var {
+                            name: "message".to_owned(),
+                        }],
+                    },
+                    item_var: "$input".to_owned(),
+                    function: "helper".to_owned(),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "items".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    functions.insert(
+        "helper".to_owned(),
+        FunctionDef {
+            params: vec!["item".to_owned()],
+            output_schema: json!({}),
+            body: vec![Instr::Return {
+                value: JsonExpr::Var {
+                    name: "item".to_owned(),
+                },
+            }],
+        },
+    );
+    let program = Program {
+        program_id: "reserved_map_item_var".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: json!({ "type": "array" }),
+        functions,
+        allowed_effects: Vec::new(),
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("map item_var $input is reserved for runtime input")
+    );
+}
+
+#[test]
+fn input_var_cannot_be_guard_think_repair_target() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: message_event_schema(),
+            body: vec![
+                Instr::Guard {
+                    condition: GuardExpr::JsonSchemaValid {
+                        var: "$input".to_owned(),
+                        schema: json!({
+                            "type": "object",
+                            "required": ["missing"],
+                            "properties": {
+                                "missing": { "type": "string" }
+                            }
+                        }),
+                    },
+                    on_fail: GuardFail::Think {
+                        reason: "repair runtime input".to_owned(),
+                    },
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "message".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    let program = Program {
+        program_id: "reserved_guard_repair_target".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: message_event_schema(),
+        functions,
+        allowed_effects: vec![EffectPermission::Think],
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("guard think repair target $input is reserved for runtime input")
+    );
+}
+
+#[test]
 fn functions_must_end_with_return_during_validation() {
     let mut functions = BTreeMap::new();
     functions.insert(
