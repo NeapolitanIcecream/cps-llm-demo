@@ -24,6 +24,8 @@ fn validate_program_with_entry_input(program: &Program, entry_binds_input: bool)
     validate_json_schema(&program.output_schema)
         .map_err(|err| anyhow!("program output_schema is not a valid JSON schema: {err}"))?;
 
+    validate_supported_effect_permissions(program)?;
+
     for (name, function) in &program.functions {
         let input_is_bound =
             !function.params.is_empty() || (entry_binds_input && name == &program.entry);
@@ -141,6 +143,7 @@ fn validate_instr(
             validate_json_schema(expected_schema).map_err(|err| {
                 anyhow!("perform expected_schema is invalid at {function_name}:{pc}: {err}")
             })?;
+            validate_supported_effect_call(effect, function_name, pc)?;
             if !effect_allowed(&program.allowed_effects, effect) {
                 return Err(anyhow!(
                     "effect {} is not allowed at {function_name}:{pc}",
@@ -209,6 +212,30 @@ fn validate_expr(expr: &JsonExpr, defined: &BTreeSet<String>) -> Result<()> {
 fn validate_exprs(exprs: &[JsonExpr], defined: &BTreeSet<String>) -> Result<()> {
     for expr in exprs {
         validate_expr(expr, defined)?;
+    }
+    Ok(())
+}
+
+fn validate_supported_effect_permissions(program: &Program) -> Result<()> {
+    for permission in &program.allowed_effects {
+        if let EffectPermission::LocalTool { tool_name } = permission {
+            return Err(anyhow!(
+                "local_tool effects are not supported until local tool handlers are implemented (permission {tool_name})"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_supported_effect_call(
+    effect: &EffectCall,
+    function_name: &str,
+    pc: usize,
+) -> Result<()> {
+    if let EffectCall::LocalTool { tool_name, .. } = effect {
+        return Err(anyhow!(
+            "local_tool effects are not supported until local tool handlers are implemented at {function_name}:{pc} (tool {tool_name})"
+        ));
     }
     Ok(())
 }
