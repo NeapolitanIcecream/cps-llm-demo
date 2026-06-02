@@ -1,17 +1,17 @@
 # Cloud Review Resolver Process
 
 status: delivered
-updated_at: 2026-06-02 10:56 CST
+updated_at: 2026-06-02 10:58 CST
 
 ## Findings / CI
 - `PRRT_kwDOStuIhc6GTN1f` valid: `action_draft_schema()` allowed both `weak_model` and `strong_think`, so accepted weak outputs and strong resume values could preserve a handler-supplied wrong provenance string.
 - Fixed by stamping accepted action-shaped values at runtime: weak `WeakCall`/weak-probe values that pass schema validation enter state/observations as `weak_model`; strong `ResumeWithValue` values enter continuation resume as `strong_think`.
-- CI: PR head `c3e7516adc00d8191587cb0f68eecd0af368f107` is mergeable; `statusCheckRollup` is empty and `gh pr checks` reports no checks on the branch.
+- CI: latest PR refresh showed the branch open, non-draft, and mergeable; `statusCheckRollup` is empty and `gh pr checks` reports no checks on the branch. Process-only handoff commits do not alter source/tests.
 
 ## Files Changed / Commits
 - Changed: `src/runtime.rs`, `tests/runtime_cps.rs`, `.codex-workflows/cps-runtime-v03/cloud-review-resolver/process.md`.
 - Pushed fix commit: `c3e7516adc00d8191587cb0f68eecd0af368f107` (`Stamp runtime action provenance`).
-- Final process update committed after this entry and pushed as branch HEAD.
+- Pushed process handoff commit: `9bbb8002ec63718881f0c05bdf65d37003775e60` (`Record resolver provenance handoff`); any later process-only wording commit is limited to this file.
 
 ## Verification
 - Regression red/green: `cargo test action_source --test runtime_cps` failed before the fix with weak output returning `strong_think` and strong resume returning `weak_model`; passed after the fix.
