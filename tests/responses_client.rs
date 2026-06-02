@@ -1,4 +1,4 @@
-use cps_llm_demo::effects::{HandlerBudget, HandlerRequest};
+use cps_llm_demo::effects::{HandlerBudget, HandlerRequest, Observation, ObservationSource};
 use cps_llm_demo::models::{EffectHandler, ResponsesWeakModel, WeakTaskResult};
 use cps_llm_demo::program::{EffectCall, ModelStrength, ModelTaskSpec};
 use cps_llm_demo::responses_client::{ResponsesClient, ResponsesClientConfig, extract_output_text};
@@ -187,6 +187,128 @@ async fn responses_weak_model_sends_neutral_instructions_and_request_context() {
             .iter()
             .any(|field| field.as_str() == Some("source")),
         "weak handler request context should not require runtime provenance source"
+    );
+}
+
+#[tokio::test]
+async fn responses_weak_model_preserves_schema_shaped_user_payloads() {
+    let server = MockServer::start();
+    let captured_body = Arc::new(Mutex::new(None::<Value>));
+    let captured_body_for_matcher = Arc::clone(&captured_body);
+    let mock = server.mock(move |when, then| {
+        let captured_body = Arc::clone(&captured_body_for_matcher);
+        when.method(POST)
+            .path("/v1/responses")
+            .is_true(move |request: &HttpMockRequest| {
+                let Ok(body) = serde_json::from_slice::<Value>(request.body_ref()) else {
+                    return false;
+                };
+                *captured_body.lock().unwrap() = Some(body);
+                true
+            });
+        then.status(200).json_body(json!({
+            "output_text": serde_json::to_string(&json!({
+                "handler_decision": {
+                    "decision": "return_value",
+                    "value": {
+                        "intent": "send_message"
+                    },
+                    "confidence": 0.91,
+                    "rationale": "clear request"
+                }
+            })).unwrap()
+        }));
+    });
+
+    let schema_shaped_payload = json!({
+        "type": "object",
+        "properties": {
+            "source": {
+                "type": "string",
+                "enum": ["weak_model"]
+            },
+            "title": {
+                "type": "string"
+            }
+        },
+        "required": ["source", "title"]
+    });
+    let handler = ResponsesWeakModel::new(client(&server, "/v1"), "fake-weak");
+    let decision = handler
+        .handle(HandlerRequest {
+            effect: EffectCall::ModelTask {
+                strength: ModelStrength::Weak,
+                task: ModelTaskSpec {
+                    name: "classify_schema_payload".to_owned(),
+                    instructions: "Classify the payload.".to_owned(),
+                },
+            },
+            input: json!({
+                "user_supplied_schema": schema_shaped_payload.clone()
+            }),
+            expected_schema: action_draft_schema(),
+            continuation_summary: None,
+            effect_frame: None,
+            observations: vec![Observation {
+                name: "user_payload_observation".to_owned(),
+                value: schema_shaped_payload,
+                source: ObservationSource::Runtime,
+            }],
+            budget: HandlerBudget {
+                effect_depth: 0,
+                effects_remaining: 8,
+                handler_reentries_remaining: 2,
+            },
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(decision.decision_name(), "return_value");
+    mock.assert();
+
+    let captured_body = captured_body
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("mock should capture Responses request body");
+    let input_text = captured_body["input"][0]["content"][0]["text"]
+        .as_str()
+        .expect("Responses body should include serialized input text");
+    let input_context: Value = serde_json::from_str(input_text).unwrap();
+
+    assert!(
+        input_context["expected_schema"]["properties"]
+            .get("source")
+            .is_none(),
+        "weak handler request context should still omit runtime provenance schema"
+    );
+
+    let input_payload = &input_context["input"]["user_supplied_schema"];
+    assert!(
+        input_payload["properties"].get("source").is_some(),
+        "weak handler request context should preserve user payload source fields"
+    );
+    assert!(
+        input_payload["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field.as_str() == Some("source")),
+        "weak handler request context should preserve user payload source requirements"
+    );
+
+    let observation_payload = &input_context["observations"][0]["value"];
+    assert!(
+        observation_payload["properties"].get("source").is_some(),
+        "weak handler request context should preserve observation payload source fields"
+    );
+    assert!(
+        observation_payload["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field.as_str() == Some("source")),
+        "weak handler request context should preserve observation payload source requirements"
     );
 }
 
