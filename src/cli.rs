@@ -1,19 +1,20 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
 use crate::config::{DEFAULT_BASE_URL, DEFAULT_STRONG_MODEL, DEFAULT_WEAK_MODEL, ModelConfig};
-use crate::effects::{Continuation, EffectFrame, ThinkDecision};
-use crate::models::{ResponsesStrongModel, ResponsesWeakModel, StrongModel, WeakModel};
-use crate::program::{Program, WeakTaskSpec};
+use crate::effects::{HandlerBudget, HandlerDecision, HandlerRequest, RuntimeBudget};
+use crate::models::{EffectHandler, ResponsesStrongModel, ResponsesWeakModel};
+use crate::program::{EffectCall, ModelStrength, ModelTaskSpec, Program};
 use crate::runtime::Runtime;
-use crate::schema::{action_draft_schema, message_event_schema, schema_bundle};
-use crate::trace::TraceCollector;
+use crate::schema::{action_drafts_schema, message_events_schema, program_schema, schema_bundle};
+use crate::trace::{TraceCollector, parse_trace_jsonl, replay_trace_events};
+use crate::validator::validate_program;
 
 #[derive(Debug, Parser)]
-#[command(version, about = "CPS-style LLM program runtime demo")]
+#[command(version, about = "CPS-style LLM typed-effect runtime demo")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -65,6 +66,14 @@ pub enum Command {
         #[arg(long)]
         trace_json: bool,
     },
+    ValidateProgram {
+        #[arg(long)]
+        program: PathBuf,
+    },
+    Replay {
+        #[arg(long)]
+        trace: PathBuf,
+    },
     Schema,
     ProbeModels {
         #[arg(long, env = "OPENAI_BASE_URL", default_value = DEFAULT_BASE_URL)]
@@ -96,22 +105,19 @@ pub async fn run() -> Result<()> {
         } => {
             let config = ModelConfig::new(base_url, api_key, weak_model, strong_model)?;
             let task_spec = read_task(&task)?;
-            let inputs = read_inputs(&input)?;
+            let input = read_json(&input)?;
             let trace = TraceCollector::default();
             let client = config.responses_client();
             let weak = ResponsesWeakModel::new(client.clone(), config.weak_model);
             let strong = ResponsesStrongModel::new(client, config.strong_model);
 
-            let input_schema = message_event_schema();
-            let output_schema = action_draft_schema();
-            let program = strong
-                .compile_program(&task_spec, &input_schema, &output_schema)
-                .await?;
-            let program = constrain_compiled_program_contract(program, input_schema, output_schema);
+            let input_schema = message_events_schema();
+            let output_schema = action_drafts_schema();
+            let program = compile_program(&strong, &task_spec, input_schema, output_schema).await?;
             let runtime = Runtime::new(weak, strong, trace.clone());
-            let outputs = run_inputs(&runtime, program, inputs).await?;
+            let output = runtime.run_program(program, input).await?;
 
-            println!("{}", serde_json::to_string_pretty(&outputs)?);
+            println!("{}", serde_json::to_string_pretty(&output)?);
             emit_trace(trace, trace_json)?;
         }
         Command::RunProgram {
@@ -125,16 +131,37 @@ pub async fn run() -> Result<()> {
         } => {
             let config = ModelConfig::new(base_url, api_key, weak_model, strong_model)?;
             let program = read_program(&program)?;
-            let inputs = read_inputs(&input)?;
+            validate_program(&program).context("program validation failed")?;
+            let input = read_json(&input)?;
             let trace = TraceCollector::default();
             let client = config.responses_client();
             let weak = ResponsesWeakModel::new(client.clone(), config.weak_model);
             let strong = ResponsesStrongModel::new(client, config.strong_model);
             let runtime = Runtime::new(weak, strong, trace.clone());
-            let outputs = run_inputs(&runtime, program, inputs).await?;
+            let output = runtime.run_program(program, input).await?;
 
-            println!("{}", serde_json::to_string_pretty(&outputs)?);
+            println!("{}", serde_json::to_string_pretty(&output)?);
             emit_trace(trace, trace_json)?;
+        }
+        Command::ValidateProgram { program } => {
+            let program = read_program(&program)?;
+            validate_program(&program).context("program validation failed")?;
+            println!("{}", json!({ "ok": true, "status": "OK" }));
+        }
+        Command::Replay { trace } => {
+            let raw = std::fs::read_to_string(&trace)
+                .with_context(|| format!("failed to read trace file {}", trace.display()))?;
+            let events = parse_trace_jsonl(&raw)?;
+            let report = replay_trace_events(&events)?;
+            println!(
+                "{}",
+                json!({
+                    "ok": true,
+                    "captures": report.captures,
+                    "resumes": report.resumes,
+                    "aborts": report.aborts,
+                })
+            );
         }
         Command::Schema => {
             println!("{}", serde_json::to_string_pretty(&schema_bundle())?);
@@ -150,7 +177,7 @@ pub async fn run() -> Result<()> {
             let weak = ResponsesWeakModel::new(client.clone(), config.weak_model);
             let strong = ResponsesStrongModel::new(client, config.strong_model);
 
-            let task = WeakTaskSpec {
+            let task = ModelTaskSpec {
                 name: "classify_and_extract_action_draft".to_owned(),
                 instructions: "Given one message event, return one action draft.".to_owned(),
             };
@@ -158,31 +185,55 @@ pub async fn run() -> Result<()> {
                 "event_id": "probe-calendar",
                 "text": "Friday 3pm product review meeting"
             });
-            let weak_result = weak
-                .run_weak_task(&task, &input, &action_draft_schema())
-                .await?;
-
-            let mut env = serde_json::Map::new();
-            env.insert("$input".to_owned(), input);
-            let effect = EffectFrame {
-                effect_id: uuid::Uuid::new_v4().to_string(),
-                reason: "probe".to_owned(),
-                failed_instruction: None,
-                continuation: Continuation {
-                    program_id: "probe".to_owned(),
-                    pc: 1,
-                    resume_var: Some("draft".to_owned()),
-                    env,
-                    expected_schema: action_draft_schema(),
+            let request = HandlerRequest {
+                effect: EffectCall::ModelTask {
+                    strength: ModelStrength::Weak,
+                    task,
                 },
-                observations: vec![serde_json::to_value(&weak_result)?],
+                input,
+                expected_schema: crate::schema::action_draft_schema(),
+                continuation_summary: None,
+                effect_frame: None,
+                observations: Vec::new(),
+                budget: HandlerBudget {
+                    effect_depth: 0,
+                    effects_remaining: RuntimeBudget::default().max_effects,
+                    handler_reentries_remaining: RuntimeBudget::default().max_handler_reentries,
+                },
             };
-            let decision = strong.think(&effect).await?;
+            let weak_decision = weak.handle(request).await?;
+            let strong_request = HandlerRequest {
+                effect: EffectCall::Think {
+                    reason: "probe".to_owned(),
+                },
+                input: serde_json::to_value(&weak_decision)?,
+                expected_schema: crate::schema::action_draft_schema(),
+                continuation_summary: None,
+                effect_frame: None,
+                observations: Vec::new(),
+                budget: HandlerBudget {
+                    effect_depth: 0,
+                    effects_remaining: RuntimeBudget::default().max_effects,
+                    handler_reentries_remaining: RuntimeBudget::default().max_handler_reentries,
+                },
+            };
+            let strong_decision = strong.handle(strong_request).await?;
             let ok = matches!(
-                decision,
-                ThinkDecision::ResumeWithValue { .. }
-                    | ThinkDecision::RequestWeakProbe { .. }
-                    | ThinkDecision::Abort { .. }
+                weak_decision,
+                HandlerDecision::ReturnValue { .. }
+                    | HandlerDecision::RequestEffect { .. }
+                    | HandlerDecision::ReturnProgramFragment { .. }
+                    | HandlerDecision::Abort { .. }
+                    | HandlerDecision::ReturnProgram { .. }
+                    | HandlerDecision::ReturnProgramPatch { .. }
+            ) && matches!(
+                strong_decision,
+                HandlerDecision::ReturnValue { .. }
+                    | HandlerDecision::RequestEffect { .. }
+                    | HandlerDecision::ReturnProgramPatch { .. }
+                    | HandlerDecision::Abort { .. }
+                    | HandlerDecision::ReturnProgram { .. }
+                    | HandlerDecision::ReturnProgramFragment { .. }
             );
 
             println!("{}", json!({ "ok": ok, "status": "OK" }));
@@ -192,30 +243,46 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-fn constrain_compiled_program_contract(
-    mut program: Program,
+pub async fn compile_program<H>(
+    strong: &H,
+    task_spec: &str,
     input_schema: Value,
     output_schema: Value,
-) -> Program {
-    program.input_schema = input_schema;
-    program.output_schema = output_schema;
-    program
-}
-
-async fn run_inputs<W, S>(
-    runtime: &Runtime<W, S>,
-    program: Program,
-    inputs: Vec<Value>,
-) -> Result<Vec<Value>>
+) -> Result<Program>
 where
-    W: WeakModel,
-    S: StrongModel,
+    H: EffectHandler,
 {
-    let mut outputs = Vec::with_capacity(inputs.len());
-    for input in inputs {
-        outputs.push(runtime.run_program(program.clone(), input).await?);
+    let request = HandlerRequest {
+        effect: EffectCall::CompileProgram {
+            strength: ModelStrength::Strong,
+            task_spec: task_spec.to_owned(),
+            input_schema: input_schema.clone(),
+            output_schema: output_schema.clone(),
+        },
+        input: json!({}),
+        expected_schema: program_schema(),
+        continuation_summary: None,
+        effect_frame: None,
+        observations: Vec::new(),
+        budget: HandlerBudget {
+            effect_depth: 0,
+            effects_remaining: RuntimeBudget::default().max_effects,
+            handler_reentries_remaining: RuntimeBudget::default().max_handler_reentries,
+        },
+    };
+
+    match strong.handle(request).await? {
+        HandlerDecision::ReturnProgram { mut program, .. } => {
+            program.input_schema = input_schema;
+            program.output_schema = output_schema;
+            validate_program(&program).context("compiled program validation failed")?;
+            Ok(program)
+        }
+        other => Err(anyhow!(
+            "strong compiler returned {}, expected return_program",
+            other.decision_name()
+        )),
     }
-    Ok(outputs)
 }
 
 fn read_task(path: &PathBuf) -> Result<String> {
@@ -230,19 +297,10 @@ fn read_program(path: &PathBuf) -> Result<Program> {
         .with_context(|| format!("invalid Program JSON in {}", path.display()))
 }
 
-fn read_inputs(path: &PathBuf) -> Result<Vec<Value>> {
+fn read_json(path: &PathBuf) -> Result<Value> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read input file {}", path.display()))?;
-    let value: Value = serde_json::from_str(&raw)
-        .with_context(|| format!("invalid JSON in {}", path.display()))?;
-
-    match value {
-        Value::Array(items) => Ok(items),
-        Value::Object(_) => Ok(vec![value]),
-        _ => Err(anyhow::anyhow!(
-            "input must be a JSON object or an array of JSON objects"
-        )),
-    }
+    serde_json::from_str(&raw).with_context(|| format!("invalid JSON in {}", path.display()))
 }
 
 fn emit_trace(trace: TraceCollector, trace_json: bool) -> Result<()> {

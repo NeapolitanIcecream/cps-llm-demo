@@ -1,35 +1,43 @@
-You are compiling a workflow program.
+You are compiling a workflow program for a typed CPS LLM runtime.
 
 Input:
-A single message event:
+An array of message events:
 
 ```json
-{
-  "event_id": "string",
-  "text": "string"
-}
+[
+  {
+    "event_id": "string",
+    "text": "string"
+  }
+]
 ```
 
 Output:
-A single action draft:
+An array of action drafts:
 
 ```json
-{
-  "event_id": "string",
-  "kind": "ignore | create_task | create_calendar_event | draft_reply",
-  "title": "string",
-  "datetime_hint": "string | null",
-  "source": "weak_model | strong_think"
-}
+[
+  {
+    "event_id": "string",
+    "kind": "ignore | create_task | create_calendar_event | draft_reply",
+    "title": "string",
+    "datetime_hint": "string | null",
+    "source": "weak_model | strong_think"
+  }
+]
 ```
 
-Compile a Program IR that:
+Compile a Program IR v2 that:
 
-1. Calls the weak model with a `WeakCall` instruction for semantic classification and extraction.
-2. Validates the weak model output against the action draft schema.
-3. Lets the runtime capture a continuation if the weak output is low confidence or invalid.
-4. Finishes with the action draft value.
+1. Defines `main(messages)`.
+2. Uses `Map` to process each message with a `process_message(message)` function.
+3. In `process_message`, performs a weak `ModelTask` to classify intent.
+4. Performs a second weak `ModelTask` to extract the final action draft using `{ "message": message, "intent": intent }`.
+5. Uses `AcceptancePolicy` on weak effects so low confidence or schema-invalid output captures to `Think`.
+6. Returns the mapped array of drafts.
 
 Do not encode business keywords in the Program.
-Use `WeakCall` instructions for semantic decisions.
-Do not write a weak-to-strong router. Strong Think only handles unresolved continuation frames.
+Do not compile a weak-to-strong router.
+Use `Perform(ModelTask { strength: Weak })` for semantic work.
+Let the runtime capture continuations and schedule `Think` only when a typed effect is unresolved.
+Models may request nested effects only by returning typed `HandlerDecision::RequestEffect`.

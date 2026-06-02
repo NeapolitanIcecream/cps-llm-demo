@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use schemars::schema_for;
 use serde_json::{Value, json};
 
-use crate::effects::{Continuation, EffectFrame};
-use crate::program::Program;
+use crate::effects::{Continuation, EffectFrame, HandlerDecision};
+use crate::program::{Program, ProgramFragment, ProgramPatch};
 
 pub fn message_event_schema() -> Value {
     json!({
@@ -40,6 +40,20 @@ pub fn action_draft_schema() -> Value {
     })
 }
 
+pub fn message_events_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": message_event_schema()
+    })
+}
+
+pub fn action_drafts_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": action_draft_schema()
+    })
+}
+
 pub fn weak_task_result_schema(output_schema: Value) -> Value {
     json!({
         "type": "object",
@@ -58,134 +72,28 @@ pub fn weak_task_result_schema(output_schema: Value) -> Value {
 }
 
 pub fn think_decision_schema() -> Value {
-    let weak_task_spec = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "name": { "type": "string" },
-            "instructions": { "type": "string" }
-        },
-        "required": ["name", "instructions"]
-    });
+    handler_decision_schema()
+}
 
-    let json_expr_defs = json!({
-        "JsonExpr": {
-            "anyOf": [
-                {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "kind": { "type": "string", "enum": ["literal"] },
-                        "value": {}
-                    },
-                    "required": ["kind", "value"]
-                },
-                {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "kind": { "type": "string", "enum": ["var"] },
-                        "name": { "type": "string" }
-                    },
-                    "required": ["kind", "name"]
-                },
-                {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "kind": { "type": "string", "enum": ["object"] },
-                        "fields": {
-                            "type": "array",
-                            "items": { "$ref": "#/$defs/JsonObjectField" }
-                        }
-                    },
-                    "required": ["kind", "fields"]
-                }
-            ]
-        },
-        "JsonObjectField": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "name": { "type": "string" },
-                "value": { "$ref": "#/$defs/JsonExpr" }
-            },
-            "required": ["name", "value"]
-        }
-    });
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct HandlerDecisionOutput {
+    handler_decision: HandlerDecision,
+}
 
-    let resume = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "decision": { "type": "string", "enum": ["resume_with_value"] },
-            "value": {},
-            "confidence": {
-                "type": "number",
-                "minimum": 0.0,
-                "maximum": 1.0
-            },
-            "rationale": { "type": "string" }
-        },
-        "required": ["decision", "value", "confidence", "rationale"]
-    });
-
-    let request_weak_probe = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "decision": { "type": "string", "enum": ["request_weak_probe"] },
-            "out": { "type": "string" },
-            "task": weak_task_spec,
-            "input": { "$ref": "#/$defs/JsonExpr" },
-            "output_schema": {},
-            "min_confidence": {
-                "type": "number",
-                "minimum": 0.0,
-                "maximum": 1.0
-            },
-            "rationale": { "type": "string" }
-        },
-        "required": [
-            "decision",
-            "out",
-            "task",
-            "input",
-            "output_schema",
-            "min_confidence",
-            "rationale"
-        ]
-    });
-
-    let abort = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "decision": { "type": "string", "enum": ["abort"] },
-            "reason": { "type": "string" }
-        },
-        "required": ["decision", "reason"]
-    });
-
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "$defs": json_expr_defs,
-        "properties": {
-            "think_decision": {
-                "anyOf": [
-                    resume,
-                    request_weak_probe,
-                    abort
-                ]
-            }
-        },
-        "required": ["think_decision"]
-    })
+pub fn handler_decision_schema() -> Value {
+    schema_value(schema_for!(HandlerDecisionOutput))
 }
 
 pub fn program_schema() -> Value {
     schema_value(schema_for!(Program))
+}
+
+pub fn program_fragment_schema() -> Value {
+    schema_value(schema_for!(ProgramFragment))
+}
+
+pub fn program_patch_schema() -> Value {
+    schema_value(schema_for!(ProgramPatch))
 }
 
 pub fn effect_frame_schema() -> Value {
@@ -199,12 +107,15 @@ pub fn continuation_schema() -> Value {
 pub fn schema_bundle() -> Value {
     json!({
         "program": program_schema(),
-        "weak_task_result": weak_task_result_schema(json!({})),
-        "think_decision": think_decision_schema(),
+        "program_fragment": program_fragment_schema(),
+        "program_patch": program_patch_schema(),
+        "handler_decision": handler_decision_schema(),
         "effect_frame": effect_frame_schema(),
         "continuation": continuation_schema(),
         "message_event": message_event_schema(),
+        "message_events": message_events_schema(),
         "action_draft": action_draft_schema(),
+        "action_drafts": action_drafts_schema(),
     })
 }
 

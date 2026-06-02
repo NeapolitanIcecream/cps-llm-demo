@@ -1,5 +1,7 @@
 {
-  "program_id": "message_action_v1",
+  "program_id": "message_action_single_v2",
+  "version": "1.0.0",
+  "entry": "main",
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
@@ -29,18 +31,9 @@
       }
     }
   },
-  "instructions": [
-    {
-      "op": "weak_call",
-      "out": "draft",
-      "task": {
-        "name": "classify_and_extract_action_draft",
-        "instructions": "Given one message event, classify whether it should be ignored, converted into a task, converted into a calendar event, or drafted as a reply. Return a complete action draft JSON object. Do not rely on keyword matching alone; interpret the message semantically."
-      },
-      "input": {
-        "kind": "var",
-        "name": "$input"
-      },
+  "functions": {
+    "main": {
+      "params": ["message"],
       "output_schema": {
         "type": "object",
         "additionalProperties": false,
@@ -61,14 +54,68 @@
           }
         }
       },
-      "min_confidence": 0.8
+      "body": [
+        {
+          "op": "perform",
+          "out": "draft",
+          "effect": {
+            "kind": "model_task",
+            "strength": "weak",
+            "task": {
+              "name": "classify_and_extract_action_draft",
+              "instructions": "Given one message event, return one complete action draft."
+            }
+          },
+          "input": {
+            "kind": "var",
+            "name": "message"
+          },
+          "expected_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event_id", "kind", "title", "datetime_hint", "source"],
+            "properties": {
+              "event_id": { "type": "string" },
+              "kind": {
+                "type": "string",
+                "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+              },
+              "title": { "type": "string" },
+              "datetime_hint": {
+                "anyOf": [{ "type": "string" }, { "type": "null" }]
+              },
+              "source": {
+                "type": "string",
+                "enum": ["weak_model", "strong_think"]
+              }
+            }
+          },
+          "acceptance": {
+            "min_confidence": 0.8,
+            "require_schema_valid": true,
+            "on_failure": {
+              "kind": "capture_to_think",
+              "reason": "draft effect did not satisfy confidence or schema"
+            }
+          }
+        },
+        {
+          "op": "return",
+          "value": {
+            "kind": "var",
+            "name": "draft"
+          }
+        }
+      ]
+    }
+  },
+  "allowed_effects": [
+    {
+      "kind": "model_task",
+      "strength": "weak"
     },
     {
-      "op": "finish",
-      "value": {
-        "kind": "var",
-        "name": "draft"
-      }
+      "kind": "think"
     }
   ]
 }
