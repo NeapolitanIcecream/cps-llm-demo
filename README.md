@@ -2,7 +2,7 @@
 
 Minimal Rust CLI demo for a defunctionalized CPS / typed-effect LLM runtime.
 
-This is not a product agent. It is a runtime semantics demo: a weak classifier fills a typed semantic hole, and the runtime captures a stuck continuation as an `EffectFrame` when structural guard conditions require deeper handling. The Think handler receives that frame, returns a typed `ThinkDecision`, and the runtime resumes.
+This is a runtime semantics demo, not a product agent. A strong model can compile a task spec into a small JSON `Program` IR. The Rust runtime interprets that program, calls the weak model only when it executes `Instr::WeakCall`, captures unresolved typed effects as `EffectFrame`, asks strong Think to handle the stuck continuation, validates the returned value against `continuation.expected_schema`, and resumes from `continuation.pc`.
 
 ## Setup
 
@@ -17,7 +17,6 @@ Defaults:
 OPENAI_BASE_URL=https://api.openai.com/v1
 CPS_WEAK_MODEL=gpt-5.4-mini
 CPS_STRONG_MODEL=gpt-5.5
-CPS_THRESHOLD=0.75
 ```
 
 All model IDs and the OpenAI-compatible base URL can be overridden with CLI flags or env vars.
@@ -27,41 +26,55 @@ All model IDs and the OpenAI-compatible base URL can be overridden with CLI flag
 ```bash
 cargo run -- schema
 cargo run -- probe-models
-cargo run -- run examples/messages.json --trace-json
-cargo run -- run examples/messages.json --trace-json --capture-policy always-after-weak
+cargo run -- run-program --program examples/message_action.program.json --input examples/messages.json --trace-json
+cargo run -- run-program --program examples/message_action.two_stage.program.json --input examples/messages.json --trace-json
+cargo run -- compile-run --task examples/message_action.task.md --input examples/messages.json --trace-json
 ```
 
-`run` writes final `ActionDraft[]` JSON to stdout. With `--trace-json`, it writes runtime trace JSONL to stderr, so the streams can be split:
+`run-program` skips compilation and runs an existing Program fixture. `compile-run` asks the strong model to compile the task spec into Program IR, then runs that same runtime. Both commands write final JSON output to stdout. With `--trace-json`, runtime trace JSONL is written to stderr:
 
 ```bash
-cargo run -- run examples/messages.json --trace-json --capture-policy always-after-weak 1>out.json 2>trace.jsonl
+cargo run -- run-program --program examples/message_action.two_stage.program.json --input examples/messages.json --trace-json 1>out.json 2>trace.jsonl
 ```
-
-`--capture-policy confidence-only` is the default and captures only when the weak model returns low confidence, `need_strong_think`, or invalid structured output. `--capture-policy always-after-weak` is for demos and debugging: every non-empty message still reaches the real weak model first, then the runtime captures the typed weak result as a continuation for the strong Think handler.
 
 ## What To Look For
 
-The trace shows the CPS path:
+The trace should show program execution, not a fixed weak-to-strong router:
 
 ```text
-capture_continuation:
-  runtime defunctionalizes the current continuation into data.
-
-strong_think:
-  the Think handler processes only the stuck EffectFrame, not the whole task.
-
-resume_continuation:
-  runtime resumes execution with the typed ThinkDecision.
+program_start
+exec_instr pc=0 op=weak_call
+weak_call
+weak_result
+exec_instr pc=1 op=weak_call
+weak_result
+capture_continuation pc=2 resume_var=draft
+strong_think decision=request_weak_probe
+weak_probe
+strong_think decision=resume_with_value
+resume_continuation pc=2
+exec_instr pc=2 op=finish
+program_finished
 ```
 
-The runtime does not branch on business keywords such as OTPs, meetings, proposals, or unsubscribe notices. Empty or whitespace-only input is the structural deterministic path; non-empty semantic messages go to the weak model first. Use `--capture-policy always-after-weak` when you want the trace to reliably show continuation capture without adding message-text rules to the runtime.
+The important shape is:
+
+```text
+strong compiles program
+runtime interprets program
+program performs weak semantic effects
+failed effect captures continuation
+strong handles the stuck continuation
+runtime resumes program
+```
 
 ## Why This Is CPS
 
-- The runtime turns the workflow into a `Step::Done` / `Step::Effect` trampoline.
-- `Continuation` is a Serde-serializable enum, not a closure.
-- The strong model receives one `EffectFrame`, not arbitrary task history.
-- The strong model returns `ThinkDecision` JSON, not a free-form final answer.
+- `Continuation` is serializable data: `program_id`, `pc`, `resume_var`, `env`, and `expected_schema`.
+- The runtime does not call weak by default. Weak runs only when the Program reaches `Instr::WeakCall`.
+- The strong model is not the weak model's next step. It handles `EffectFrame` values captured from unresolved continuation frames.
+- Strong Think returns a typed `ThinkDecision`, not free-form final output.
+- `ResumeWithValue` is validated against `continuation.expected_schema` before execution resumes.
 
 ## API Shape
 

@@ -1,0 +1,107 @@
+{
+  "program_id": "message_action_two_stage_v1",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["event_id", "text"],
+    "properties": {
+      "event_id": { "type": "string" },
+      "text": { "type": "string" }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["event_id", "kind", "title", "datetime_hint", "source"],
+    "properties": {
+      "event_id": { "type": "string" },
+      "kind": {
+        "type": "string",
+        "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+      },
+      "title": { "type": "string" },
+      "datetime_hint": {
+        "anyOf": [{ "type": "string" }, { "type": "null" }]
+      },
+      "source": {
+        "type": "string",
+        "enum": ["weak_model", "strong_think"]
+      }
+    }
+  },
+  "instructions": [
+    {
+      "op": "weak_call",
+      "out": "intent",
+      "task": {
+        "name": "classify_intent",
+        "instructions": "Classify the message intent only. Do not extract full fields."
+      },
+      "input": {
+        "kind": "var",
+        "name": "$input"
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+          }
+        }
+      },
+      "min_confidence": 0.75
+    },
+    {
+      "op": "weak_call",
+      "out": "draft",
+      "task": {
+        "name": "extract_action_draft_from_intent",
+        "instructions": "Given the original message and intent, produce a complete action draft."
+      },
+      "input": {
+        "kind": "object",
+        "fields": {
+          "message": {
+            "kind": "var",
+            "name": "$input"
+          },
+          "intent": {
+            "kind": "var",
+            "name": "intent"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "kind", "title", "datetime_hint", "source"],
+        "properties": {
+          "event_id": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+          },
+          "title": { "type": "string" },
+          "datetime_hint": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }]
+          },
+          "source": {
+            "type": "string",
+            "enum": ["weak_model", "strong_think"]
+          }
+        }
+      },
+      "min_confidence": 0.8
+    },
+    {
+      "op": "finish",
+      "value": {
+        "kind": "var",
+        "name": "draft"
+      }
+    }
+  ]
+}

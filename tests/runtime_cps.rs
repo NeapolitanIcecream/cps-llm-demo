@@ -1,397 +1,510 @@
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use cps_llm_demo::domain::{
-    DecisionSource, IntentKind, MessageEvent, ResolvedIntent, WeakIntentGuess,
-};
 use cps_llm_demo::effects::{Continuation, EffectFrame, ThinkDecision};
-use cps_llm_demo::models::{StrongModel, WeakModel};
-use cps_llm_demo::runtime::{CapturePolicy, Runtime, deterministic_prefilter};
+use cps_llm_demo::models::{StrongModel, WeakModel, WeakTaskResult};
+use cps_llm_demo::program::{Instr, JsonExpr, Program, WeakTaskSpec};
+use cps_llm_demo::runtime::Runtime;
+use cps_llm_demo::schema::{action_draft_schema, message_event_schema};
 use cps_llm_demo::trace::TraceCollector;
+use serde_json::{Map, Value, json};
 
-struct StaticWeak {
-    result: std::result::Result<WeakIntentGuess, String>,
-}
-
-#[async_trait]
-impl WeakModel for StaticWeak {
-    async fn classify_message(&self, _event: &MessageEvent) -> Result<WeakIntentGuess> {
-        self.result.clone().map_err(|message| anyhow!(message))
-    }
+#[derive(Clone)]
+struct WeakCallRecord {
+    task: WeakTaskSpec,
+    input: Value,
+    output_schema: Value,
 }
 
 #[derive(Clone)]
-struct CountingWeak {
-    result: WeakIntentGuess,
-    calls: Arc<Mutex<Vec<MessageEvent>>>,
+struct SequenceWeak {
+    results: Arc<Mutex<VecDeque<std::result::Result<WeakTaskResult, String>>>>,
+    calls: Arc<Mutex<Vec<WeakCallRecord>>>,
 }
 
-impl CountingWeak {
-    fn new(result: WeakIntentGuess) -> Self {
+impl SequenceWeak {
+    fn new(results: Vec<std::result::Result<WeakTaskResult, String>>) -> Self {
         Self {
-            result,
+            results: Arc::new(Mutex::new(results.into())),
             calls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
-    fn call_count(&self) -> usize {
-        self.calls.lock().unwrap().len()
+    fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+
+    fn calls(&self) -> Vec<WeakCallRecord> {
+        self.calls.lock().unwrap().clone()
     }
 }
 
 #[async_trait]
-impl WeakModel for CountingWeak {
-    async fn classify_message(&self, event: &MessageEvent) -> Result<WeakIntentGuess> {
-        self.calls.lock().unwrap().push(event.clone());
-        Ok(self.result.clone())
+impl WeakModel for SequenceWeak {
+    async fn run_weak_task(
+        &self,
+        task: &WeakTaskSpec,
+        input: &Value,
+        output_schema: &Value,
+    ) -> Result<WeakTaskResult> {
+        self.calls.lock().unwrap().push(WeakCallRecord {
+            task: task.clone(),
+            input: input.clone(),
+            output_schema: output_schema.clone(),
+        });
+        self.results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err("unexpected weak call".to_owned()))
+            .map_err(|message| anyhow!(message))
     }
 }
 
 #[derive(Clone)]
-struct RecordingStrong {
-    decision: std::result::Result<ThinkDecision, String>,
+struct SequenceStrong {
+    compile_result: Option<Program>,
+    decisions: Arc<Mutex<VecDeque<std::result::Result<ThinkDecision, String>>>>,
     calls: Arc<Mutex<Vec<EffectFrame>>>,
 }
 
+impl SequenceStrong {
+    fn new(decisions: Vec<std::result::Result<ThinkDecision, String>>) -> Self {
+        Self {
+            compile_result: None,
+            decisions: Arc::new(Mutex::new(decisions.into())),
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+
+    fn calls(&self) -> Vec<EffectFrame> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
 #[async_trait]
-impl StrongModel for RecordingStrong {
+impl StrongModel for SequenceStrong {
+    async fn compile_program(
+        &self,
+        _task_spec: &str,
+        _input_schema: &Value,
+        _output_schema: &Value,
+    ) -> Result<Program> {
+        self.compile_result
+            .clone()
+            .ok_or_else(|| anyhow!("unexpected compile_program call"))
+    }
+
     async fn think(&self, frame: &EffectFrame) -> Result<ThinkDecision> {
         self.calls.lock().unwrap().push(frame.clone());
-        self.decision.clone().map_err(|message| anyhow!(message))
+        self.decisions
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err("unexpected strong think call".to_owned()))
+            .map_err(|message| anyhow!(message))
     }
 }
 
 #[test]
-fn continuation_is_serializable_data() {
-    let continuation = Continuation::AfterClassifyMessage {
-        event: MessageEvent {
-            event_id: "m1".to_owned(),
-            text: "明天 10 点前把新版 proposal 发我一下".to_owned(),
-        },
-        weak_guess: None,
-        weak_error: Some("temporary model error".to_owned()),
+fn continuation_is_serializable_program_point_data() {
+    let mut env = Map::new();
+    env.insert(
+        "$input".to_owned(),
+        json!({ "event_id": "m1", "text": "hello" }),
+    );
+
+    let continuation = Continuation {
+        program_id: "message_action_v1".to_owned(),
+        pc: 2,
+        resume_var: Some("draft".to_owned()),
+        env,
+        expected_schema: action_draft_schema(),
     };
 
     let value = serde_json::to_value(&continuation).unwrap();
-    assert_eq!(value["tag"], "after_classify_message");
+    assert_eq!(value["program_id"], "message_action_v1");
+    assert_eq!(value["pc"], 2);
+    assert_eq!(value["resume_var"], "draft");
 
     let roundtrip: Continuation = serde_json::from_value(value).unwrap();
     assert_eq!(roundtrip, continuation);
 }
 
-#[test]
-fn empty_message_is_deterministic_ignore() {
-    let event = MessageEvent {
-        event_id: "m0".to_owned(),
-        text: "   ".to_owned(),
+#[tokio::test]
+async fn program_interpreter_runs_multiple_instructions() {
+    let weak = SequenceWeak::empty();
+    let strong = SequenceStrong::empty();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+    let program = Program {
+        program_id: "pure_projection".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({ "type": "string" }),
+        instructions: vec![
+            Instr::Set {
+                var: "payload".to_owned(),
+                value: json!({ "answer": "ok" }),
+            },
+            Instr::Project {
+                out: "answer".to_owned(),
+                from: JsonExpr::Var {
+                    name: "payload".to_owned(),
+                },
+                path: vec!["answer".to_owned()],
+            },
+            Instr::Finish {
+                value: JsonExpr::Var {
+                    name: "answer".to_owned(),
+                },
+            },
+        ],
     };
 
-    let draft = deterministic_prefilter(&event).unwrap();
-    assert_eq!(draft.source, DecisionSource::DeterministicCode);
-    assert_eq!(draft.kind, IntentKind::Ignore);
-}
+    let output = runtime.run_program(program, json!({})).await.unwrap();
 
-#[test]
-fn semantic_messages_are_not_deterministically_prefiltered() {
-    for text in [
-        "验证码 839201，五分钟内有效",
-        "Your OTP is 839201",
-        "Use OTP839201 to sign in",
-        "Your verification code is 839201",
-        "verification code UX review",
-        "Schedule unsubscribe flow review Friday 3pm",
-        "hotpot dinner",
-        "周五下午 3 点开产品评审会",
-        "明天 10 点前把新版 proposal 发我一下",
-        "你看看这个方向是不是可以继续推进？",
-    ] {
-        let event = MessageEvent {
-            event_id: "case".to_owned(),
-            text: text.to_owned(),
-        };
-
-        assert!(
-            deterministic_prefilter(&event).is_none(),
-            "message should reach weak model, but was prefiltered: {text}"
-        );
-    }
+    assert_eq!(output, json!("ok"));
+    assert!(weak.calls().is_empty());
+    assert!(strong.calls().is_empty());
 }
 
 #[tokio::test]
-async fn always_after_weak_policy_captures_without_reading_message_text() {
-    let calls = Arc::new(Mutex::new(Vec::new()));
+async fn weak_call_is_instruction_not_runtime_first_step() {
+    let weak = SequenceWeak::empty();
+    let strong = SequenceStrong::empty();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+    let program = Program {
+        program_id: "no_weak_path".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: json!({ "type": "string" }),
+        instructions: vec![
+            Instr::Set {
+                var: "result".to_owned(),
+                value: json!("done_without_models"),
+            },
+            Instr::Finish {
+                value: JsonExpr::Var {
+                    name: "result".to_owned(),
+                },
+            },
+        ],
+    };
+
+    let output = runtime
+        .run_program(
+            program,
+            json!({ "event_id": "m1", "text": "semantic text" }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output, json!("done_without_models"));
+    assert!(weak.calls().is_empty());
+    assert!(strong.calls().is_empty());
+}
+
+#[tokio::test]
+async fn program_with_two_weak_calls_can_capture_second_call() {
+    let weak = SequenceWeak::new(vec![
+        Ok(weak_result(json!({ "kind": "create_task" }), 0.91)),
+        Ok(weak_result(action_value("weak_model"), 0.42)),
+    ]);
+    let strong = SequenceStrong::new(vec![Ok(ThinkDecision::ResumeWithValue {
+        value: action_value("strong_think"),
+        confidence: 0.89,
+        rationale: "resolved stuck draft extraction".to_owned(),
+    })]);
     let trace = TraceCollector::default();
-    let runtime = Runtime::new(
-        CountingWeak::new(WeakIntentGuess {
-            kind: IntentKind::CreateCalendarEvent,
-            title: Some("some event".to_owned()),
-            datetime_hint: Some("tomorrow".to_owned()),
-            confidence: 0.99,
-            rationale: "high confidence".to_owned(),
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let output = runtime
+        .run_program(two_stage_program(), message())
+        .await
+        .unwrap();
+
+    assert_eq!(output["source"], "strong_think");
+    let weak_calls = weak.calls();
+    assert_eq!(weak_calls.len(), 2);
+    assert_eq!(weak_calls[0].task.name, "classify_intent");
+    assert_eq!(weak_calls[1].task.name, "extract_action_draft_from_intent");
+    assert!(weak_calls[1].input.get("intent").is_some());
+    assert!(weak_calls[1].output_schema.get("required").is_some());
+
+    let strong_calls = strong.calls();
+    assert_eq!(strong_calls.len(), 1);
+    let frame = &strong_calls[0];
+    assert_eq!(frame.continuation.pc, 2);
+    assert_eq!(frame.continuation.resume_var.as_deref(), Some("draft"));
+    assert!(matches!(
+        frame.failed_instruction,
+        Some(Instr::WeakCall { ref out, .. }) if out == "draft"
+    ));
+
+    assert!(trace.events().iter().any(|event| {
+        event.event == "capture_continuation"
+            && event.detail["pc"] == 2
+            && event.detail["resume_var"] == "draft"
+    }));
+}
+
+#[tokio::test]
+async fn strong_request_weak_probe_then_resume() {
+    let weak = SequenceWeak::new(vec![
+        Ok(weak_result(action_value("weak_model"), 0.20)),
+        Ok(weak_result(
+            json!({ "datetime_candidates": ["tomorrow 10am"] }),
+            0.92,
+        )),
+    ]);
+    let strong = SequenceStrong::new(vec![
+        Ok(ThinkDecision::RequestWeakProbe {
+            out: "datetime_candidates".to_owned(),
+            task: WeakTaskSpec {
+                name: "extract_datetime_candidates".to_owned(),
+                instructions: "Extract possible datetime hints.".to_owned(),
+            },
+            input: JsonExpr::Var {
+                name: "$input".to_owned(),
+            },
+            output_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["datetime_candidates"],
+                "properties": {
+                    "datetime_candidates": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    }
+                }
+            }),
+            min_confidence: 0.50,
+            rationale: "need a local datetime probe".to_owned(),
         }),
-        RecordingStrong {
-            decision: Ok(ThinkDecision::Value(ResolvedIntent {
-                kind: IntentKind::CreateCalendarEvent,
-                title: "confirmed by strong".to_owned(),
-                datetime_hint: Some("tomorrow".to_owned()),
-                confidence: 0.99,
-                source: DecisionSource::StrongThink,
-            })),
-            calls: calls.clone(),
-        },
-        0.75,
-        CapturePolicy::AlwaysAfterWeak,
-        trace.clone(),
-    );
+        Ok(ThinkDecision::ResumeWithValue {
+            value: action_value("strong_think"),
+            confidence: 0.86,
+            rationale: "used probe observation to fill draft".to_owned(),
+        }),
+    ]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
 
-    let draft = runtime
-        .run_one(MessageEvent {
-            event_id: "m1".to_owned(),
-            text: "arbitrary text with no special marker".to_owned(),
-        })
+    let output = runtime
+        .run_program(single_weak_program(), message())
         .await
         .unwrap();
 
-    assert_eq!(draft.source, DecisionSource::StrongThink);
-    assert_eq!(draft.kind, IntentKind::CreateCalendarEvent);
-    assert_eq!(calls.lock().unwrap().len(), 1);
+    assert_eq!(output["source"], "strong_think");
+    assert_eq!(weak.calls().len(), 2);
 
-    let events: Vec<_> = trace.events().into_iter().map(|item| item.event).collect();
-    assert!(events.contains(&"capture_continuation".to_owned()));
-    assert!(events.contains(&"strong_think".to_owned()));
-    assert!(events.contains(&"resume_continuation".to_owned()));
-}
+    let strong_calls = strong.calls();
+    assert_eq!(strong_calls.len(), 2);
+    assert_eq!(strong_calls[0].observations.len(), 1);
+    assert_eq!(strong_calls[1].observations.len(), 2);
 
-#[tokio::test]
-async fn weak_only_path_does_not_call_strong() {
-    let calls = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Runtime::new(
-        StaticWeak {
-            result: Ok(WeakIntentGuess {
-                kind: IntentKind::CreateCalendarEvent,
-                title: Some("产品评审会".to_owned()),
-                datetime_hint: Some("周五下午 3 点".to_owned()),
-                confidence: 0.82,
-                rationale: "obvious meeting".to_owned(),
-            }),
-        },
-        RecordingStrong {
-            decision: Err("should not be called".to_owned()),
-            calls: calls.clone(),
-        },
-        0.75,
-        CapturePolicy::ConfidenceOnly,
-        TraceCollector::default(),
+    let events = trace.events();
+    assert!(events.iter().any(|event| {
+        event.event == "strong_think" && event.detail["decision"] == "request_weak_probe"
+    }));
+    assert!(events.iter().any(|event| event.event == "weak_probe"));
+    assert!(events.iter().any(|event| {
+        event.event == "strong_think" && event.detail["decision"] == "resume_with_value"
+    }));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event == "resume_continuation")
     );
-
-    let draft = runtime
-        .run_one(MessageEvent {
-            event_id: "m2".to_owned(),
-            text: "周五下午 3 点开产品评审会".to_owned(),
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(draft.source, DecisionSource::WeakModel);
-    assert_eq!(draft.kind, IntentKind::CreateCalendarEvent);
-    assert!(calls.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
-async fn every_non_empty_message_reaches_weak_model_first() {
-    let weak = CountingWeak::new(WeakIntentGuess {
-        kind: IntentKind::Ignore,
-        title: Some("model decided ignore".to_owned()),
-        datetime_hint: None,
+async fn guard_think_resumes_with_value_for_failed_schema_contract() {
+    let weak = SequenceWeak::empty();
+    let strong = SequenceStrong::new(vec![Ok(ThinkDecision::ResumeWithValue {
+        value: action_value("strong_think"),
         confidence: 0.90,
-        rationale: "semantic classification by weak model".to_owned(),
-    });
-    let calls = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Runtime::new(
-        weak.clone(),
-        RecordingStrong {
-            decision: Err("should not be called".to_owned()),
-            calls,
-        },
-        0.75,
-        CapturePolicy::ConfidenceOnly,
-        TraceCollector::default(),
-    );
+        rationale: "repaired invalid draft".to_owned(),
+    })]);
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+    let program = Program {
+        program_id: "guard_repair".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: action_draft_schema(),
+        instructions: vec![
+            Instr::Set {
+                var: "draft".to_owned(),
+                value: json!({ "event_id": "m1" }),
+            },
+            Instr::Guard {
+                condition: cps_llm_demo::program::GuardExpr::JsonSchemaValid {
+                    var: "draft".to_owned(),
+                    schema: action_draft_schema(),
+                },
+                on_fail: cps_llm_demo::program::GuardFail::Think {
+                    reason: "draft failed action schema".to_owned(),
+                },
+            },
+            Instr::Finish {
+                value: JsonExpr::Var {
+                    name: "draft".to_owned(),
+                },
+            },
+        ],
+    };
 
-    let messages = [
-        "验证码 839201，五分钟内有效",
-        "verification code UX review",
-        "unsubscribe flow review",
-        "周五下午 3 点开产品评审会",
-    ];
+    let output = runtime.run_program(program, message()).await.unwrap();
 
-    for (index, text) in messages.iter().enumerate() {
-        let _ = runtime
-            .run_one(MessageEvent {
-                event_id: format!("m{index}"),
-                text: text.to_string(),
-            })
-            .await
-            .unwrap();
-    }
-
-    assert_eq!(weak.call_count(), messages.len());
-}
-
-#[tokio::test]
-async fn out_of_range_weak_confidence_captures_continuation() {
-    let calls = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Runtime::new(
-        StaticWeak {
-            result: Ok(WeakIntentGuess {
-                kind: IntentKind::CreateTask,
-                title: Some("Send proposal".to_owned()),
-                datetime_hint: Some("tomorrow".to_owned()),
-                confidence: 75.0,
-                rationale: "bad percent value".to_owned(),
-            }),
-        },
-        RecordingStrong {
-            decision: Ok(ThinkDecision::Value(ResolvedIntent {
-                kind: IntentKind::CreateTask,
-                title: "Send proposal".to_owned(),
-                datetime_hint: Some("tomorrow".to_owned()),
-                confidence: 0.9,
-                source: DecisionSource::StrongThink,
-            })),
-            calls: calls.clone(),
-        },
-        0.75,
-        CapturePolicy::ConfidenceOnly,
-        TraceCollector::default(),
-    );
-
-    let draft = runtime
-        .run_one(MessageEvent {
-            event_id: "m8".to_owned(),
-            text: "Please send the proposal tomorrow".to_owned(),
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(draft.source, DecisionSource::StrongThink);
-    let frames = calls.lock().unwrap();
-    assert_eq!(frames.len(), 1);
-    assert_eq!(frames[0].frame.reason, "low_confidence");
-}
-
-#[tokio::test]
-async fn weak_error_becomes_think_effect() {
-    let calls = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Runtime::new(
-        StaticWeak {
-            result: Err("network timeout".to_owned()),
-        },
-        RecordingStrong {
-            decision: Ok(ThinkDecision::Value(ResolvedIntent {
-                kind: IntentKind::DraftReply,
-                title: "回复对方：可以继续推进".to_owned(),
-                datetime_hint: None,
-                confidence: 0.8,
-                source: DecisionSource::StrongThink,
-            })),
-            calls: calls.clone(),
-        },
-        0.75,
-        CapturePolicy::ConfidenceOnly,
-        TraceCollector::default(),
-    );
-
-    let draft = runtime
-        .run_one(MessageEvent {
-            event_id: "m4".to_owned(),
-            text: "你看看这个方向是不是可以继续推进？".to_owned(),
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(draft.source, DecisionSource::StrongThink);
-    let frames = calls.lock().unwrap();
-    assert_eq!(frames.len(), 1);
+    assert_eq!(output["source"], "strong_think");
+    assert!(weak.calls().is_empty());
+    let strong_calls = strong.calls();
+    assert_eq!(strong_calls.len(), 1);
+    assert_eq!(strong_calls[0].continuation.pc, 2);
     assert_eq!(
-        frames[0].frame.weak_error.as_deref(),
-        Some("network timeout")
+        strong_calls[0].continuation.resume_var.as_deref(),
+        Some("draft")
+    );
+    assert_eq!(
+        strong_calls[0].continuation.expected_schema,
+        action_draft_schema()
     );
 }
 
 #[tokio::test]
-async fn invalid_weak_contract_captures_continuation() {
-    let calls = Arc::new(Mutex::new(Vec::new()));
-    let runtime = Runtime::new(
-        StaticWeak {
-            result: Ok(WeakIntentGuess {
-                kind: IntentKind::CreateTask,
-                title: Some("   ".to_owned()),
-                datetime_hint: Some("tomorrow".to_owned()),
-                confidence: 0.96,
-                rationale: "looks like a request".to_owned(),
-            }),
-        },
-        RecordingStrong {
-            decision: Ok(ThinkDecision::Value(ResolvedIntent {
-                kind: IntentKind::CreateTask,
-                title: "Send proposal".to_owned(),
-                datetime_hint: Some("tomorrow".to_owned()),
-                confidence: 0.9,
-                source: DecisionSource::StrongThink,
-            })),
-            calls: calls.clone(),
-        },
-        0.75,
-        CapturePolicy::ConfidenceOnly,
-        TraceCollector::default(),
-    );
+async fn strong_output_must_match_expected_schema() {
+    let weak = SequenceWeak::new(vec![Ok(weak_result(action_value("weak_model"), 0.10))]);
+    let strong = SequenceStrong::new(vec![Ok(ThinkDecision::ResumeWithValue {
+        value: json!({ "event_id": "m1" }),
+        confidence: 0.90,
+        rationale: "invalid partial answer".to_owned(),
+    })]);
+    let runtime = Runtime::new(weak, strong, TraceCollector::default());
 
-    let draft = runtime
-        .run_one(MessageEvent {
-            event_id: "m6".to_owned(),
-            text: "Please send it tomorrow".to_owned(),
-        })
+    let error = runtime
+        .run_program(single_weak_program(), message())
         .await
-        .unwrap();
+        .unwrap_err();
 
-    assert_eq!(draft.source, DecisionSource::StrongThink);
-    let frames = calls.lock().unwrap();
-    assert_eq!(frames.len(), 1);
-    assert_eq!(frames[0].frame.reason, "invalid_weak_contract");
+    assert!(
+        error
+            .to_string()
+            .contains("strong ResumeWithValue failed expected schema")
+    );
 }
 
-#[tokio::test]
-async fn strong_error_returns_user_fallback() {
-    let runtime = Runtime::new(
-        StaticWeak {
-            result: Ok(WeakIntentGuess {
-                kind: IntentKind::NeedStrongThink,
-                title: None,
-                datetime_hint: None,
-                confidence: 0.2,
-                rationale: "uncertain".to_owned(),
-            }),
+fn weak_result(value: Value, confidence: f32) -> WeakTaskResult {
+    WeakTaskResult {
+        value,
+        confidence,
+        rationale: "fake weak result".to_owned(),
+    }
+}
+
+fn message() -> Value {
+    json!({
+        "event_id": "m1",
+        "text": "明天 10 点前把新版 proposal 发我一下"
+    })
+}
+
+fn action_value(source: &str) -> Value {
+    json!({
+        "event_id": "m1",
+        "kind": "create_task",
+        "title": "发送新版 proposal",
+        "datetime_hint": "明天 10 点前",
+        "source": source
+    })
+}
+
+fn single_weak_program() -> Program {
+    Program {
+        program_id: "message_action_v1".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: action_draft_schema(),
+        instructions: vec![
+            Instr::WeakCall {
+                out: "draft".to_owned(),
+                task: WeakTaskSpec {
+                    name: "classify_and_extract_action_draft".to_owned(),
+                    instructions: "Return a complete action draft.".to_owned(),
+                },
+                input: JsonExpr::Var {
+                    name: "$input".to_owned(),
+                },
+                output_schema: action_draft_schema(),
+                min_confidence: 0.80,
+            },
+            Instr::Finish {
+                value: JsonExpr::Var {
+                    name: "draft".to_owned(),
+                },
+            },
+        ],
+    }
+}
+
+fn two_stage_program() -> Program {
+    let mut fields = BTreeMap::new();
+    fields.insert(
+        "message".to_owned(),
+        JsonExpr::Var {
+            name: "$input".to_owned(),
         },
-        RecordingStrong {
-            decision: Err("service unavailable".to_owned()),
-            calls: Arc::new(Mutex::new(Vec::new())),
+    );
+    fields.insert(
+        "intent".to_owned(),
+        JsonExpr::Var {
+            name: "intent".to_owned(),
         },
-        0.75,
-        CapturePolicy::ConfidenceOnly,
-        TraceCollector::default(),
     );
 
-    let draft = runtime
-        .run_one(MessageEvent {
-            event_id: "m5".to_owned(),
-            text: "can you judge this?".to_owned(),
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(draft.source, DecisionSource::UserFallback);
-    assert_eq!(draft.kind, IntentKind::DraftReply);
-    assert!(draft.title.contains("Manual review required"));
+    Program {
+        program_id: "message_action_two_stage_v1".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: action_draft_schema(),
+        instructions: vec![
+            Instr::WeakCall {
+                out: "intent".to_owned(),
+                task: WeakTaskSpec {
+                    name: "classify_intent".to_owned(),
+                    instructions: "Classify intent only.".to_owned(),
+                },
+                input: JsonExpr::Var {
+                    name: "$input".to_owned(),
+                },
+                output_schema: json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind"],
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+                        }
+                    }
+                }),
+                min_confidence: 0.75,
+            },
+            Instr::WeakCall {
+                out: "draft".to_owned(),
+                task: WeakTaskSpec {
+                    name: "extract_action_draft_from_intent".to_owned(),
+                    instructions: "Return a complete action draft.".to_owned(),
+                },
+                input: JsonExpr::Object { fields },
+                output_schema: action_draft_schema(),
+                min_confidence: 0.80,
+            },
+            Instr::Finish {
+                value: JsonExpr::Var {
+                    name: "draft".to_owned(),
+                },
+            },
+        ],
+    }
 }

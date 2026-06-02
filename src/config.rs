@@ -8,7 +8,6 @@ use crate::responses_client::{ResponsesClient, ResponsesClientConfig};
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 pub const DEFAULT_WEAK_MODEL: &str = "gpt-5.4-mini";
 pub const DEFAULT_STRONG_MODEL: &str = "gpt-5.5";
-pub const DEFAULT_THRESHOLD: f32 = 0.75;
 
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
@@ -16,7 +15,6 @@ pub struct ModelConfig {
     pub api_key: SecretString,
     pub weak_model: String,
     pub strong_model: String,
-    pub threshold: f32,
 }
 
 impl ModelConfig {
@@ -25,12 +23,7 @@ impl ModelConfig {
         api_key: Option<String>,
         weak_model: String,
         strong_model: String,
-        threshold: f32,
     ) -> Result<Self> {
-        if !is_probability(threshold) {
-            return Err(DemoError::InvalidThreshold.into());
-        }
-
         let api_key = api_key
             .filter(|value| !value.trim().is_empty())
             .ok_or(DemoError::MissingApiKey)?;
@@ -40,7 +33,6 @@ impl ModelConfig {
             api_key: SecretString::from(api_key),
             weak_model,
             strong_model,
-            threshold,
         })
     }
 
@@ -50,8 +42,4 @@ impl ModelConfig {
             api_key: self.api_key.clone(),
         })
     }
-}
-
-fn is_probability(value: f32) -> bool {
-    value.is_finite() && (0.0..=1.0).contains(&value)
 }

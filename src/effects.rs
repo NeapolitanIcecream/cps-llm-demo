@@ -1,51 +1,54 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
-use crate::domain::{MessageEvent, ResolvedIntent, WeakIntentGuess};
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(tag = "tag", content = "data", rename_all = "snake_case")]
-pub enum Continuation {
-    AfterClassifyMessage {
-        event: MessageEvent,
-        weak_guess: Option<WeakIntentGuess>,
-        weak_error: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ExpectedType {
-    ResolvedIntent,
-}
+use crate::program::{Instr, JsonExpr, WeakTaskSpec};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct ThinkFrame {
-    pub reason: String,
-    pub expected: ExpectedType,
-    pub event: MessageEvent,
-    pub weak_guess: Option<WeakIntentGuess>,
-    pub weak_error: Option<String>,
-    pub allowed_decisions: Vec<String>,
+pub struct Continuation {
+    pub program_id: String,
+    pub pc: usize,
+    pub resume_var: Option<String>,
+    pub env: Map<String, Value>,
+    pub expected_schema: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct EffectFrame {
     pub effect_id: String,
-    pub effect: EffectKind,
+    pub reason: String,
+    pub failed_instruction: Option<Instr>,
     pub continuation: Continuation,
-    pub frame: ThinkFrame,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum EffectKind {
-    Think,
+    pub observations: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(tag = "decision", content = "data", rename_all = "snake_case")]
+#[serde(tag = "decision", rename_all = "snake_case")]
 pub enum ThinkDecision {
-    Value(ResolvedIntent),
-    Abort { reason: String },
+    ResumeWithValue {
+        value: Value,
+        confidence: f32,
+        rationale: String,
+    },
+    RequestWeakProbe {
+        out: String,
+        task: WeakTaskSpec,
+        input: JsonExpr,
+        output_schema: Value,
+        min_confidence: f32,
+        rationale: String,
+    },
+    Abort {
+        reason: String,
+    },
+}
+
+impl ThinkDecision {
+    pub fn decision_name(&self) -> &'static str {
+        match self {
+            Self::ResumeWithValue { .. } => "resume_with_value",
+            Self::RequestWeakProbe { .. } => "request_weak_probe",
+            Self::Abort { .. } => "abort",
+        }
+    }
 }

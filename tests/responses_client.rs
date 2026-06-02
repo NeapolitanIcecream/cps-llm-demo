@@ -1,6 +1,6 @@
-use cps_llm_demo::domain::{IntentKind, WeakIntentGuess};
+use cps_llm_demo::models::WeakTaskResult;
 use cps_llm_demo::responses_client::{ResponsesClient, ResponsesClientConfig, extract_output_text};
-use cps_llm_demo::schema::weak_intent_guess_schema;
+use cps_llm_demo::schema::{action_draft_schema, weak_task_result_schema};
 use httpmock::Method::POST;
 use httpmock::MockServer;
 use secrecy::SecretString;
@@ -15,10 +15,14 @@ fn client(server: &MockServer, base_path: &str) -> ResponsesClient {
 }
 
 fn weak_output_text() -> String {
-    serde_json::to_string(&WeakIntentGuess {
-        kind: IntentKind::CreateCalendarEvent,
-        title: Some("Product review".to_owned()),
-        datetime_hint: Some("Friday 3pm".to_owned()),
+    serde_json::to_string(&WeakTaskResult {
+        value: json!({
+            "event_id": "m2",
+            "kind": "create_calendar_event",
+            "title": "Product review",
+            "datetime_hint": "Friday 3pm",
+            "source": "weak_model"
+        }),
         confidence: 0.91,
         rationale: "obvious meeting".to_owned(),
     })
@@ -56,25 +60,23 @@ async fn create_structured_posts_to_responses_and_parses_top_level_output_text()
             .path("/v1/responses")
             .header("authorization", "Bearer test-key")
             .header_exists("x-client-request-id")
-            .json_body_includes(
-                r#"{"store":false,"text":{"format":{"name":"weak_intent_guess"}}}"#,
-            );
+            .json_body_includes(r#"{"store":false,"text":{"format":{"name":"weak_task_result"}}}"#);
         then.status(200)
             .json_body(json!({ "output_text": weak_output_text() }));
     });
 
-    let parsed: WeakIntentGuess = client(&server, "/v1")
+    let parsed: WeakTaskResult = client(&server, "/v1")
         .create_structured(
             "test-model",
             "Return JSON.",
             &json!({ "event_id": "m2", "text": "Friday 3pm product review" }),
-            "weak_intent_guess",
-            weak_intent_guess_schema(),
+            "weak_task_result",
+            weak_task_result_schema(action_draft_schema()),
         )
         .await
         .unwrap();
 
-    assert_eq!(parsed.kind, IntentKind::CreateCalendarEvent);
+    assert_eq!(parsed.value["kind"], "create_calendar_event");
     mock.assert();
 }
 
@@ -95,18 +97,18 @@ async fn create_structured_accepts_nested_output_text_and_trailing_base_url_slas
         }));
     });
 
-    let parsed: WeakIntentGuess = client(&server, "/v1/")
+    let parsed: WeakTaskResult = client(&server, "/v1/")
         .create_structured(
             "test-model",
             "Return JSON.",
             &json!({ "event_id": "m2", "text": "Friday 3pm product review" }),
-            "weak_intent_guess",
-            weak_intent_guess_schema(),
+            "weak_task_result",
+            weak_task_result_schema(action_draft_schema()),
         )
         .await
         .unwrap();
 
-    assert_eq!(parsed.title.as_deref(), Some("Product review"));
+    assert_eq!(parsed.value["title"], "Product review");
     mock.assert();
 }
 
@@ -119,12 +121,12 @@ async fn create_structured_returns_error_for_api_failure() {
     });
 
     let error = client(&server, "/v1")
-        .create_structured::<WeakIntentGuess>(
+        .create_structured::<WeakTaskResult>(
             "test-model",
             "Return JSON.",
             &json!({ "event_id": "m2", "text": "Friday 3pm product review" }),
-            "weak_intent_guess",
-            weak_intent_guess_schema(),
+            "weak_task_result",
+            weak_task_result_schema(action_draft_schema()),
         )
         .await
         .unwrap_err();
@@ -143,12 +145,12 @@ async fn create_structured_returns_error_for_non_json_output_text() {
     });
 
     let error = client(&server, "/v1")
-        .create_structured::<WeakIntentGuess>(
+        .create_structured::<WeakTaskResult>(
             "test-model",
             "Return JSON.",
             &json!({ "event_id": "m2", "text": "Friday 3pm product review" }),
-            "weak_intent_guess",
-            weak_intent_guess_schema(),
+            "weak_task_result",
+            weak_task_result_schema(action_draft_schema()),
         )
         .await
         .unwrap_err();
@@ -174,12 +176,12 @@ async fn create_structured_rejects_schema_invalid_model_json_before_deserialize(
     });
 
     let error = client(&server, "/v1")
-        .create_structured::<WeakIntentGuess>(
+        .create_structured::<WeakTaskResult>(
             "test-model",
             "Return JSON.",
             &json!({ "event_id": "m2", "text": "Friday 3pm product review" }),
-            "weak_intent_guess",
-            weak_intent_guess_schema(),
+            "weak_task_result",
+            weak_task_result_schema(action_draft_schema()),
         )
         .await
         .unwrap_err();
