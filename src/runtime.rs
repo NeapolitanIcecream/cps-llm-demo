@@ -25,6 +25,10 @@ const STRONG_THINK_SOURCE: &str = "strong_think";
 const STRONG_MODEL_SOURCE: &str = "strong_model";
 const LOCAL_TOOL_SOURCE: &str = "local_tool";
 const RUNTIME_SOURCE: &str = "runtime";
+const WEAK_MODEL_SOURCE_LABELS: &[&str] = &[WEAK_MODEL_SOURCE];
+const STRONG_THINK_SOURCE_LABELS: &[&str] = &[STRONG_THINK_SOURCE, STRONG_MODEL_SOURCE];
+const STRONG_MODEL_SOURCE_LABELS: &[&str] = &[STRONG_MODEL_SOURCE, STRONG_THINK_SOURCE];
+const LOCAL_TOOL_SOURCE_LABELS: &[&str] = &[LOCAL_TOOL_SOURCE];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StepOutcome {
@@ -192,6 +196,12 @@ struct EffectResolution {
     observations: Vec<Observation>,
     source: ObservationSource,
     source_label: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EffectSource {
+    observation: ObservationSource,
+    label: &'static str,
 }
 
 struct EffectWork {
@@ -658,13 +668,13 @@ where
                         value, confidence, ..
                     } => {
                         ensure_probability(confidence, "handler return_value confidence")?;
-                        let (source, source_label) = source_for_effect(&effect);
+                        let source = source_for_effect_value(&effect, &expected_schema);
                         return Ok(EffectResolution {
                             value,
                             confidence,
                             observations: request.observations,
-                            source,
-                            source_label,
+                            source: source.observation,
+                            source_label: source.label,
                         });
                     }
                     HandlerDecision::RequestEffect {
@@ -779,6 +789,7 @@ where
                     HandlerDecision::ReturnProgramFragment { fragment, .. } => {
                         validate_fragment(&fragment)
                             .context("handler returned invalid ProgramFragment")?;
+                        let source = source_for_effect(&effect);
                         self.trace.emit(
                             "program_fragment_validated",
                             &state.trace_id,
@@ -791,8 +802,8 @@ where
                             value: serde_json::to_value(fragment)?,
                             confidence: 1.0,
                             observations: request.observations,
-                            source: source_for_effect(&effect).0,
-                            source_label: source_for_effect(&effect).1,
+                            source: source.observation,
+                            source_label: source.label,
                         });
                     }
                     HandlerDecision::ReturnProgramPatch { patch, .. } => {
@@ -886,7 +897,11 @@ where
                 },
             )
             .await?;
-        stamp_schema_source(&mut resolution.value, &expected_schema, STRONG_THINK_SOURCE);
+        stamp_schema_source(
+            &mut resolution.value,
+            &expected_schema,
+            resolution.source_label,
+        );
         validate_value(&expected_schema, &resolution.value)
             .context("strong Think return_value failed expected schema")?;
 
@@ -1343,8 +1358,8 @@ fn trace_return_value_schema_valid(
     value: &Value,
 ) -> bool {
     let mut stamped = value.clone();
-    let (_, source_label) = source_for_effect(effect);
-    stamp_schema_source(&mut stamped, expected_schema, source_label);
+    let source = source_for_effect_value(effect, expected_schema);
+    stamp_schema_source(&mut stamped, expected_schema, source.label);
     validate_value(expected_schema, &stamped).is_ok()
 }
 
@@ -1415,26 +1430,46 @@ fn schema_accepts_null(schema: &Value) -> bool {
     validate_value(schema, &Value::Null).is_ok()
 }
 
-fn source_for_effect(effect: &EffectCall) -> (ObservationSource, &'static str) {
+fn source_for_effect(effect: &EffectCall) -> EffectSource {
+    let (observation, labels) = source_candidates_for_effect(effect);
+    EffectSource {
+        observation,
+        label: labels[0],
+    }
+}
+
+fn source_for_effect_value(effect: &EffectCall, expected_schema: &Value) -> EffectSource {
+    let (observation, labels) = source_candidates_for_effect(effect);
+    let label = labels
+        .iter()
+        .copied()
+        .find(|candidate| schema_contains_source(expected_schema, candidate))
+        .unwrap_or(labels[0]);
+    EffectSource { observation, label }
+}
+
+fn source_candidates_for_effect(
+    effect: &EffectCall,
+) -> (ObservationSource, &'static [&'static str]) {
     match effect {
         EffectCall::ModelTask {
             strength: ModelStrength::Weak,
             ..
-        } => (ObservationSource::WeakModel, WEAK_MODEL_SOURCE),
-        EffectCall::Think { .. } => (ObservationSource::StrongModel, STRONG_THINK_SOURCE),
+        } => (ObservationSource::WeakModel, WEAK_MODEL_SOURCE_LABELS),
+        EffectCall::Think { .. } => (ObservationSource::StrongModel, STRONG_THINK_SOURCE_LABELS),
         EffectCall::ModelTask {
             strength: ModelStrength::Strong,
             ..
-        }
-        | EffectCall::CompileProgram {
+        } => (ObservationSource::StrongModel, STRONG_MODEL_SOURCE_LABELS),
+        EffectCall::CompileProgram {
             strength: ModelStrength::Strong,
             ..
-        } => (ObservationSource::StrongModel, STRONG_MODEL_SOURCE),
+        } => (ObservationSource::StrongModel, STRONG_MODEL_SOURCE_LABELS),
         EffectCall::CompileProgram {
             strength: ModelStrength::Weak,
             ..
-        } => (ObservationSource::WeakModel, WEAK_MODEL_SOURCE),
-        EffectCall::LocalTool { .. } => (ObservationSource::LocalTool, LOCAL_TOOL_SOURCE),
+        } => (ObservationSource::WeakModel, WEAK_MODEL_SOURCE_LABELS),
+        EffectCall::LocalTool { .. } => (ObservationSource::LocalTool, LOCAL_TOOL_SOURCE_LABELS),
     }
 }
 
@@ -1514,4 +1549,51 @@ fn schema_allows_source(schema: &Value, source: &str) -> bool {
                 .any(|allowed_source| allowed_source.as_str() == Some(source))
         })
         .unwrap_or(false)
+}
+
+fn schema_contains_source(schema: &Value, source: &str) -> bool {
+    if schema_allows_source(schema, source) {
+        return true;
+    }
+
+    for keyword in ["anyOf", "oneOf", "allOf"] {
+        if schema
+            .get(keyword)
+            .and_then(Value::as_array)
+            .is_some_and(|subschemas| {
+                subschemas
+                    .iter()
+                    .any(|subschema| schema_contains_source(subschema, source))
+            })
+        {
+            return true;
+        }
+    }
+
+    if let Some(items) = schema.get("items") {
+        match items {
+            Value::Array(item_schemas) => {
+                if item_schemas
+                    .iter()
+                    .any(|item_schema| schema_contains_source(item_schema, source))
+                {
+                    return true;
+                }
+            }
+            item_schema => {
+                if schema_contains_source(item_schema, source) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .is_some_and(|properties| {
+            properties
+                .values()
+                .any(|property_schema| schema_contains_source(property_schema, source))
+        })
 }

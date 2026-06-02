@@ -724,6 +724,113 @@ async fn weak_model_action_draft_schema_combinators_are_source_stamped() {
 }
 
 #[tokio::test]
+async fn strong_model_task_action_draft_shapes_use_schema_accepted_source() {
+    let cases = vec![
+        ("object", action_draft_schema(), action_without_source("m1")),
+        (
+            "array",
+            action_drafts_schema(),
+            json!([action_without_source("m1"), action_without_source("m2")]),
+        ),
+        (
+            "anyOf",
+            json!({ "anyOf": [action_draft_schema(), { "type": "null" }] }),
+            action_without_source("m1"),
+        ),
+    ];
+
+    for (name, expected_schema, handler_value) in cases {
+        let weak = SequenceHandler::empty();
+        let strong = SequenceHandler::new(vec![Ok(return_value(handler_value, 0.94))]);
+        let trace = TraceCollector::default();
+        let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+        let output = runtime
+            .run_program(
+                single_strong_program_with_expected_schema(
+                    &format!("single_strong_{name}"),
+                    expected_schema,
+                ),
+                message("m1", "send proposal"),
+            )
+            .await
+            .unwrap();
+
+        if name == "array" {
+            assert_eq!(output[0]["source"], "strong_think", "{name}");
+            assert_eq!(output[1]["source"], "strong_think", "{name}");
+        } else {
+            assert_eq!(output["source"], "strong_think", "{name}");
+        }
+        assert!(weak.calls().is_empty(), "{name}");
+        assert_eq!(strong.calls().len(), 1, "{name}");
+        assert!(trace.events().iter().any(|event| {
+            event.event == "handler_decision"
+                && event.detail["handler"] == "strong_model"
+                && event.detail["decision"] == "return_value"
+                && event.detail["schema_valid"] == true
+        }));
+        replay_trace_events(&trace.events()).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn nested_strong_model_task_action_draft_uses_schema_accepted_source() {
+    let weak = SequenceHandler::new(vec![Ok(HandlerDecision::RequestEffect {
+        effect: strong_task("classify_and_extract_action_draft_strong"),
+        input: message("m1", "send proposal"),
+        expected_schema: action_draft_schema(),
+        mode: EffectReturnMode::UseAsValue,
+        rationale: "weak handler escalates to a strong task".to_owned(),
+    })]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.94))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+    let mut program = single_weak_program();
+    program.allowed_effects.push(EffectPermission::ModelTask {
+        strength: ModelStrength::Strong,
+    });
+
+    let output = runtime
+        .run_program(program, message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    assert_eq!(output["source"], "strong_think");
+    assert_eq!(weak.calls().len(), 1);
+    assert_eq!(strong.calls().len(), 1);
+    assert!(trace.events().iter().any(|event| {
+        event.event == "nested_effect_result"
+            && event.detail["schema_valid"] == true
+            && event.detail["source"] == "strong_think"
+    }));
+    replay_trace_events(&trace.events()).unwrap();
+}
+
+#[tokio::test]
+async fn strong_model_task_keeps_strong_model_source_when_schema_allows_it() {
+    let expected_schema = action_schema_with_sources(&["strong_model"]);
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.94))]);
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+    let output = runtime
+        .run_program(
+            single_strong_program_with_expected_schema(
+                "single_strong_source_label",
+                expected_schema,
+            ),
+            message("m1", "send proposal"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output["source"], "strong_model");
+    assert!(weak.calls().is_empty());
+    assert_eq!(strong.calls().len(), 1);
+}
+
+#[tokio::test]
 async fn continuation_captures_second_effect_inside_map_and_resumes_ordered_output() {
     let weak = SequenceHandler::new(vec![
         Ok(return_value(json!({ "kind": "ignore" }), 0.91)),
@@ -1544,6 +1651,13 @@ fn action_without_source(event_id: &str) -> Value {
     })
 }
 
+fn action_schema_with_sources(sources: &[&str]) -> Value {
+    let mut schema = action_draft_schema();
+    schema["properties"]["source"]["enum"] =
+        Value::Array(sources.iter().map(|source| json!(source)).collect());
+    schema
+}
+
 fn pure_program() -> Program {
     let mut functions = BTreeMap::new();
     functions.insert(
@@ -1647,6 +1761,24 @@ fn single_weak_program_with_expected_schema(program_id: &str, expected_schema: V
     };
     *perform_schema = expected_schema;
     *acceptance = accept_abort(0.8);
+
+    program
+}
+
+fn single_strong_program_with_expected_schema(program_id: &str, expected_schema: Value) -> Program {
+    let mut program = single_weak_program_with_expected_schema(program_id, expected_schema);
+    program.allowed_effects = vec![EffectPermission::ModelTask {
+        strength: ModelStrength::Strong,
+    }];
+
+    let main = program
+        .functions
+        .get_mut("main")
+        .expect("single strong program has main");
+    let Instr::Perform { effect, .. } = &mut main.body[0] else {
+        panic!("single strong program starts with perform");
+    };
+    *effect = strong_task("classify_and_extract_action_draft_strong");
 
     program
 }
