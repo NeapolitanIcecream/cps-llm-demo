@@ -1,6 +1,6 @@
 use cps_llm_demo::effects::ThinkDecision;
 use cps_llm_demo::models::WEAK_TASK_INSTRUCTIONS;
-use cps_llm_demo::program::JsonExpr;
+use cps_llm_demo::program::{JsonExpr, Program};
 use cps_llm_demo::schema::{
     action_draft_schema, program_schema, schema_bundle, think_decision_schema, validate_value,
     weak_task_result_schema,
@@ -219,6 +219,27 @@ fn weak_task_result_schema_rejects_confidence_outside_probability_range() {
         assert!(
             validate_value(&schema, &invalid_guess).is_err(),
             "confidence {confidence} must be rejected"
+        );
+    }
+}
+
+#[test]
+fn program_schema_rejects_weak_call_min_confidence_outside_probability_range() {
+    let schema = program_schema();
+    let mut program: Value =
+        serde_json::from_str(include_str!("../examples/message_action.program.json")).unwrap();
+    validate_value(&schema, &program).unwrap();
+
+    for confidence in [-1.0, 75.0] {
+        program["instructions"][0]["min_confidence"] = json!(confidence);
+
+        assert!(
+            validate_value(&schema, &program).is_err(),
+            "min_confidence {confidence} must be rejected"
+        );
+        assert!(
+            serde_json::from_value::<Program>(program.clone()).is_err(),
+            "min_confidence {confidence} must fail Program deserialization"
         );
     }
 }

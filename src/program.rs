@@ -1,5 +1,5 @@
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -22,6 +22,8 @@ pub enum Instr {
         task: WeakTaskSpec,
         input: JsonExpr,
         output_schema: Value,
+        #[serde(deserialize_with = "deserialize_probability")]
+        #[schemars(range(min = 0.0, max = 1.0))]
         min_confidence: f32,
     },
     Project {
@@ -90,4 +92,18 @@ pub enum GuardFail {
 pub struct WeakTaskSpec {
     pub name: String,
     pub instructions: String,
+}
+
+fn deserialize_probability<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f32::deserialize(deserializer)?;
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(
+            "must be a finite probability between 0.0 and 1.0",
+        ))
+    }
 }

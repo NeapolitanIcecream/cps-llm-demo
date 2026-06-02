@@ -290,6 +290,58 @@ fn cli_compile_run_uses_strong_compile_then_runtime() {
 }
 
 #[test]
+fn cli_compile_run_enforces_requested_output_schema_on_compiled_program() {
+    let server = MockServer::start();
+    let compiled_program = json!({
+        "program_id": "relaxed_output_schema",
+        "input_schema": {},
+        "output_schema": {},
+        "instructions": [
+            {
+                "op": "finish",
+                "value": {
+                    "kind": "literal",
+                    "value": {
+                        "not_an_action": true
+                    }
+                }
+            }
+        ]
+    });
+    let compile_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/responses")
+            .json_body_includes(r#"{"model":"fake-strong","text":{"format":{"name":"program"}}}"#);
+        then.status(200).json_body(json!({
+            "output_text": serde_json::to_string(&compiled_program).unwrap()
+        }));
+    });
+    let input = write_temp_messages();
+
+    let mut cmd = Command::cargo_bin("cps-llm-demo").unwrap();
+    cmd.arg("compile-run")
+        .arg("--task")
+        .arg("examples/message_action.task.md")
+        .arg("--input")
+        .arg(&input)
+        .arg("--base-url")
+        .arg(server.url("/v1"))
+        .arg("--api-key")
+        .arg("test-key")
+        .arg("--weak-model")
+        .arg("fake-weak")
+        .arg("--strong-model")
+        .arg("fake-strong")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("program output failed schema"))
+        .stdout(predicate::str::is_empty());
+
+    compile_mock.assert();
+    let _ = fs::remove_file(input);
+}
+
+#[test]
 fn cli_run_program_without_api_key_has_clear_error() {
     let input = write_temp_messages();
     let program = write_temp_program();

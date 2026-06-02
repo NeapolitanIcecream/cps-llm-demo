@@ -102,9 +102,12 @@ pub async fn run() -> Result<()> {
             let weak = ResponsesWeakModel::new(client.clone(), config.weak_model);
             let strong = ResponsesStrongModel::new(client, config.strong_model);
 
+            let input_schema = message_event_schema();
+            let output_schema = action_draft_schema();
             let program = strong
-                .compile_program(&task_spec, &message_event_schema(), &action_draft_schema())
+                .compile_program(&task_spec, &input_schema, &output_schema)
                 .await?;
+            let program = constrain_compiled_program_contract(program, input_schema, output_schema);
             let runtime = Runtime::new(weak, strong, trace.clone());
             let outputs = run_inputs(&runtime, program, inputs).await?;
 
@@ -187,6 +190,16 @@ pub async fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn constrain_compiled_program_contract(
+    mut program: Program,
+    input_schema: Value,
+    output_schema: Value,
+) -> Program {
+    program.input_schema = input_schema;
+    program.output_schema = output_schema;
+    program
 }
 
 async fn run_inputs<W, S>(
