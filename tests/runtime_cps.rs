@@ -274,6 +274,56 @@ fn local_tool_perform_is_rejected_during_validation() {
     );
 }
 
+#[test]
+fn weak_compile_program_is_rejected_during_validation() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["request".to_owned()],
+            output_schema: json!({}),
+            body: vec![
+                Instr::Perform {
+                    out: "compiled".to_owned(),
+                    effect: EffectCall::CompileProgram {
+                        strength: ModelStrength::Weak,
+                        task_spec: "compile a tiny demo program".to_owned(),
+                        input_schema: json!({ "type": "object" }),
+                        output_schema: json!({ "type": "object" }),
+                    },
+                    input: JsonExpr::Literal { value: json!({}) },
+                    expected_schema: json!({}),
+                    acceptance: accept(0.0),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "compiled".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    let program = Program {
+        program_id: "weak_compile_unsupported".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({ "type": "object" }),
+        output_schema: json!({}),
+        functions,
+        allowed_effects: vec![EffectPermission::CompileProgram {
+            strength: ModelStrength::Weak,
+        }],
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("weak compile_program effects are not supported")
+    );
+}
+
 #[tokio::test]
 async fn weak_model_only_runs_when_program_performs_weak_effect() {
     let weak = SequenceHandler::new(vec![Ok(return_value(

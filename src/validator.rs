@@ -4,8 +4,8 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 
 use crate::program::{
-    EffectCall, EffectPermission, FunctionDef, Instr, JsonExpr, PatchOp, Program, ProgramFragment,
-    ProgramPatch,
+    EffectCall, EffectPermission, FunctionDef, Instr, JsonExpr, ModelStrength, PatchOp, Program,
+    ProgramFragment, ProgramPatch,
 };
 
 const MAX_INSTRUCTIONS_PER_FUNCTION: usize = 1024;
@@ -226,10 +226,24 @@ fn validate_exprs(exprs: &[JsonExpr], defined: &BTreeSet<String>) -> Result<()> 
 
 fn validate_supported_effect_permissions(program: &Program) -> Result<()> {
     for permission in &program.allowed_effects {
-        if let EffectPermission::LocalTool { tool_name } = permission {
-            return Err(anyhow!(
-                "local_tool effects are not supported until local tool handlers are implemented (permission {tool_name})"
-            ));
+        match permission {
+            EffectPermission::LocalTool { tool_name } => {
+                return Err(anyhow!(
+                    "local_tool effects are not supported until local tool handlers are implemented (permission {tool_name})"
+                ));
+            }
+            EffectPermission::CompileProgram {
+                strength: ModelStrength::Weak,
+            } => {
+                return Err(anyhow!(
+                    "weak compile_program effects are not supported until weak compile handlers are implemented"
+                ));
+            }
+            EffectPermission::ModelTask { .. }
+            | EffectPermission::Think
+            | EffectPermission::CompileProgram {
+                strength: ModelStrength::Strong,
+            } => {}
         }
     }
     Ok(())
@@ -240,10 +254,26 @@ fn validate_supported_effect_call(
     function_name: &str,
     pc: usize,
 ) -> Result<()> {
-    if let EffectCall::LocalTool { tool_name, .. } = effect {
-        return Err(anyhow!(
-            "local_tool effects are not supported until local tool handlers are implemented at {function_name}:{pc} (tool {tool_name})"
-        ));
+    match effect {
+        EffectCall::LocalTool { tool_name, .. } => {
+            return Err(anyhow!(
+                "local_tool effects are not supported until local tool handlers are implemented at {function_name}:{pc} (tool {tool_name})"
+            ));
+        }
+        EffectCall::CompileProgram {
+            strength: ModelStrength::Weak,
+            ..
+        } => {
+            return Err(anyhow!(
+                "weak compile_program effects are not supported until weak compile handlers are implemented at {function_name}:{pc}"
+            ));
+        }
+        EffectCall::ModelTask { .. }
+        | EffectCall::Think { .. }
+        | EffectCall::CompileProgram {
+            strength: ModelStrength::Strong,
+            ..
+        } => {}
     }
     Ok(())
 }
