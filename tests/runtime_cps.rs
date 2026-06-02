@@ -225,6 +225,66 @@ fn zero_param_helper_cannot_reference_input() {
 }
 
 #[test]
+fn duplicate_function_params_are_rejected_during_validation() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: message_event_schema(),
+            body: vec![
+                Instr::Call {
+                    out: "helper_output".to_owned(),
+                    function: "helper".to_owned(),
+                    args: vec![
+                        JsonExpr::Var {
+                            name: "message".to_owned(),
+                        },
+                        JsonExpr::Var {
+                            name: "message".to_owned(),
+                        },
+                    ],
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "helper_output".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    functions.insert(
+        "helper".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned(), "message".to_owned()],
+            output_schema: message_event_schema(),
+            body: vec![Instr::Return {
+                value: JsonExpr::Var {
+                    name: "message".to_owned(),
+                },
+            }],
+        },
+    );
+    let program = Program {
+        program_id: "duplicate_function_params".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: message_event_schema(),
+        functions,
+        allowed_effects: Vec::new(),
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("function helper has duplicate parameter message")
+    );
+}
+
+#[test]
 fn functions_must_end_with_return_during_validation() {
     let mut functions = BTreeMap::new();
     functions.insert(

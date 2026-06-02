@@ -120,7 +120,12 @@ fn validate_function(
         return Err(anyhow!("function {name} must end with return"));
     }
 
-    let mut defined = function.params.iter().cloned().collect::<BTreeSet<_>>();
+    let mut defined = BTreeSet::new();
+    for param in &function.params {
+        if !defined.insert(param.clone()) {
+            return Err(anyhow!("function {name} has duplicate parameter {param}"));
+        }
+    }
     if input_is_bound {
         defined.insert("$input".to_owned());
     }
