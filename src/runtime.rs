@@ -332,6 +332,10 @@ where
                         Ok(result) => {
                             let schema_valid =
                                 validate_value(&output_schema, &result.value).is_ok();
+                            let confidence_valid = is_probability(result.confidence);
+                            let should_bind = confidence_valid
+                                && result.confidence >= min_confidence
+                                && schema_valid;
                             self.trace.emit(
                                 "weak_probe",
                                 trace_id,
@@ -342,6 +346,12 @@ where
                                     "schema_valid": schema_valid,
                                 }),
                             );
+                            if should_bind {
+                                frame
+                                    .continuation
+                                    .env
+                                    .insert(out.clone(), result.value.clone());
+                            }
                             frame.observations.push(weak_observation(
                                 "weak_probe",
                                 &task.name,

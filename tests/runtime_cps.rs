@@ -323,6 +323,89 @@ async fn strong_request_weak_probe_then_resume() {
 }
 
 #[tokio::test]
+async fn strong_chained_weak_probe_can_reference_prior_probe_output() {
+    let weak = SequenceWeak::new(vec![
+        Ok(weak_result(action_value("weak_model"), 0.20)),
+        Ok(weak_result(json!({ "kind": "create_task" }), 0.92)),
+        Ok(weak_result(action_value("weak_model"), 0.94)),
+    ]);
+    let strong = SequenceStrong::new(vec![
+        Ok(ThinkDecision::RequestWeakProbe {
+            out: "intent".to_owned(),
+            task: WeakTaskSpec {
+                name: "classify_intent".to_owned(),
+                instructions: "Classify intent only.".to_owned(),
+            },
+            input: JsonExpr::Var {
+                name: "$input".to_owned(),
+            },
+            output_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind"],
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+                    }
+                }
+            }),
+            min_confidence: 0.50,
+            rationale: "need an intent probe".to_owned(),
+        }),
+        Ok(ThinkDecision::RequestWeakProbe {
+            out: "draft".to_owned(),
+            task: WeakTaskSpec {
+                name: "extract_action_draft_from_intent".to_owned(),
+                instructions: "Use the classified intent to draft the action.".to_owned(),
+            },
+            input: JsonExpr::Object {
+                fields: vec![
+                    JsonObjectField {
+                        name: "message".to_owned(),
+                        value: JsonExpr::Var {
+                            name: "$input".to_owned(),
+                        },
+                    },
+                    JsonObjectField {
+                        name: "intent".to_owned(),
+                        value: JsonExpr::Var {
+                            name: "intent".to_owned(),
+                        },
+                    },
+                ],
+            },
+            output_schema: action_draft_schema(),
+            min_confidence: 0.50,
+            rationale: "use the intent probe output".to_owned(),
+        }),
+        Ok(ThinkDecision::ResumeWithValue {
+            value: action_value("strong_think"),
+            confidence: 0.86,
+            rationale: "used chained probe observations".to_owned(),
+        }),
+    ]);
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+    let output = runtime
+        .run_program(single_weak_program(), message())
+        .await
+        .unwrap();
+
+    assert_eq!(output["source"], "strong_think");
+    let weak_calls = weak.calls();
+    assert_eq!(weak_calls.len(), 3);
+    assert_eq!(weak_calls[2].input["intent"]["kind"], "create_task");
+
+    let strong_calls = strong.calls();
+    assert_eq!(strong_calls.len(), 3);
+    assert_eq!(
+        strong_calls[1].continuation.env["intent"]["kind"],
+        "create_task"
+    );
+}
+
+#[tokio::test]
 async fn guard_think_resumes_with_value_for_failed_schema_contract() {
     let weak = SequenceWeak::empty();
     let strong = SequenceStrong::new(vec![Ok(ThinkDecision::ResumeWithValue {
