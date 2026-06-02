@@ -641,6 +641,7 @@ where
                 );
                 ensure_handler_decision_allowed(
                     handler_name,
+                    &request.effect,
                     request.effect_frame.as_ref(),
                     &decision,
                 )?;
@@ -1358,10 +1359,18 @@ fn ensure_captured_decision_allowed(
 
 fn ensure_handler_decision_allowed(
     handler_name: &str,
+    effect: &EffectCall,
     effect_frame: Option<&EffectFrame>,
     decision: &HandlerDecision,
 ) -> Result<()> {
     ensure_captured_decision_allowed(effect_frame, decision)?;
+    if matches!(decision, HandlerDecision::ReturnProgram { .. })
+        && !matches!(effect, EffectCall::CompileProgram { .. })
+    {
+        return Err(anyhow!(
+            "handler decision return_program is only allowed for compile_program request"
+        ));
+    }
     if effect_frame.is_none()
         && handler_name != "strong_model"
         && matches!(decision, HandlerDecision::ReturnProgramPatch { .. })

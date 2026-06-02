@@ -13,7 +13,7 @@ use cps_llm_demo::program::{
     ModelStrength, ModelTaskSpec, PatchOp, Program, ProgramFragment, ProgramPatch,
 };
 use cps_llm_demo::runtime::Runtime;
-use cps_llm_demo::schema::{action_draft_schema, message_event_schema};
+use cps_llm_demo::schema::{action_draft_schema, message_event_schema, program_schema};
 use cps_llm_demo::trace::{TraceCollector, replay_trace_events};
 use cps_llm_demo::validator::validate_program;
 use serde_json::{Map, Value, json};
@@ -1034,6 +1034,103 @@ async fn weak_model_patch_decision_is_rejected_for_direct_requests() {
 }
 
 #[tokio::test]
+async fn direct_non_compile_return_program_decision_is_rejected() {
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgram {
+        program: pure_program(),
+        rationale: "try to return program IR from a Think request".to_owned(),
+    })]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let error = runtime
+        .run_program(direct_think_return_program_program(), json!({}))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "handler decision return_program is only allowed for compile_program request"
+        )
+    );
+    assert!(weak.calls().is_empty());
+    assert_eq!(strong.calls().len(), 1);
+    assert!(
+        trace
+            .events()
+            .iter()
+            .any(|event| event.event == "handler_decision"
+                && event.detail["decision"] == json!("return_program"))
+    );
+}
+
+#[tokio::test]
+async fn nested_non_compile_return_program_decision_is_rejected() {
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::new(vec![
+        Ok(HandlerDecision::RequestEffect {
+            effect: strong_task("nested_non_compile_return_program"),
+            input: json!({}),
+            expected_schema: json!({}),
+            mode: EffectReturnMode::UseAsValue,
+            rationale: "ask a nested non-compile effect".to_owned(),
+        }),
+        Ok(HandlerDecision::ReturnProgram {
+            program: pure_program(),
+            rationale: "try to return program IR from nested model task".to_owned(),
+        }),
+    ]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let error = runtime
+        .run_program(nested_non_compile_return_program_program(), json!({}))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "handler decision return_program is only allowed for compile_program request"
+        )
+    );
+    assert!(weak.calls().is_empty());
+    assert_eq!(strong.calls().len(), 2);
+    assert!(
+        trace
+            .events()
+            .iter()
+            .any(|event| event.event == "request_nested_effect"
+                && event.detail["to_effect"] == json!("model_task"))
+    );
+}
+
+#[tokio::test]
+async fn compile_program_return_program_decision_is_allowed() {
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgram {
+        program: pure_program(),
+        rationale: "compiled Program IR".to_owned(),
+    })]);
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+    let output = runtime
+        .run_program(compile_program_return_program_program(), json!({}))
+        .await
+        .unwrap();
+
+    assert_eq!(output["program_id"], json!("pure_projection"));
+    assert!(weak.calls().is_empty());
+    assert_eq!(strong.calls().len(), 1);
+    assert!(matches!(
+        strong.calls()[0].effect,
+        EffectCall::CompileProgram {
+            strength: ModelStrength::Strong,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
 async fn program_patch_cannot_resume_non_null_captured_continuation() {
     let weak = SequenceHandler::new(vec![Ok(return_value(
         action_value("m1", "weak_model"),
@@ -1694,6 +1791,124 @@ fn direct_weak_patch_program() -> Program {
     }
 }
 
+fn direct_think_return_program_program() -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({}),
+            body: vec![
+                Instr::Perform {
+                    out: "compiled".to_owned(),
+                    effect: EffectCall::Think {
+                        reason: "non-compile effect should not return Program IR".to_owned(),
+                    },
+                    input: JsonExpr::Literal { value: json!({}) },
+                    expected_schema: json!({}),
+                    acceptance: accept(0.0),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "compiled".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    Program {
+        program_id: "direct_think_return_program".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({}),
+        functions,
+        allowed_effects: vec![EffectPermission::Think],
+    }
+}
+
+fn nested_non_compile_return_program_program() -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({}),
+            body: vec![
+                Instr::Perform {
+                    out: "compiled".to_owned(),
+                    effect: EffectCall::Think {
+                        reason: "request a nested model task".to_owned(),
+                    },
+                    input: JsonExpr::Literal { value: json!({}) },
+                    expected_schema: json!({}),
+                    acceptance: accept(0.0),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "compiled".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    Program {
+        program_id: "nested_non_compile_return_program".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({}),
+        functions,
+        allowed_effects: vec![
+            EffectPermission::Think,
+            EffectPermission::ModelTask {
+                strength: ModelStrength::Strong,
+            },
+        ],
+    }
+}
+
+fn compile_program_return_program_program() -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: program_schema(),
+            body: vec![
+                Instr::Perform {
+                    out: "compiled".to_owned(),
+                    effect: EffectCall::CompileProgram {
+                        strength: ModelStrength::Strong,
+                        task_spec: "compile a pure projection program".to_owned(),
+                        input_schema: json!({}),
+                        output_schema: json!({}),
+                    },
+                    input: JsonExpr::Literal { value: json!({}) },
+                    expected_schema: program_schema(),
+                    acceptance: accept(0.0),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "compiled".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    Program {
+        program_id: "compile_program_return_program".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: program_schema(),
+        functions,
+        allowed_effects: vec![EffectPermission::CompileProgram {
+            strength: ModelStrength::Strong,
+        }],
+    }
+}
+
 fn captured_broad_schema_program() -> Program {
     let mut functions = BTreeMap::new();
     functions.insert(
@@ -1736,6 +1951,16 @@ fn captured_broad_schema_program() -> Program {
 fn weak_task(name: &str) -> EffectCall {
     EffectCall::ModelTask {
         strength: ModelStrength::Weak,
+        task: ModelTaskSpec {
+            name: name.to_owned(),
+            instructions: name.to_owned(),
+        },
+    }
+}
+
+fn strong_task(name: &str) -> EffectCall {
+    EffectCall::ModelTask {
+        strength: ModelStrength::Strong,
         task: ModelTaskSpec {
             name: name.to_owned(),
             instructions: name.to_owned(),
