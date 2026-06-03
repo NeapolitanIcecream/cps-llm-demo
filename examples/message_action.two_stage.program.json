@@ -14,7 +14,7 @@
   "output_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["event_id", "kind", "title", "datetime_hint", "source"],
+    "required": ["event_id", "kind", "title", "datetime_hint"],
     "properties": {
       "event_id": { "type": "string" },
       "kind": {
@@ -24,10 +24,6 @@
       "title": { "type": "string" },
       "datetime_hint": {
         "anyOf": [{ "type": "string" }, { "type": "null" }]
-      },
-      "source": {
-        "type": "string",
-        "enum": ["weak_model", "strong_think"]
       }
     }
   },
@@ -37,7 +33,7 @@
       "output_schema": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["event_id", "kind", "title", "datetime_hint", "source"],
+        "required": ["event_id", "kind", "title", "datetime_hint"],
         "properties": {
           "event_id": { "type": "string" },
           "kind": {
@@ -47,10 +43,6 @@
           "title": { "type": "string" },
           "datetime_hint": {
             "anyOf": [{ "type": "string" }, { "type": "null" }]
-          },
-          "source": {
-            "type": "string",
-            "enum": ["weak_model", "strong_think"]
           }
         }
       },
@@ -117,7 +109,7 @@
           "expected_schema": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["event_id", "kind", "title", "datetime_hint", "source"],
+            "required": ["event_id", "kind", "title", "datetime_hint"],
             "properties": {
               "event_id": { "type": "string" },
               "kind": {
@@ -127,10 +119,6 @@
               "title": { "type": "string" },
               "datetime_hint": {
                 "anyOf": [{ "type": "string" }, { "type": "null" }]
-              },
-              "source": {
-                "type": "string",
-                "enum": ["weak_model", "strong_think"]
               }
             }
           },

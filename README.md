@@ -12,6 +12,7 @@ This is a runtime semantics demo, not a product agent. A strong model can compil
 - `Program.allowed_effects` is enforced before scheduling direct `Perform` effects and runtime-scheduled nested effects requested via `HandlerDecision::RequestEffect`.
 - `Continuation` contains a serializable stack: boundary id, program id, runtime frames, resume var, resume pc, expected schema, fuel, and effect depth.
 - Rust runtime code does not branch on message/task/calendar/OTP/business keywords. Domain semantics live in task files, Program fixtures, prompts, and test data.
+- Handler return values are schema-validated as returned. Action drafts are business payloads; runtime provenance is recorded in observations and trace metadata, not injected into returned JSON.
 - `run-program` and `compile-run` share the same runtime path.
 
 ## Setup

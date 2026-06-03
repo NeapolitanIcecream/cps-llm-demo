@@ -30,13 +30,9 @@ pub fn action_draft_schema() -> Value {
             "title": { "type": "string" },
             "datetime_hint": {
                 "anyOf": [{ "type": "string" }, { "type": "null" }]
-            },
-            "source": {
-                "type": "string",
-                "enum": ["weak_model", "strong_think"]
             }
         },
-        "required": ["event_id", "kind", "title", "datetime_hint", "source"]
+        "required": ["event_id", "kind", "title", "datetime_hint"]
     })
 }
 

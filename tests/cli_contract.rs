@@ -133,8 +133,7 @@ fn cli_run_program_against_mock_responses_endpoint_outputs_json_array_and_trace(
                         "event_id": "m1",
                         "kind": "create_task",
                         "title": "发送新版 proposal",
-                        "datetime_hint": "明天 10 点前",
-                        "source": "weak_model"
+                        "datetime_hint": "明天 10 点前"
                     },
                     "confidence": 0.42,
                     "rationale": "ambiguous request"
@@ -154,8 +153,7 @@ fn cli_run_program_against_mock_responses_endpoint_outputs_json_array_and_trace(
                         "event_id": "m1",
                         "kind": "create_task",
                         "title": "发送新版 proposal",
-                        "datetime_hint": "明天 10 点前",
-                        "source": "strong_think"
+                        "datetime_hint": "明天 10 点前"
                     },
                     "confidence": 0.88,
                     "rationale": "resolved continuation"
@@ -183,8 +181,8 @@ fn cli_run_program_against_mock_responses_endpoint_outputs_json_array_and_trace(
         .arg("--trace-json")
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"source\": \"strong_think\""))
         .stdout(predicate::str::contains("\"kind\": \"create_task\""))
+        .stdout(predicate::str::contains("\"source\"").not())
         .stderr(predicate::str::contains("capture_continuation"))
         .stderr(predicate::str::contains("handler_decision"))
         .stderr(predicate::str::contains("resume_continuation"));
@@ -242,8 +240,7 @@ fn cli_compile_run_uses_strong_compile_then_same_runtime() {
                         "event_id": "m1",
                         "kind": "create_task",
                         "title": "发送新版 proposal",
-                        "datetime_hint": "明天 10 点前",
-                        "source": "weak_model"
+                        "datetime_hint": "明天 10 点前"
                     },
                     "confidence": 0.95,
                     "rationale": "clear request"
@@ -269,8 +266,8 @@ fn cli_compile_run_uses_strong_compile_then_same_runtime() {
         .arg("fake-strong")
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"source\": \"weak_model\""))
-        .stdout(predicate::str::contains("\"kind\": \"create_task\""));
+        .stdout(predicate::str::contains("\"kind\": \"create_task\""))
+        .stdout(predicate::str::contains("\"source\"").not());
 
     compile_mock.assert();
     intent_mock.assert();

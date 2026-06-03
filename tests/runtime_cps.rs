@@ -14,9 +14,7 @@ use cps_llm_demo::program::{
     ProgramPatch,
 };
 use cps_llm_demo::runtime::Runtime;
-use cps_llm_demo::schema::{
-    action_draft_schema, action_drafts_schema, message_event_schema, program_schema,
-};
+use cps_llm_demo::schema::{action_draft_schema, message_event_schema, program_schema};
 use cps_llm_demo::trace::{TraceCollector, replay_trace_events};
 use cps_llm_demo::validator::validate_program;
 use serde_json::{Map, Value, json};
@@ -77,7 +75,7 @@ fn continuation_is_serializable_full_program_stack() {
                 item_var: "message".to_owned(),
                 function: "process_message".to_owned(),
                 items: vec![message("m0", "ignore"), message("m1", "send proposal")],
-                results: vec![action_value("m0", "weak_model")],
+                results: vec![action_value("m0")],
             }),
         }],
         resume_var: Some("draft".to_owned()),
@@ -881,10 +879,7 @@ fn capture_to_think_requires_think_permission_during_validation() {
 
 #[tokio::test]
 async fn weak_model_only_runs_when_program_performs_weak_effect() {
-    let weak = SequenceHandler::new(vec![Ok(return_value(
-        action_value("m1", "weak_model"),
-        0.91,
-    ))]);
+    let weak = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.91))]);
     let strong = SequenceHandler::empty();
     let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
 
@@ -893,15 +888,79 @@ async fn weak_model_only_runs_when_program_performs_weak_effect() {
         .await
         .unwrap();
 
-    assert_eq!(output["source"], "weak_model");
+    assert!(output.get("source").is_none());
     assert_eq!(weak.calls().len(), 1);
     assert!(strong.calls().is_empty());
 }
 
 #[tokio::test]
-async fn weak_model_batched_action_drafts_are_source_stamped() {
+async fn runtime_does_not_inject_source_into_plain_handler_payload() {
+    let weak = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.91))]);
+    let strong = SequenceHandler::empty();
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let output = runtime
+        .run_program(single_weak_program(), message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    assert_eq!(output, action_value("m1"));
+    assert_eq!(weak.calls().len(), 1);
+    assert!(strong.calls().is_empty());
+    assert!(trace.events().iter().any(|event| {
+        event.event == "handler_decision"
+            && event.detail["handler"] == "weak_model"
+            && event.detail["schema_valid"] == true
+            && event.detail["source"] == "weak_model"
+    }));
+}
+
+#[tokio::test]
+async fn runtime_does_not_mutate_unsourced_union_branch() {
+    let expected_schema = sourced_union_schema();
+    let weak = SequenceHandler::new(vec![Ok(return_value(json!({ "kind": "plain" }), 0.91))]);
+    let strong = SequenceHandler::empty();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+    let output = runtime
+        .run_program(
+            single_weak_program_with_expected_schema("unsourced_union_branch", expected_schema),
+            message("m1", "send proposal"),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output, json!({ "kind": "plain" }));
+    assert_eq!(weak.calls().len(), 1);
+    assert!(strong.calls().is_empty());
+}
+
+#[tokio::test]
+async fn schema_required_source_must_be_supplied_by_handler() {
+    let expected_schema = user_source_required_schema();
+    let weak = SequenceHandler::new(vec![Ok(return_value(json!({ "kind": "business" }), 0.91))]);
+    let strong = SequenceHandler::empty();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+    let error = runtime
+        .run_program(
+            single_weak_program_with_expected_schema("required_user_source", expected_schema),
+            message("m1", "send proposal"),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("perform failed"));
+    assert_eq!(weak.calls().len(), 1);
+    assert!(strong.calls().is_empty());
+}
+
+#[tokio::test]
+async fn handler_supplied_source_is_treated_as_business_payload() {
+    let expected_schema = user_source_required_schema();
     let weak = SequenceHandler::new(vec![Ok(return_value(
-        json!([action_without_source("m1"), action_without_source("m2")]),
+        json!({ "kind": "business", "source": "user_supplied" }),
         0.91,
     ))]);
     let strong = SequenceHandler::empty();
@@ -909,365 +968,98 @@ async fn weak_model_batched_action_drafts_are_source_stamped() {
 
     let output = runtime
         .run_program(
-            batched_weak_program(),
-            json!([
-                message("m1", "send proposal"),
-                message("m2", "Friday 3pm review")
-            ]),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(output.as_array().unwrap().len(), 2);
-    assert_eq!(output[0]["source"], "weak_model");
-    assert_eq!(output[1]["source"], "weak_model");
-    assert_eq!(weak.calls().len(), 1);
-    assert!(strong.calls().is_empty());
-}
-
-#[tokio::test]
-async fn weak_model_action_draft_schema_combinators_are_source_stamped() {
-    let schemas = vec![
-        (
-            "anyOf",
-            json!({ "anyOf": [action_draft_schema(), { "type": "null" }] }),
-        ),
-        (
-            "oneOf",
-            json!({ "oneOf": [action_draft_schema(), { "type": "null" }] }),
-        ),
-        ("allOf", json!({ "allOf": [action_draft_schema()] })),
-    ];
-
-    for (keyword, expected_schema) in schemas {
-        let weak = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.91))]);
-        let strong = SequenceHandler::empty();
-        let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
-
-        let output = runtime
-            .run_program(
-                single_weak_program_with_expected_schema(
-                    &format!("single_weak_{keyword}"),
-                    expected_schema,
-                ),
-                message("m1", "send proposal"),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(output["source"], "weak_model", "{keyword}");
-        assert_eq!(weak.calls().len(), 1, "{keyword}");
-        assert!(strong.calls().is_empty(), "{keyword}");
-    }
-}
-
-#[tokio::test]
-async fn weak_model_action_draft_map_values_are_source_stamped() {
-    let expected_schema = action_draft_map_schema();
-    let weak = SequenceHandler::new(vec![Ok(return_value(
-        json!({
-            "primary": action_without_source("m1"),
-            "secondary": action_without_source("m2"),
-        }),
-        0.91,
-    ))]);
-    let strong = SequenceHandler::empty();
-    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
-
-    let output = runtime
-        .run_program(
-            single_weak_program_with_expected_schema("single_weak_map", expected_schema),
+            single_weak_program_with_expected_schema("handler_supplied_source", expected_schema),
             message("m1", "send proposal"),
         )
         .await
         .unwrap();
 
-    assert_eq!(output["primary"]["source"], "weak_model");
-    assert_eq!(output["secondary"]["source"], "weak_model");
-    assert_eq!(weak.calls().len(), 1);
-    assert!(strong.calls().is_empty());
-}
-
-#[tokio::test]
-async fn strong_model_task_action_draft_shapes_use_schema_accepted_source() {
-    let cases = vec![
-        ("object", action_draft_schema(), action_without_source("m1")),
-        (
-            "array",
-            action_drafts_schema(),
-            json!([action_without_source("m1"), action_without_source("m2")]),
-        ),
-        (
-            "anyOf",
-            json!({ "anyOf": [action_draft_schema(), { "type": "null" }] }),
-            action_without_source("m1"),
-        ),
-    ];
-
-    for (name, expected_schema, handler_value) in cases {
-        let weak = SequenceHandler::empty();
-        let strong = SequenceHandler::new(vec![Ok(return_value(handler_value, 0.94))]);
-        let trace = TraceCollector::default();
-        let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
-
-        let output = runtime
-            .run_program(
-                single_strong_program_with_expected_schema(
-                    &format!("single_strong_{name}"),
-                    expected_schema,
-                ),
-                message("m1", "send proposal"),
-            )
-            .await
-            .unwrap();
-
-        if name == "array" {
-            assert_eq!(output[0]["source"], "strong_think", "{name}");
-            assert_eq!(output[1]["source"], "strong_think", "{name}");
-        } else {
-            assert_eq!(output["source"], "strong_think", "{name}");
-        }
-        assert!(weak.calls().is_empty(), "{name}");
-        assert_eq!(strong.calls().len(), 1, "{name}");
-        assert!(trace.events().iter().any(|event| {
-            event.event == "handler_decision"
-                && event.detail["handler"] == "strong_model"
-                && event.detail["decision"] == "return_value"
-                && event.detail["schema_valid"] == true
-        }));
-        replay_trace_events(&trace.events()).unwrap();
-    }
-}
-
-#[tokio::test]
-async fn strong_model_task_action_draft_map_uses_schema_accepted_source() {
-    let weak = SequenceHandler::empty();
-    let strong = SequenceHandler::new(vec![Ok(return_value(
-        json!({ "primary": action_without_source("m1") }),
-        0.94,
-    ))]);
-    let trace = TraceCollector::default();
-    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
-
-    let output = runtime
-        .run_program(
-            single_strong_program_with_expected_schema(
-                "single_strong_map",
-                action_draft_map_schema(),
-            ),
-            message("m1", "send proposal"),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(output["primary"]["source"], "strong_think");
-    assert!(weak.calls().is_empty());
-    assert_eq!(strong.calls().len(), 1);
-    assert!(trace.events().iter().any(|event| {
-        event.event == "handler_decision"
-            && event.detail["handler"] == "strong_model"
-            && event.detail["decision"] == "return_value"
-            && event.detail["schema_valid"] == true
-    }));
-    replay_trace_events(&trace.events()).unwrap();
-}
-
-#[tokio::test]
-async fn strong_model_task_source_label_must_validate_stamped_value() {
-    let expected_schema = json!({
-        "anyOf": [
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["kind", "source"],
-                "properties": {
-                    "kind": { "const": "diagnostic" },
-                    "source": {
-                        "type": "string",
-                        "enum": ["strong_model"]
-                    }
-                }
-            },
-            action_draft_schema()
-        ]
-    });
-    let weak = SequenceHandler::empty();
-    let strong = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.94))]);
-    let trace = TraceCollector::default();
-    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
-
-    let output = runtime
-        .run_program(
-            single_strong_program_with_expected_schema(
-                "single_strong_branch_sensitive_source",
-                expected_schema,
-            ),
-            message("m1", "send proposal"),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(output["source"], "strong_think");
-    assert!(weak.calls().is_empty());
-    assert_eq!(strong.calls().len(), 1);
-    assert!(trace.events().iter().any(|event| {
-        event.event == "handler_decision"
-            && event.detail["handler"] == "strong_model"
-            && event.detail["decision"] == "return_value"
-            && event.detail["schema_valid"] == true
-    }));
-    replay_trace_events(&trace.events()).unwrap();
-}
-
-#[tokio::test]
-async fn think_source_label_must_validate_stamped_value() {
-    let expected_schema = json!({
-        "anyOf": [
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["kind", "source"],
-                "properties": {
-                    "kind": { "const": "diagnostic" },
-                    "source": {
-                        "type": "string",
-                        "enum": ["strong_think"]
-                    }
-                }
-            },
-            action_schema_with_sources(&["strong_model"])
-        ]
-    });
-    let mut functions = BTreeMap::new();
-    functions.insert(
-        "main".to_owned(),
-        FunctionDef {
-            params: vec!["message".to_owned()],
-            output_schema: expected_schema.clone(),
-            body: vec![
-                Instr::Perform {
-                    out: "draft".to_owned(),
-                    effect: EffectCall::Think {
-                        reason: "repair with strong thinking".to_owned(),
-                    },
-                    input: JsonExpr::Var {
-                        name: "message".to_owned(),
-                    },
-                    expected_schema: expected_schema.clone(),
-                    acceptance: accept_abort(0.8),
-                },
-                Instr::Return {
-                    value: JsonExpr::Var {
-                        name: "draft".to_owned(),
-                    },
-                },
-            ],
-        },
+    assert_eq!(
+        output,
+        json!({ "kind": "business", "source": "user_supplied" })
     );
-    let program = Program {
-        program_id: "think_branch_sensitive_source".to_owned(),
-        version: "1.0.0".to_owned(),
-        entry: "main".to_owned(),
-        input_schema: message_event_schema(),
-        output_schema: expected_schema,
-        functions,
-        allowed_effects: vec![EffectPermission::Think],
-    };
-    let weak = SequenceHandler::empty();
-    let strong = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.94))]);
-    let trace = TraceCollector::default();
-    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
-
-    let output = runtime
-        .run_program(program, message("m1", "send proposal"))
-        .await
-        .unwrap();
-
-    assert_eq!(output["source"], "strong_model");
-    assert!(weak.calls().is_empty());
-    assert_eq!(strong.calls().len(), 1);
-    assert!(trace.events().iter().any(|event| {
-        event.event == "handler_decision"
-            && event.detail["handler"] == "strong_model"
-            && event.detail["decision"] == "return_value"
-            && event.detail["schema_valid"] == true
-    }));
-    replay_trace_events(&trace.events()).unwrap();
+    assert_eq!(weak.calls().len(), 1);
+    assert!(strong.calls().is_empty());
 }
 
 #[tokio::test]
-async fn nested_strong_model_task_action_draft_uses_schema_accepted_source() {
+async fn nested_effect_result_payload_is_not_source_stamped() {
     let weak = SequenceHandler::new(vec![Ok(HandlerDecision::RequestEffect {
-        effect: strong_task("classify_and_extract_action_draft_strong"),
+        effect: EffectCall::Think {
+            reason: "weak handler cannot resolve ambiguous action".to_owned(),
+        },
         input: message("m1", "send proposal"),
-        expected_schema: action_draft_schema(),
+        expected_schema: sourced_union_schema(),
         mode: EffectReturnMode::UseAsValue,
-        rationale: "weak handler escalates to a strong task".to_owned(),
+        rationale: "needs stronger reasoning".to_owned(),
     })]);
-    let strong = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.94))]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(json!({ "kind": "plain" }), 0.93))]);
     let trace = TraceCollector::default();
     let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
-    let mut program = single_weak_program();
-    program.allowed_effects.push(EffectPermission::ModelTask {
-        strength: ModelStrength::Strong,
-    });
+    let mut program =
+        single_weak_program_with_expected_schema("nested_raw_union_branch", sourced_union_schema());
+    program.allowed_effects.push(EffectPermission::Think);
 
     let output = runtime
         .run_program(program, message("m1", "send proposal"))
         .await
         .unwrap();
 
-    assert_eq!(output["source"], "strong_think");
+    assert_eq!(output, json!({ "kind": "plain" }));
     assert_eq!(weak.calls().len(), 1);
     assert_eq!(strong.calls().len(), 1);
     assert!(trace.events().iter().any(|event| {
         event.event == "nested_effect_result"
             && event.detail["schema_valid"] == true
-            && event.detail["source"] == "strong_think"
+            && event.detail["source"] == "strong_model"
     }));
     replay_trace_events(&trace.events()).unwrap();
 }
 
 #[tokio::test]
-async fn strong_model_task_keeps_strong_model_source_when_schema_allows_it() {
-    let expected_schema = action_schema_with_sources(&["strong_model"]);
+async fn strong_model_return_value_is_validated_as_returned() {
     let weak = SequenceHandler::empty();
-    let strong = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.94))]);
-    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.94))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
 
     let output = runtime
         .run_program(
             single_strong_program_with_expected_schema(
-                "single_strong_source_label",
-                expected_schema,
+                "single_strong_raw_value",
+                action_draft_schema(),
             ),
             message("m1", "send proposal"),
         )
         .await
         .unwrap();
 
-    assert_eq!(output["source"], "strong_model");
+    assert_eq!(output, action_value("m1"));
     assert!(weak.calls().is_empty());
     assert_eq!(strong.calls().len(), 1);
+    assert!(trace.events().iter().any(|event| {
+        event.event == "handler_decision"
+            && event.detail["handler"] == "strong_model"
+            && event.detail["decision"] == "return_value"
+            && event.detail["schema_valid"] == true
+    }));
+    replay_trace_events(&trace.events()).unwrap();
 }
 
 #[tokio::test]
 async fn continuation_captures_second_effect_inside_map_and_resumes_ordered_output() {
     let weak = SequenceHandler::new(vec![
         Ok(return_value(json!({ "kind": "ignore" }), 0.91)),
-        Ok(return_value(action_value("m0", "weak_model"), 0.91)),
+        Ok(return_value(action_value("m0"), 0.91)),
         Ok(return_value(json!({ "kind": "create_task" }), 0.91)),
-        Ok(return_value(action_value("m1", "weak_model"), 0.20)),
+        Ok(return_value(action_value("m1"), 0.20)),
         Ok(return_value(
             json!({ "kind": "create_calendar_event" }),
             0.91,
         )),
-        Ok(return_value(action_value("m2", "weak_model"), 0.91)),
+        Ok(return_value(action_value("m2"), 0.91)),
     ]);
-    let strong = SequenceHandler::new(vec![Ok(return_value(
-        action_value("m1", "strong_think"),
-        0.92,
-    ))]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.92))]);
     let trace = TraceCollector::default();
     let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
 
@@ -1286,7 +1078,7 @@ async fn continuation_captures_second_effect_inside_map_and_resumes_ordered_outp
     assert_eq!(output.as_array().unwrap().len(), 3);
     assert_eq!(output[0]["event_id"], "m0");
     assert_eq!(output[1]["event_id"], "m1");
-    assert_eq!(output[1]["source"], "strong_think");
+    assert!(output[1].get("source").is_none());
     assert_eq!(output[2]["event_id"], "m2");
 
     let strong_calls = strong.calls();
@@ -1316,7 +1108,7 @@ async fn continuation_captures_second_effect_inside_map_and_resumes_ordered_outp
 }
 
 #[tokio::test]
-async fn weak_handler_can_request_strong_think_via_runtime() {
+async fn weak_handler_can_request_think_via_runtime() {
     let weak = SequenceHandler::new(vec![Ok(HandlerDecision::RequestEffect {
         effect: EffectCall::Think {
             reason: "weak handler cannot resolve ambiguous action".to_owned(),
@@ -1326,10 +1118,7 @@ async fn weak_handler_can_request_strong_think_via_runtime() {
         mode: EffectReturnMode::UseAsValue,
         rationale: "needs stronger reasoning".to_owned(),
     })]);
-    let strong = SequenceHandler::new(vec![Ok(return_value(
-        action_value("m1", "strong_think"),
-        0.93,
-    ))]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.93))]);
     let trace = TraceCollector::default();
     let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
 
@@ -1338,7 +1127,7 @@ async fn weak_handler_can_request_strong_think_via_runtime() {
         .await
         .unwrap();
 
-    assert_eq!(output["source"], "strong_think");
+    assert_eq!(output, action_value("m1"));
     assert_eq!(weak.calls().len(), 1);
     assert_eq!(strong.calls().len(), 1);
     assert!(strong.calls()[0].effect_frame.is_none());
@@ -1350,7 +1139,7 @@ async fn weak_handler_can_request_strong_think_via_runtime() {
 }
 
 #[tokio::test]
-async fn nested_effect_result_is_stamped_before_requested_schema_validation() {
+async fn nested_effect_result_validates_raw_requested_schema() {
     let weak = SequenceHandler::new(vec![Ok(HandlerDecision::RequestEffect {
         effect: EffectCall::Think {
             reason: "weak handler cannot resolve ambiguous action".to_owned(),
@@ -1360,7 +1149,7 @@ async fn nested_effect_result_is_stamped_before_requested_schema_validation() {
         mode: EffectReturnMode::UseAsValue,
         rationale: "needs stronger reasoning".to_owned(),
     })]);
-    let strong = SequenceHandler::new(vec![Ok(return_value(action_without_source("m1"), 0.93))]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.93))]);
     let trace = TraceCollector::default();
     let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
 
@@ -1369,13 +1158,13 @@ async fn nested_effect_result_is_stamped_before_requested_schema_validation() {
         .await
         .unwrap();
 
-    assert_eq!(output["source"], "strong_think");
+    assert_eq!(output, action_value("m1"));
     assert_eq!(weak.calls().len(), 1);
     assert_eq!(strong.calls().len(), 1);
     assert!(trace.events().iter().any(|event| {
         event.event == "nested_effect_result"
             && event.detail["schema_valid"] == true
-            && event.detail["source"] == "strong_think"
+            && event.detail["source"] == "strong_model"
     }));
     assert!(trace.events().iter().any(|event| {
         event.event == "handler_decision"
@@ -1397,10 +1186,7 @@ async fn handler_requested_nested_effect_must_be_allowed_by_program_boundary() {
         mode: EffectReturnMode::UseAsValue,
         rationale: "needs stronger reasoning".to_owned(),
     })]);
-    let strong = SequenceHandler::new(vec![Ok(return_value(
-        action_value("m1", "strong_think"),
-        0.93,
-    ))]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.93))]);
     let trace = TraceCollector::default();
     let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
     let mut program = single_weak_program();
@@ -1435,7 +1221,7 @@ async fn handler_requested_nested_effect_must_be_allowed_by_program_boundary() {
 #[tokio::test]
 async fn strong_handler_can_request_weak_probe_and_reenter() {
     let weak = SequenceHandler::new(vec![
-        Ok(return_value(action_value("m1", "weak_model"), 0.20)),
+        Ok(return_value(action_value("m1"), 0.20)),
         Ok(return_value(
             json!({ "candidates": ["tomorrow 10am"] }),
             0.91,
@@ -1467,7 +1253,7 @@ async fn strong_handler_can_request_weak_probe_and_reenter() {
             },
             rationale: "need cheap local probe".to_owned(),
         }),
-        Ok(return_value(action_value("m1", "strong_think"), 0.91)),
+        Ok(return_value(action_value("m1"), 0.91)),
     ]);
     let trace = TraceCollector::default();
     let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
@@ -1477,7 +1263,7 @@ async fn strong_handler_can_request_weak_probe_and_reenter() {
         .await
         .unwrap();
 
-    assert_eq!(output["source"], "strong_think");
+    assert_eq!(output, action_value("m1"));
     assert_eq!(weak.calls().len(), 2);
     let strong_calls = strong.calls();
     assert_eq!(strong_calls.len(), 2);
@@ -1492,7 +1278,7 @@ async fn strong_handler_can_request_weak_probe_and_reenter() {
 #[tokio::test]
 async fn reenter_handler_budget_is_checked_before_nested_effect() {
     let weak = SequenceHandler::new(vec![
-        Ok(return_value(action_value("m1", "weak_model"), 0.20)),
+        Ok(return_value(action_value("m1"), 0.20)),
         Ok(return_value(
             json!({ "candidates": ["tomorrow 10am"] }),
             0.91,
@@ -1557,7 +1343,7 @@ async fn reenter_handler_budget_is_checked_before_nested_effect() {
 #[tokio::test]
 async fn reentered_handler_request_refreshes_effect_budget() {
     let weak = SequenceHandler::new(vec![
-        Ok(return_value(action_value("m1", "weak_model"), 0.20)),
+        Ok(return_value(action_value("m1"), 0.20)),
         Ok(return_value(
             json!({ "candidates": ["tomorrow 10am"] }),
             0.91,
@@ -1589,7 +1375,7 @@ async fn reentered_handler_request_refreshes_effect_budget() {
             },
             rationale: "need cheap local probe".to_owned(),
         }),
-        Ok(return_value(action_value("m1", "strong_think"), 0.91)),
+        Ok(return_value(action_value("m1"), 0.91)),
     ]);
     let trace = TraceCollector::default();
     let runtime = Runtime::with_budget(
@@ -1607,7 +1393,7 @@ async fn reentered_handler_request_refreshes_effect_budget() {
         .await
         .unwrap();
 
-    assert_eq!(output["source"], "strong_think");
+    assert_eq!(output, action_value("m1"));
     assert_eq!(weak.calls().len(), 2);
     let strong_calls = strong.calls();
     assert_eq!(strong_calls.len(), 2);
@@ -1616,15 +1402,12 @@ async fn reentered_handler_request_refreshes_effect_budget() {
 }
 
 #[tokio::test]
-async fn weak_generated_program_fragment_can_call_strong_think() {
+async fn weak_generated_program_fragment_can_call_think() {
     let weak = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgramFragment {
         fragment: generated_processor_fragment(),
         rationale: "generated processor".to_owned(),
     })]);
-    let strong = SequenceHandler::new(vec![Ok(return_value(
-        action_value("m1", "strong_think"),
-        0.94,
-    ))]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.94))]);
     let trace = TraceCollector::default();
     let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
 
@@ -1633,7 +1416,7 @@ async fn weak_generated_program_fragment_can_call_strong_think() {
         .await
         .unwrap();
 
-    assert_eq!(output["source"], "strong_think");
+    assert_eq!(output, action_value("m1"));
     assert_eq!(weak.calls().len(), 1);
     assert_eq!(strong.calls().len(), 1);
     assert!(
@@ -1663,10 +1446,7 @@ async fn generated_program_fragment_cannot_expand_effect_boundary() {
         fragment: generated_processor_fragment(),
         rationale: "generated processor".to_owned(),
     })]);
-    let strong = SequenceHandler::new(vec![Ok(return_value(
-        action_value("m1", "strong_think"),
-        0.94,
-    ))]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.94))]);
     let trace = TraceCollector::default();
     let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
     let mut program = fractal_program();
@@ -2059,10 +1839,7 @@ async fn nested_compile_program_return_program_decision_uses_requested_contract(
 
 #[tokio::test]
 async fn program_patch_cannot_resume_non_null_captured_continuation() {
-    let weak = SequenceHandler::new(vec![Ok(return_value(
-        action_value("m1", "weak_model"),
-        0.20,
-    ))]);
+    let weak = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.20))]);
     let strong = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgramPatch {
         patch: ProgramPatch {
             target_program_id: "single_weak".to_owned(),
@@ -2148,10 +1925,7 @@ async fn captured_frame_rejects_return_program_decision() {
 
 #[tokio::test]
 async fn strong_return_value_must_match_expected_schema_before_resume() {
-    let weak = SequenceHandler::new(vec![Ok(return_value(
-        action_value("m1", "weak_model"),
-        0.20,
-    ))]);
+    let weak = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.20))]);
     let strong = SequenceHandler::new(vec![Ok(return_value(json!({ "event_id": "m1" }), 0.91))]);
     let runtime = Runtime::new(weak, strong, TraceCollector::default());
 
@@ -2179,17 +1953,7 @@ fn message(event_id: &str, text: &str) -> Value {
     json!({ "event_id": event_id, "text": text })
 }
 
-fn action_value(event_id: &str, source: &str) -> Value {
-    json!({
-        "event_id": event_id,
-        "kind": "create_task",
-        "title": "Send proposal",
-        "datetime_hint": null,
-        "source": source,
-    })
-}
-
-fn action_without_source(event_id: &str) -> Value {
+fn action_value(event_id: &str) -> Value {
     json!({
         "event_id": event_id,
         "kind": "create_task",
@@ -2198,17 +1962,44 @@ fn action_without_source(event_id: &str) -> Value {
     })
 }
 
-fn action_schema_with_sources(sources: &[&str]) -> Value {
-    let mut schema = action_draft_schema();
-    schema["properties"]["source"]["enum"] =
-        Value::Array(sources.iter().map(|source| json!(source)).collect());
-    schema
+fn sourced_union_schema() -> Value {
+    json!({
+        "anyOf": [
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind"],
+                "properties": {
+                    "kind": { "type": "string", "enum": ["plain"] }
+                }
+            },
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["source"],
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "enum": ["weak_model", "strong_model", "strong_think"]
+                    }
+                }
+            }
+        ]
+    })
 }
 
-fn action_draft_map_schema() -> Value {
+fn user_source_required_schema() -> Value {
     json!({
         "type": "object",
-        "additionalProperties": action_draft_schema()
+        "additionalProperties": false,
+        "required": ["kind", "source"],
+        "properties": {
+            "kind": { "type": "string" },
+            "source": {
+                "type": "string",
+                "enum": ["user_supplied", "weak_model"]
+            }
+        }
     })
 }
 
@@ -2335,47 +2126,6 @@ fn single_strong_program_with_expected_schema(program_id: &str, expected_schema:
     *effect = strong_task("classify_and_extract_action_draft_strong");
 
     program
-}
-
-fn batched_weak_program() -> Program {
-    let mut functions = BTreeMap::new();
-    functions.insert(
-        "main".to_owned(),
-        FunctionDef {
-            params: vec!["messages".to_owned()],
-            output_schema: action_drafts_schema(),
-            body: vec![
-                Instr::Perform {
-                    out: "drafts".to_owned(),
-                    effect: weak_task("classify_and_extract_action_drafts"),
-                    input: JsonExpr::Var {
-                        name: "messages".to_owned(),
-                    },
-                    expected_schema: action_drafts_schema(),
-                    acceptance: accept_abort(0.8),
-                },
-                Instr::Return {
-                    value: JsonExpr::Var {
-                        name: "drafts".to_owned(),
-                    },
-                },
-            ],
-        },
-    );
-    Program {
-        program_id: "batched_weak".to_owned(),
-        version: "1.0.0".to_owned(),
-        entry: "main".to_owned(),
-        input_schema: json!({
-            "type": "array",
-            "items": message_event_schema()
-        }),
-        output_schema: action_drafts_schema(),
-        functions,
-        allowed_effects: vec![EffectPermission::ModelTask {
-            strength: ModelStrength::Weak,
-        }],
-    }
 }
 
 fn message_action_program() -> Program {

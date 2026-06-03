@@ -24,8 +24,7 @@ fn weak_output_text() -> String {
             "event_id": "m2",
             "kind": "create_calendar_event",
             "title": "Product review",
-            "datetime_hint": "Friday 3pm",
-            "source": "weak_model"
+            "datetime_hint": "Friday 3pm"
         }),
         confidence: 0.91,
         rationale: "obvious meeting".to_owned(),
@@ -174,20 +173,6 @@ async fn responses_weak_model_sends_neutral_instructions_and_request_context() {
         input_context["effect"].get("strength").is_none(),
         "weak handler request context should omit internal model strength"
     );
-    assert!(
-        input_context["expected_schema"]["properties"]
-            .get("source")
-            .is_none(),
-        "weak handler request context should omit runtime provenance source schema"
-    );
-    assert!(
-        !input_context["expected_schema"]["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|field| field.as_str() == Some("source")),
-        "weak handler request context should not require runtime provenance source"
-    );
 }
 
 #[tokio::test]
@@ -233,6 +218,18 @@ async fn responses_weak_model_preserves_schema_shaped_user_payloads() {
         },
         "required": ["source", "title"]
     });
+    let expected_schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "title": { "type": "string" },
+            "source": {
+                "type": "string",
+                "enum": ["user_supplied"]
+            }
+        },
+        "required": ["title", "source"]
+    });
     let handler = ResponsesWeakModel::new(client(&server, "/v1"), "fake-weak");
     let decision = handler
         .handle(HandlerRequest {
@@ -246,7 +243,7 @@ async fn responses_weak_model_preserves_schema_shaped_user_payloads() {
             input: json!({
                 "user_supplied_schema": schema_shaped_payload.clone()
             }),
-            expected_schema: action_draft_schema(),
+            expected_schema: expected_schema.clone(),
             continuation_summary: None,
             effect_frame: None,
             observations: vec![Observation {
@@ -276,12 +273,7 @@ async fn responses_weak_model_preserves_schema_shaped_user_payloads() {
         .expect("Responses body should include serialized input text");
     let input_context: Value = serde_json::from_str(input_text).unwrap();
 
-    assert!(
-        input_context["expected_schema"]["properties"]
-            .get("source")
-            .is_none(),
-        "weak handler request context should still omit runtime provenance schema"
-    );
+    assert_eq!(input_context["expected_schema"], expected_schema);
 
     let input_payload = &input_context["input"]["user_supplied_schema"];
     assert!(

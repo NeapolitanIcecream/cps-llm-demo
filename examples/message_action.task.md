@@ -21,8 +21,7 @@ An array of action drafts:
     "event_id": "string",
     "kind": "ignore | create_task | create_calendar_event | draft_reply",
     "title": "string",
-    "datetime_hint": "string | null",
-    "source": "weak_model | strong_think"
+    "datetime_hint": "string | null"
   }
 ]
 ```

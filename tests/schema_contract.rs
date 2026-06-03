@@ -86,8 +86,7 @@ fn handler_decision_schema_binds_decision_to_payload_shape() {
                 "event_id": "m1",
                 "kind": "create_task",
                 "title": "发送新版 proposal",
-                "datetime_hint": "明天 10 点前",
-                "source": "strong_think"
+                "datetime_hint": "明天 10 点前"
             },
             "confidence": 0.88,
             "rationale": "resolved frame"
@@ -158,8 +157,7 @@ fn weak_task_result_schema_still_rejects_confidence_outside_probability_range() 
             "event_id": "m1",
             "kind": "create_task",
             "title": "Send proposal",
-            "datetime_hint": null,
-            "source": "weak_model"
+            "datetime_hint": null
         },
         "confidence": 1.0,
         "rationale": "clear request"
@@ -172,8 +170,7 @@ fn weak_task_result_schema_still_rejects_confidence_outside_probability_range() 
                 "event_id": "m1",
                 "kind": "create_task",
                 "title": "Send proposal",
-                "datetime_hint": null,
-                "source": "weak_model"
+                "datetime_hint": null
             },
             "confidence": confidence,
             "rationale": "clear request"
