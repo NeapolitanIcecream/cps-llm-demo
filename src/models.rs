@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 use crate::effects::{HandlerDecision, HandlerRequest};
 use crate::program::{EffectCall, ModelStrength, Program};
@@ -55,6 +56,73 @@ pub const WEAK_TASK_INSTRUCTIONS: &str = WEAK_HANDLER_INSTRUCTIONS;
 #[async_trait]
 pub trait EffectHandler: Send + Sync {
     async fn handle(&self, request: HandlerRequest) -> Result<HandlerDecision>;
+}
+
+#[async_trait]
+impl<T> EffectHandler for Arc<T>
+where
+    T: EffectHandler + ?Sized,
+{
+    async fn handle(&self, request: HandlerRequest) -> Result<HandlerDecision> {
+        (**self).handle(request).await
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FixtureModelKind {
+    Weak,
+    Strong,
+}
+
+#[derive(Debug, Clone)]
+pub struct FixtureModelHandler {
+    kind: FixtureModelKind,
+}
+
+impl FixtureModelHandler {
+    pub fn weak() -> Self {
+        Self {
+            kind: FixtureModelKind::Weak,
+        }
+    }
+
+    pub fn strong() -> Self {
+        Self {
+            kind: FixtureModelKind::Strong,
+        }
+    }
+}
+
+#[async_trait]
+impl EffectHandler for FixtureModelHandler {
+    async fn handle(&self, request: HandlerRequest) -> Result<HandlerDecision> {
+        let key = match self.kind {
+            FixtureModelKind::Weak => "weak",
+            FixtureModelKind::Strong => "strong",
+        };
+        let fixture = request
+            .input
+            .get("_fixture_model")
+            .and_then(Value::as_object)
+            .and_then(|model| model.get(key))
+            .or_else(|| request.input.get("_fixture_model_default"))
+            .ok_or_else(|| anyhow!("fixture model input is missing _fixture_model.{key}"))?;
+        if let Some(reason) = fixture.get("abort").and_then(Value::as_str) {
+            return Ok(HandlerDecision::Abort {
+                reason: reason.to_owned(),
+            });
+        }
+        let value = fixture.get("value").cloned().unwrap_or(Value::Null);
+        let confidence = fixture
+            .get("confidence")
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0) as f32;
+        Ok(HandlerDecision::ReturnValue {
+            value,
+            confidence,
+            rationale: format!("fixture {key} value"),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]

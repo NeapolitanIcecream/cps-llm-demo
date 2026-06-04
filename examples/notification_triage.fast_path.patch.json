@@ -1,0 +1,110 @@
+{
+  "target_program_id": "notification_triage",
+  "patch_id": "fixture_fast_path_v1",
+  "rationale": "Install a deterministic generic fast path for repeated fixture cases.",
+  "operations": [
+    {
+      "op": "insert_instruction",
+      "function": "main",
+      "pc": 0,
+      "instr": {
+        "op": "perform",
+        "out": "fast",
+        "effect": {
+          "kind": "local_tool",
+          "tool_name": "fast_path_apply",
+          "args_schema": {
+            "type": "object"
+          }
+        },
+        "input": {
+          "kind": "object",
+          "fields": {
+            "event": {
+              "kind": "var",
+              "name": "event"
+            },
+            "rules": {
+              "kind": "literal",
+              "value": [
+                {
+                  "rule_id": "fixture_repeat_rule",
+                  "when": {
+                    "op": "field_equals",
+                    "path": [
+                      "_fixture_fast_path"
+                    ],
+                    "value": true
+                  },
+                  "emit": {
+                    "kind": "field",
+                    "path": [
+                      "_fixture_fast_value"
+                    ]
+                  },
+                  "confidence": 1.0
+                }
+              ]
+            }
+          }
+        },
+        "expected_schema": {
+          "type": "object"
+        },
+        "acceptance": {
+          "min_confidence": 1.0,
+          "require_schema_valid": true,
+          "on_failure": {
+            "kind": "abort",
+            "reason": "fast path tool failed"
+          }
+        }
+      }
+    },
+    {
+      "op": "insert_instruction",
+      "function": "main",
+      "pc": 1,
+      "instr": {
+        "op": "branch",
+        "condition": {
+          "kind": "field_is_truthy",
+          "var": "fast",
+          "path": [
+            "hit"
+          ]
+        },
+        "then_pc": 2,
+        "else_pc": 4
+      }
+    },
+    {
+      "op": "insert_instruction",
+      "function": "main",
+      "pc": 2,
+      "instr": {
+        "op": "project",
+        "out": "draft",
+        "from": {
+          "kind": "var",
+          "name": "fast"
+        },
+        "path": [
+          "value"
+        ]
+      }
+    },
+    {
+      "op": "insert_instruction",
+      "function": "main",
+      "pc": 3,
+      "instr": {
+        "op": "return",
+        "value": {
+          "kind": "var",
+          "name": "draft"
+        }
+      }
+    }
+  ]
+}

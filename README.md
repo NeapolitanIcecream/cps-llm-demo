@@ -50,6 +50,50 @@ cargo run -- run-program --program examples/message_action.v2.program.json --inp
 cargo run -- replay --trace trace.jsonl
 ```
 
+## System Value Loop Fixture
+
+The system-layer commands run a workflow across JSONL event streams, store program versions and metrics in a local state directory, install a typed patch, and compare the CPS path with a strong-direct baseline.
+
+This transcript uses fixture handlers when `OPENAI_API_KEY` is unset, so it does not call external models:
+
+```bash
+STATE=/tmp/cps-llm-state
+
+cargo run -- init-workflow \
+  --workflow notification_triage \
+  --program examples/notification_triage.v1.program.json \
+  --state-dir $STATE
+
+cargo run -- run-stream \
+  --workflow notification_triage \
+  --events examples/notification_triage.round1.jsonl \
+  --state-dir $STATE \
+  --trace-json
+
+cargo run -- optimize \
+  --workflow notification_triage \
+  --patch examples/notification_triage.fast_path.patch.json \
+  --state-dir $STATE
+
+cargo run -- run-stream \
+  --workflow notification_triage \
+  --events examples/notification_triage.round2.jsonl \
+  --state-dir $STATE \
+  --trace-json
+
+cargo run -- baseline-strong-direct \
+  --workflow notification_triage \
+  --task examples/notification_triage.task.md \
+  --events examples/notification_triage.round1.jsonl \
+  --state-dir $STATE
+
+cargo run -- metrics-report \
+  --workflow notification_triage \
+  --state-dir $STATE
+```
+
+The report includes `latest_program_version`, per-run metrics, and a summary that checks whether fast-path hit rate increased, StrongThink rate decreased, the strong-direct baseline used one strong call per event, and continuation frames stayed under the configured byte limit.
+
 ## What To Look For
 
 Demo A, ordinary program execution:

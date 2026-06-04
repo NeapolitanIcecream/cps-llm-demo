@@ -1,11 +1,17 @@
 pub mod cli;
 pub mod config;
 pub mod effects;
+pub mod engine;
 pub mod error;
+pub mod evaluation;
+pub mod local_tools;
 pub mod models;
+pub mod observability;
+pub mod optimizer;
 pub mod program;
 pub mod responses_client;
 pub mod runtime;
 pub mod schema;
+pub mod store;
 pub mod trace;
 pub mod validator;

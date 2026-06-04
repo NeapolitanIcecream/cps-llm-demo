@@ -681,26 +681,24 @@ fn functions_must_end_with_return_during_validation() {
     );
 }
 
-#[test]
-fn local_tool_perform_is_rejected_during_validation() {
+#[tokio::test]
+async fn unregistered_local_tool_is_rejected_at_runtime() {
     let mut functions = BTreeMap::new();
     functions.insert(
         "main".to_owned(),
         FunctionDef {
-            params: vec!["request".to_owned()],
+            params: Vec::new(),
             output_schema: json!({ "type": "string" }),
             body: vec![
                 Instr::Perform {
                     out: "tool_output".to_owned(),
                     effect: EffectCall::LocalTool {
-                        tool_name: "calendar.create".to_owned(),
+                        tool_name: "unregistered_tool".to_owned(),
                         args_schema: json!({ "type": "object" }),
                     },
-                    input: JsonExpr::Literal {
-                        value: json!({ "title": "review" }),
-                    },
+                    input: JsonExpr::Literal { value: json!({}) },
                     expected_schema: json!({ "type": "string" }),
-                    acceptance: accept(0.0),
+                    acceptance: accept_abort(0.0),
                 },
                 Instr::Return {
                     value: JsonExpr::Var {
@@ -711,24 +709,30 @@ fn local_tool_perform_is_rejected_during_validation() {
         },
     );
     let program = Program {
-        program_id: "local_tool_unsupported".to_owned(),
+        program_id: "local_tool_unregistered".to_owned(),
         version: "1.0.0".to_owned(),
         entry: "main".to_owned(),
         input_schema: json!({ "type": "object" }),
         output_schema: json!({ "type": "string" }),
         functions,
         allowed_effects: vec![EffectPermission::LocalTool {
-            tool_name: "calendar.create".to_owned(),
+            tool_name: "unregistered_tool".to_owned(),
         }],
     };
 
-    let error = validate_program(&program).unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("local_tool effects are not supported")
+    validate_program(&program).unwrap();
+    let runtime = Runtime::new(
+        SequenceHandler::empty(),
+        SequenceHandler::empty(),
+        TraceCollector::default(),
     );
+    let error = runtime.run_program(program, json!({})).await.unwrap_err();
+
+    assert!(error.chain().any(|cause| {
+        cause
+            .to_string()
+            .contains("local tool unregistered_tool is not registered")
+    }));
 }
 
 #[test]

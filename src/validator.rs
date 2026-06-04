@@ -4,8 +4,8 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 
 use crate::program::{
-    EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardFail, Instr, JsonExpr,
-    ModelStrength, PatchOp, Program, ProgramFragment, ProgramPatch,
+    EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardExpr, GuardFail, Instr,
+    JsonExpr, ModelStrength, PatchOp, Program, ProgramFragment, ProgramPatch,
 };
 
 const MAX_INSTRUCTIONS_PER_FUNCTION: usize = 1024;
@@ -188,19 +188,13 @@ fn validate_instr(
             Ok(())
         }
         Instr::Guard { condition, on_fail } => {
-            match condition {
-                crate::program::GuardExpr::VarExists { name } => {
-                    if !matches!(on_fail, GuardFail::Think { .. }) {
-                        ensure_defined(name, defined)?;
-                    }
-                }
-                crate::program::GuardExpr::JsonSchemaValid { var, schema } => {
-                    ensure_defined(var, defined)?;
-                    validate_json_schema(schema).map_err(|err| {
-                        anyhow!("guard schema is invalid at {function_name}:{pc}: {err}")
-                    })?;
-                }
-            }
+            validate_guard_condition(
+                condition,
+                defined,
+                matches!(on_fail, GuardFail::Think { .. }),
+                function_name,
+                pc,
+            )?;
             if matches!(on_fail, GuardFail::Think { .. }) {
                 ensure_think_permission(program, function_name, pc, "guard think repair")?;
                 ensure_not_reserved_input_binding(
@@ -210,6 +204,18 @@ fn validate_instr(
                 )?;
             }
             Ok(())
+        }
+        Instr::Branch {
+            condition,
+            then_pc,
+            else_pc,
+        } => {
+            validate_guard_condition(condition, defined, false, function_name, pc)?;
+            validate_forward_target(program, function_name, pc, *then_pc, "branch then_pc")?;
+            validate_forward_target(program, function_name, pc, *else_pc, "branch else_pc")
+        }
+        Instr::Jump { pc: target_pc } => {
+            validate_forward_target(program, function_name, pc, *target_pc, "jump pc")
         }
         Instr::Call { function, args, .. } => {
             let target = program.functions.get(function).ok_or_else(|| {
@@ -285,10 +291,62 @@ fn ensure_not_reserved_input_binding(name: &str, context: &str, owner: Option<&s
     }
 }
 
-fn guard_repair_target(condition: &crate::program::GuardExpr) -> &str {
+fn validate_guard_condition(
+    condition: &GuardExpr,
+    defined: &BTreeSet<String>,
+    allow_missing_var_exists: bool,
+    function_name: &str,
+    pc: usize,
+) -> Result<()> {
     match condition {
-        crate::program::GuardExpr::VarExists { name } => name,
-        crate::program::GuardExpr::JsonSchemaValid { var, .. } => var,
+        GuardExpr::VarExists { name } => {
+            if !allow_missing_var_exists {
+                ensure_defined(name, defined)?;
+            }
+            Ok(())
+        }
+        GuardExpr::JsonSchemaValid { var, schema } => {
+            ensure_defined(var, defined)?;
+            validate_json_schema(schema)
+                .map_err(|err| anyhow!("guard schema is invalid at {function_name}:{pc}: {err}"))
+        }
+        GuardExpr::FieldEquals { var, .. } | GuardExpr::FieldIsTruthy { var, .. } => {
+            ensure_defined(var, defined)
+        }
+    }
+}
+
+fn validate_forward_target(
+    program: &Program,
+    function_name: &str,
+    pc: usize,
+    target_pc: usize,
+    label: &str,
+) -> Result<()> {
+    let body_len = program
+        .functions
+        .get(function_name)
+        .map(|function| function.body.len())
+        .ok_or_else(|| anyhow!("function {function_name} does not exist"))?;
+    if target_pc >= body_len {
+        return Err(anyhow!(
+            "{label} {target_pc} is outside function {function_name} body"
+        ));
+    }
+    if target_pc <= pc {
+        return Err(anyhow!(
+            "{label} {target_pc} must be forward-only from {function_name}:{pc}"
+        ));
+    }
+    Ok(())
+}
+
+fn guard_repair_target(condition: &GuardExpr) -> &str {
+    match condition {
+        GuardExpr::VarExists { name } => name,
+        GuardExpr::JsonSchemaValid { var, .. }
+        | GuardExpr::FieldEquals { var, .. }
+        | GuardExpr::FieldIsTruthy { var, .. } => var,
     }
 }
 
@@ -306,9 +364,9 @@ fn validate_supported_effect_permissions(program: &Program) -> Result<()> {
     for permission in &program.allowed_effects {
         match permission {
             EffectPermission::LocalTool { tool_name } => {
-                return Err(anyhow!(
-                    "local_tool effects are not supported until local tool handlers are implemented (permission {tool_name})"
-                ));
+                if tool_name.trim().is_empty() {
+                    return Err(anyhow!("local_tool permission has empty tool_name"));
+                }
             }
             EffectPermission::CompileProgram {
                 strength: ModelStrength::Weak,
@@ -334,9 +392,11 @@ fn validate_supported_effect_call(
 ) -> Result<()> {
     match effect {
         EffectCall::LocalTool { tool_name, .. } => {
-            return Err(anyhow!(
-                "local_tool effects are not supported until local tool handlers are implemented at {function_name}:{pc} (tool {tool_name})"
-            ));
+            if tool_name.trim().is_empty() {
+                return Err(anyhow!(
+                    "local_tool effect has empty tool_name at {function_name}:{pc}"
+                ));
+            }
         }
         EffectCall::CompileProgram {
             strength: ModelStrength::Weak,

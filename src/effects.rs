@@ -1,3 +1,4 @@
+use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -87,6 +88,18 @@ pub struct EffectFrame {
     pub continuation: Continuation,
     pub observations: Vec<Observation>,
     pub allowed_decisions: Vec<AllowedDecision>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct EncodedEffectFrame {
+    pub model_visible_frame: EffectFrame,
+    pub original_continuation_ref: Option<String>,
+    pub encoded_bytes: usize,
+    pub original_bytes: usize,
+}
+
+pub trait EffectFrameEncoder: Send + Sync {
+    fn encode(&self, frame: &EffectFrame) -> Result<EncodedEffectFrame>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
