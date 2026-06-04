@@ -1,0 +1,127 @@
+{
+  "target_program_id": "notification_triage",
+  "patch_id": "patch-buildbot-fast-path",
+  "rationale": "Install a declarative fast path for repeated BuildBot failed-build notifications.",
+  "operations": [
+    {
+      "op": "replace_instruction",
+      "function": "main",
+      "pc": 0,
+      "instr": {
+        "op": "perform",
+        "out": "fast_path_result",
+        "effect": {
+          "kind": "local_tool",
+          "tool_name": "fast_path_apply",
+          "args_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "payload": {},
+              "fast_paths": { "type": "array" }
+            },
+            "required": ["payload", "fast_paths"]
+          }
+        },
+        "input": {
+          "kind": "object",
+          "fields": {
+            "payload": { "kind": "var", "name": "event" },
+            "fast_paths": {
+              "kind": "array",
+              "items": [
+                {
+                  "kind": "literal",
+                  "value": {
+                    "fast_path_id": "buildbot_failed_build_v1",
+                    "predicates": [
+                      {
+                        "kind": "json_path_equals",
+                        "path": ["payload", "app"],
+                        "value": "BuildBot"
+                      },
+                      {
+                        "kind": "regex_match",
+                        "path": ["payload", "title"],
+                        "pattern": "^Build failed: .+"
+                      }
+                    ],
+                    "output_template": {
+                      "kind": "object",
+                      "fields": {
+                        "event_id": { "kind": "from_path", "path": ["event_id"] },
+                        "kind": { "kind": "literal", "value": "create_task" },
+                        "title": {
+                          "kind": "concat",
+                          "parts": [
+                            { "kind": "literal", "value": "Investigate " },
+                            { "kind": "from_path", "path": ["payload", "title"] }
+                          ]
+                        },
+                        "datetime_hint": { "kind": "null" }
+                      }
+                    },
+                    "output_schema": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "event_id": { "type": "string" },
+                        "kind": {
+                          "type": "string",
+                          "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+                        },
+                        "title": { "type": "string" },
+                        "datetime_hint": {
+                          "anyOf": [{ "type": "string" }, { "type": "null" }]
+                        }
+                      },
+                      "required": ["event_id", "kind", "title", "datetime_hint"]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "expected_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hit": { "type": "boolean" },
+            "fast_path_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "event_id": { "type": "string" },
+                    "kind": {
+                      "type": "string",
+                      "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+                    },
+                    "title": { "type": "string" },
+                    "datetime_hint": {
+                      "anyOf": [{ "type": "string" }, { "type": "null" }]
+                    }
+                  },
+                  "required": ["event_id", "kind", "title", "datetime_hint"]
+                },
+                { "type": "null" }
+              ]
+            }
+          },
+          "required": ["hit", "fast_path_id", "value"]
+        },
+        "acceptance": {
+          "min_confidence": 1.0,
+          "require_schema_valid": true,
+          "on_failure": {
+            "kind": "abort",
+            "reason": "fast_path_apply must return its declared result shape"
+          }
+        }
+      }
+    }
+  ]
+}

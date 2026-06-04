@@ -1,0 +1,232 @@
+{
+  "program_id": "notification_triage",
+  "version": "1.0.0",
+  "entry": "main",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "event_id": { "type": "string" },
+      "event_type": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+      "timestamp": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+      "payload": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "app": { "type": "string" },
+          "title": { "type": "string" },
+          "body": { "type": "string" },
+          "received_at": { "type": "string" }
+        },
+        "required": ["app", "title", "body", "received_at"]
+      }
+    },
+    "required": ["event_id", "payload"]
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "event_id": { "type": "string" },
+      "kind": {
+        "type": "string",
+        "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+      },
+      "title": { "type": "string" },
+      "datetime_hint": {
+        "anyOf": [{ "type": "string" }, { "type": "null" }]
+      }
+    },
+    "required": ["event_id", "kind", "title", "datetime_hint"]
+  },
+  "functions": {
+    "main": {
+      "params": ["event"],
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "event_id": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+          },
+          "title": { "type": "string" },
+          "datetime_hint": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }]
+          }
+        },
+        "required": ["event_id", "kind", "title", "datetime_hint"]
+      },
+      "body": [
+        {
+          "op": "perform",
+          "out": "fast_path_result",
+          "effect": {
+            "kind": "local_tool",
+            "tool_name": "fast_path_apply",
+            "args_schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "payload": {},
+                "fast_paths": { "type": "array" }
+              },
+              "required": ["payload", "fast_paths"]
+            }
+          },
+          "input": {
+            "kind": "object",
+            "fields": {
+              "payload": { "kind": "var", "name": "event" },
+              "fast_paths": { "kind": "array", "items": [] }
+            }
+          },
+          "expected_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "hit": { "type": "boolean" },
+              "fast_path_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "event_id": { "type": "string" },
+                      "kind": {
+                        "type": "string",
+                        "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+                      },
+                      "title": { "type": "string" },
+                      "datetime_hint": {
+                        "anyOf": [{ "type": "string" }, { "type": "null" }]
+                      }
+                    },
+                    "required": ["event_id", "kind", "title", "datetime_hint"]
+                  },
+                  { "type": "null" }
+                ]
+              }
+            },
+            "required": ["hit", "fast_path_id", "value"]
+          },
+          "acceptance": {
+            "min_confidence": 1.0,
+            "require_schema_valid": true,
+            "on_failure": {
+              "kind": "abort",
+              "reason": "fast_path_apply must return its declared result shape"
+            }
+          }
+        },
+        {
+          "op": "branch",
+          "condition": {
+            "kind": "json_path_equals",
+            "var": "fast_path_result",
+            "path": ["hit"],
+            "value": true
+          },
+          "then_pc": 2,
+          "else_pc": 4
+        },
+        {
+          "op": "project",
+          "out": "fast_path_value",
+          "from": { "kind": "var", "name": "fast_path_result" },
+          "path": ["value"]
+        },
+        {
+          "op": "return",
+          "value": { "kind": "var", "name": "fast_path_value" }
+        },
+        {
+          "op": "perform",
+          "out": "intent",
+          "effect": {
+            "kind": "model_task",
+            "strength": "weak",
+            "task": {
+              "name": "classify_notification_intent",
+              "instructions": "Classify the notification intent using only the supplied event JSON."
+            }
+          },
+          "input": { "kind": "var", "name": "event" },
+          "expected_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+              }
+            },
+            "required": ["kind"]
+          },
+          "acceptance": {
+            "min_confidence": 0.6,
+            "require_schema_valid": true,
+            "on_failure": {
+              "kind": "capture_to_think",
+              "reason": "weak intent classification was low confidence or invalid"
+            }
+          }
+        },
+        {
+          "op": "perform",
+          "out": "draft",
+          "effect": {
+            "kind": "model_task",
+            "strength": "weak",
+            "task": {
+              "name": "extract_notification_action_draft",
+              "instructions": "Create one action draft from the event and prior intent."
+            }
+          },
+          "input": {
+            "kind": "object",
+            "fields": {
+              "event": { "kind": "var", "name": "event" },
+              "intent": { "kind": "var", "name": "intent" }
+            }
+          },
+          "expected_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "event_id": { "type": "string" },
+              "kind": {
+                "type": "string",
+                "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+              },
+              "title": { "type": "string" },
+              "datetime_hint": {
+                "anyOf": [{ "type": "string" }, { "type": "null" }]
+              }
+            },
+            "required": ["event_id", "kind", "title", "datetime_hint"]
+          },
+          "acceptance": {
+            "min_confidence": 0.8,
+            "require_schema_valid": true,
+            "on_failure": {
+              "kind": "capture_to_think",
+              "reason": "weak action draft was low confidence or invalid"
+            }
+          }
+        },
+        {
+          "op": "return",
+          "value": { "kind": "var", "name": "draft" }
+        }
+      ]
+    }
+  },
+  "allowed_effects": [
+    { "kind": "local_tool", "tool_name": "fast_path_apply" },
+    { "kind": "model_task", "strength": "weak" },
+    { "kind": "think" }
+  ]
+}

@@ -1,0 +1,20 @@
+{"event_id":"n001","event_type":"notification","payload":{"app":"BuildBot","title":"Build failed: cps-llm-demo/main","body":"Unit tests failed in runtime_cps.rs","received_at":"2026-06-04T09:00:00Z"}}
+{"event_id":"n002","event_type":"notification","payload":{"app":"Calendar","title":"Product review at 3pm","body":"Room 12","received_at":"2026-06-04T09:01:00Z"}}
+{"event_id":"n003","event_type":"notification","payload":{"app":"Mail","title":"FYI: weekly digest","body":"No action needed","received_at":"2026-06-04T09:02:00Z"}}
+{"event_id":"n004","event_type":"notification","payload":{"app":"BuildBot","title":"Build failed: cps-llm-demo/release","body":"Integration test failed in cli_contract.rs","received_at":"2026-06-04T09:03:00Z"}}
+{"event_id":"n005","event_type":"notification","payload":{"app":"Chat","title":"Can you review the PR?","body":"Need eyes on the value layer patch","received_at":"2026-06-04T09:04:00Z"}}
+{"event_id":"n006","event_type":"notification","payload":{"app":"BuildBot","title":"Build failed: cps-llm-demo/value-demo","body":"cargo fmt reported diffs","received_at":"2026-06-04T09:05:00Z"}}
+{"event_id":"n007","event_type":"notification","payload":{"app":"Calendar","title":"Architecture review at 4pm","body":"Zoom link attached","received_at":"2026-06-04T09:06:00Z"}}
+{"event_id":"n008","event_type":"notification","payload":{"app":"Mail","title":"FYI: release notes","body":"No action needed","received_at":"2026-06-04T09:07:00Z"}}
+{"event_id":"n009","event_type":"notification","payload":{"app":"BuildBot","title":"Build failed: cps-llm-demo/docs","body":"markdown lint failed","received_at":"2026-06-04T09:08:00Z"}}
+{"event_id":"n010","event_type":"notification","payload":{"app":"Pager","title":"Latency alert recovered","body":"No action required","received_at":"2026-06-04T09:09:00Z"}}
+{"event_id":"n011","event_type":"notification","payload":{"app":"BuildBot","title":"Build failed: cps-llm-demo/main","body":"schema_contract.rs failed","received_at":"2026-06-04T09:10:00Z"}}
+{"event_id":"n012","event_type":"notification","payload":{"app":"Calendar","title":"Design sync tomorrow 10am","body":"Prep notes requested","received_at":"2026-06-04T09:11:00Z"}}
+{"event_id":"n013","event_type":"notification","payload":{"app":"Mail","title":"Question about proposal","body":"Can you clarify the patch evaluator?","received_at":"2026-06-04T09:12:00Z"}}
+{"event_id":"n014","event_type":"notification","payload":{"app":"BuildBot","title":"Build failed: cps-llm-demo/metrics","body":"metrics test timed out","received_at":"2026-06-04T09:13:00Z"}}
+{"event_id":"n015","event_type":"notification","payload":{"app":"Chat","title":"Heads up","body":"The demo script moved to Friday","received_at":"2026-06-04T09:14:00Z"}}
+{"event_id":"n016","event_type":"notification","payload":{"app":"BuildBot","title":"Build failed: cps-llm-demo/runtime","body":"branch validation failed","received_at":"2026-06-04T09:15:00Z"}}
+{"event_id":"n017","event_type":"notification","payload":{"app":"Calendar","title":"Demo rehearsal at 2pm","body":"Conference room B","received_at":"2026-06-04T09:16:00Z"}}
+{"event_id":"n018","event_type":"notification","payload":{"app":"Mail","title":"FYI: metrics dashboard","body":"Weekly summary attached","received_at":"2026-06-04T09:17:00Z"}}
+{"event_id":"n019","event_type":"notification","payload":{"app":"BuildBot","title":"Build failed: cps-llm-demo/patches","body":"patch fixture invalid","received_at":"2026-06-04T09:18:00Z"}}
+{"event_id":"n020","event_type":"notification","payload":{"app":"Pager","title":"Disk warning","body":"Investigate the staging node","received_at":"2026-06-04T09:19:00Z"}}

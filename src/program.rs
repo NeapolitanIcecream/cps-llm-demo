@@ -45,6 +45,14 @@ pub enum Instr {
         condition: GuardExpr,
         on_fail: GuardFail,
     },
+    Branch {
+        condition: GuardExpr,
+        then_pc: usize,
+        else_pc: usize,
+    },
+    Jump {
+        pc: usize,
+    },
     Call {
         out: String,
         function: String,
@@ -73,6 +81,8 @@ impl Instr {
             Self::Project { .. } => "project",
             Self::Perform { .. } => "perform",
             Self::Guard { .. } => "guard",
+            Self::Branch { .. } => "branch",
+            Self::Jump { .. } => "jump",
             Self::Call { .. } => "call",
             Self::Map { .. } => "map",
             Self::CallDynamic { .. } => "call_dynamic",
@@ -88,7 +98,9 @@ impl Instr {
             | Self::Call { out, .. }
             | Self::Map { out, .. }
             | Self::CallDynamic { out, .. } => Some(out),
-            Self::Guard { .. } | Self::Return { .. } => None,
+            Self::Guard { .. } | Self::Branch { .. } | Self::Jump { .. } | Self::Return { .. } => {
+                None
+            }
         }
     }
 }
@@ -105,8 +117,22 @@ pub enum JsonExpr {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GuardExpr {
-    VarExists { name: String },
-    JsonSchemaValid { var: String, schema: Value },
+    VarExists {
+        name: String,
+    },
+    JsonSchemaValid {
+        var: String,
+        schema: Value,
+    },
+    JsonPathEquals {
+        var: String,
+        path: Vec<String>,
+        value: Value,
+    },
+    JsonPathExists {
+        var: String,
+        path: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]

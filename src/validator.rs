@@ -4,8 +4,8 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 
 use crate::program::{
-    EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardFail, Instr, JsonExpr,
-    ModelStrength, PatchOp, Program, ProgramFragment, ProgramPatch,
+    EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardExpr, GuardFail, Instr,
+    JsonExpr, ModelStrength, PatchOp, Program, ProgramFragment, ProgramPatch,
 };
 
 const MAX_INSTRUCTIONS_PER_FUNCTION: usize = 1024;
@@ -133,7 +133,7 @@ fn validate_function(
     }
 
     for (pc, instr) in function.body.iter().enumerate() {
-        validate_instr(program, name, pc, instr, &defined)?;
+        validate_instr(program, name, pc, instr, &defined, function.body.len())?;
         if let Some(out) = instr.output_var() {
             ensure_not_reserved_input_binding(out, "instruction output", Some(name))?;
             defined.insert(out.to_owned());
@@ -152,6 +152,7 @@ fn validate_instr(
     pc: usize,
     instr: &Instr,
     defined: &BTreeSet<String>,
+    body_len: usize,
 ) -> Result<()> {
     match instr {
         Instr::Let { expr, .. } => validate_expr(expr, defined),
@@ -188,19 +189,13 @@ fn validate_instr(
             Ok(())
         }
         Instr::Guard { condition, on_fail } => {
-            match condition {
-                crate::program::GuardExpr::VarExists { name } => {
-                    if !matches!(on_fail, GuardFail::Think { .. }) {
-                        ensure_defined(name, defined)?;
-                    }
-                }
-                crate::program::GuardExpr::JsonSchemaValid { var, schema } => {
-                    ensure_defined(var, defined)?;
-                    validate_json_schema(schema).map_err(|err| {
-                        anyhow!("guard schema is invalid at {function_name}:{pc}: {err}")
-                    })?;
-                }
-            }
+            validate_guard_expr(
+                condition,
+                defined,
+                function_name,
+                pc,
+                !matches!(on_fail, GuardFail::Think { .. }),
+            )?;
             if matches!(on_fail, GuardFail::Think { .. }) {
                 ensure_think_permission(program, function_name, pc, "guard think repair")?;
                 ensure_not_reserved_input_binding(
@@ -210,6 +205,19 @@ fn validate_instr(
                 )?;
             }
             Ok(())
+        }
+        Instr::Branch {
+            condition,
+            then_pc,
+            else_pc,
+        } => {
+            validate_guard_expr(condition, defined, function_name, pc, true)?;
+            validate_forward_target(*then_pc, pc, body_len, function_name, "then_pc")?;
+            validate_forward_target(*else_pc, pc, body_len, function_name, "else_pc")?;
+            Ok(())
+        }
+        Instr::Jump { pc: target } => {
+            validate_forward_target(*target, pc, body_len, function_name, "jump pc")
         }
         Instr::Call { function, args, .. } => {
             let target = program.functions.get(function).ok_or_else(|| {
@@ -270,6 +278,51 @@ fn validate_exprs(exprs: &[JsonExpr], defined: &BTreeSet<String>) -> Result<()> 
     Ok(())
 }
 
+fn validate_guard_expr(
+    condition: &GuardExpr,
+    defined: &BTreeSet<String>,
+    function_name: &str,
+    pc: usize,
+    require_defined_for_var_exists: bool,
+) -> Result<()> {
+    match condition {
+        GuardExpr::VarExists { name } => {
+            if require_defined_for_var_exists {
+                ensure_defined(name, defined)?;
+            }
+        }
+        GuardExpr::JsonSchemaValid { var, schema } => {
+            ensure_defined(var, defined)?;
+            validate_json_schema(schema)
+                .map_err(|err| anyhow!("guard schema is invalid at {function_name}:{pc}: {err}"))?;
+        }
+        GuardExpr::JsonPathEquals { var, .. } | GuardExpr::JsonPathExists { var, .. } => {
+            ensure_defined(var, defined)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_forward_target(
+    target: usize,
+    current_pc: usize,
+    body_len: usize,
+    function_name: &str,
+    label: &str,
+) -> Result<()> {
+    if target >= body_len {
+        return Err(anyhow!(
+            "{label} {target} is outside function {function_name} instruction range"
+        ));
+    }
+    if target <= current_pc {
+        return Err(anyhow!(
+            "{label} {target} must be forward-only from pc {current_pc} in function {function_name}"
+        ));
+    }
+    Ok(())
+}
+
 fn ensure_not_reserved_input_binding(name: &str, context: &str, owner: Option<&str>) -> Result<()> {
     if name != INPUT_VAR {
         return Ok(());
@@ -285,10 +338,12 @@ fn ensure_not_reserved_input_binding(name: &str, context: &str, owner: Option<&s
     }
 }
 
-fn guard_repair_target(condition: &crate::program::GuardExpr) -> &str {
+fn guard_repair_target(condition: &GuardExpr) -> &str {
     match condition {
-        crate::program::GuardExpr::VarExists { name } => name,
-        crate::program::GuardExpr::JsonSchemaValid { var, .. } => var,
+        GuardExpr::VarExists { name } => name,
+        GuardExpr::JsonSchemaValid { var, .. }
+        | GuardExpr::JsonPathEquals { var, .. }
+        | GuardExpr::JsonPathExists { var, .. } => var,
     }
 }
 
@@ -305,11 +360,6 @@ fn guard_think_repair_target(instr: &Instr) -> Option<&str> {
 fn validate_supported_effect_permissions(program: &Program) -> Result<()> {
     for permission in &program.allowed_effects {
         match permission {
-            EffectPermission::LocalTool { tool_name } => {
-                return Err(anyhow!(
-                    "local_tool effects are not supported until local tool handlers are implemented (permission {tool_name})"
-                ));
-            }
             EffectPermission::CompileProgram {
                 strength: ModelStrength::Weak,
             } => {
@@ -319,6 +369,7 @@ fn validate_supported_effect_permissions(program: &Program) -> Result<()> {
             }
             EffectPermission::ModelTask { .. }
             | EffectPermission::Think
+            | EffectPermission::LocalTool { .. }
             | EffectPermission::CompileProgram {
                 strength: ModelStrength::Strong,
             } => {}
@@ -333,10 +384,13 @@ fn validate_supported_effect_call(
     pc: usize,
 ) -> Result<()> {
     match effect {
-        EffectCall::LocalTool { tool_name, .. } => {
-            return Err(anyhow!(
-                "local_tool effects are not supported until local tool handlers are implemented at {function_name}:{pc} (tool {tool_name})"
-            ));
+        EffectCall::LocalTool {
+            tool_name: _,
+            args_schema,
+        } => {
+            validate_json_schema(args_schema).map_err(|err| {
+                anyhow!("local_tool args_schema is invalid at {function_name}:{pc}: {err}")
+            })?;
         }
         EffectCall::CompileProgram {
             strength: ModelStrength::Weak,

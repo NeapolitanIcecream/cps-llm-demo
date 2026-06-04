@@ -682,7 +682,7 @@ fn functions_must_end_with_return_during_validation() {
 }
 
 #[test]
-fn local_tool_perform_is_rejected_during_validation() {
+fn local_tool_perform_is_accepted_during_validation() {
     let mut functions = BTreeMap::new();
     functions.insert(
         "main".to_owned(),
@@ -700,7 +700,7 @@ fn local_tool_perform_is_rejected_during_validation() {
                         value: json!({ "title": "review" }),
                     },
                     expected_schema: json!({ "type": "string" }),
-                    acceptance: accept(0.0),
+                    acceptance: accept_abort(0.0),
                 },
                 Instr::Return {
                     value: JsonExpr::Var {
@@ -722,13 +722,7 @@ fn local_tool_perform_is_rejected_during_validation() {
         }],
     };
 
-    let error = validate_program(&program).unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("local_tool effects are not supported")
-    );
+    validate_program(&program).unwrap();
 }
 
 #[test]

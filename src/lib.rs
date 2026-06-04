@@ -9,3 +9,4 @@ pub mod runtime;
 pub mod schema;
 pub mod trace;
 pub mod validator;
+pub mod value_demo;

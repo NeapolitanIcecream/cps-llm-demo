@@ -41,6 +41,11 @@ cargo run -- run-program --program examples/message_action.v2.program.json --inp
 cargo run -- run-program --program examples/fractal_subprogram.program.json --input examples/messages.json --trace-json
 cargo run -- compile-run --task examples/message_action.task.md --input examples/messages.json --trace-json
 cargo run -- replay --trace traces/example.trace.jsonl
+cargo run -- value-demo --program examples/notification_triage.v1.program.json --events examples/notification_events.round1.jsonl --state-dir .local-cps-demo --metrics-out .local-cps-demo/metrics/round1.metrics.json --trace-json
+cargo run -- baseline-strong-direct --task examples/notification_triage.task.md --events examples/notification_events.round2.jsonl --metrics-out .local-cps-demo/metrics/baseline.round2.metrics.json
+cargo run -- metrics-report --baseline .local-cps-demo/metrics/baseline.round2.metrics.json --round1 .local-cps-demo/metrics/round1.metrics.json --round2 .local-cps-demo/metrics/round2.metrics.json
+cargo run -- list-programs --state-dir .local-cps-demo
+cargo run -- list-patches --state-dir .local-cps-demo --program-id notification_triage
 ```
 
 `run-program` skips compilation and runs an existing Program fixture. `compile-run` asks the strong compiler handler to return Program IR, validates it, then runs the same runtime. Both commands write final JSON output to stdout. With `--trace-json`, runtime trace JSONL is written to stderr:
@@ -49,6 +54,12 @@ cargo run -- replay --trace traces/example.trace.jsonl
 cargo run -- run-program --program examples/message_action.v2.program.json --input examples/messages.json --trace-json 1>out.json 2>trace.jsonl
 cargo run -- replay --trace trace.jsonl
 ```
+
+`value-demo` runs one Program across a JSONL event stream. It installs the starting Program into `.local-cps-demo/programs`, writes trace JSONL under `.local-cps-demo/traces`, writes metrics under `.local-cps-demo/metrics`, and uses the default local tool registry with `fast_path_apply`.
+
+Use `--install-accepted-patches --eval-events <events.jsonl>` when you want strong-returned `ProgramPatch` values to be evaluated and installed for later runs. A later run can load the patched Program with `--program-id notification_triage`.
+
+`baseline-strong-direct` sends every event directly to the strong handler as a full task and records comparable metrics. `metrics-report` reads baseline, round 1, and round 2 metrics and prints the value-claim booleans.
 
 ## What To Look For
 

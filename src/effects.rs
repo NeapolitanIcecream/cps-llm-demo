@@ -12,6 +12,8 @@ pub struct RuntimeBudget {
     pub max_handler_reentries: u32,
     pub max_program_fragments: u32,
     pub max_patch_attempts: u32,
+    pub max_public_continuation_frame_bytes: usize,
+    pub max_inline_value_bytes: usize,
 }
 
 impl Default for RuntimeBudget {
@@ -23,6 +25,8 @@ impl Default for RuntimeBudget {
             max_handler_reentries: 3,
             max_program_fragments: 2,
             max_patch_attempts: 1,
+            max_public_continuation_frame_bytes: 16 * 1024,
+            max_inline_value_bytes: 2 * 1024,
         }
     }
 }

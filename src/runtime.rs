@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Map, Value, json};
@@ -18,6 +19,10 @@ use crate::program::{
 use crate::schema::{program_schema, validate_value};
 use crate::trace::TraceCollector;
 use crate::validator::{effect_allowed, validate_fragment, validate_patch, validate_program};
+use crate::value_demo::continuation_compaction::{
+    ContinuationCompactionConfig, ContinuationStore, ValueStore, compact_effect_frame,
+};
+use crate::value_demo::local_tools::LocalToolRegistry;
 
 const INPUT_VAR: &str = "$input";
 
@@ -25,6 +30,21 @@ const INPUT_VAR: &str = "$input";
 pub enum StepOutcome {
     Continue,
     Finished(Value),
+}
+
+#[derive(Debug, Clone)]
+pub struct RunContext {
+    pub run_id: String,
+    pub event_id: Option<String>,
+    pub value_store: Option<ValueStore>,
+    pub continuation_compaction: Option<ContinuationCompactionConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeRunReport {
+    pub output: Value,
+    pub pending_patches: Vec<ProgramPatch>,
+    pub trace_events: Vec<crate::trace::TraceEvent>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,10 +60,16 @@ struct ProgramState {
     fragment_count: u32,
     patch_attempts: u32,
     pending_patches: Vec<ProgramPatch>,
+    run_context: Option<RunContext>,
 }
 
 impl ProgramState {
-    fn new(program: Program, input: Value, budget: RuntimeBudget) -> Result<Self> {
+    fn new(
+        program: Program,
+        input: Value,
+        budget: RuntimeBudget,
+        run_context: Option<RunContext>,
+    ) -> Result<Self> {
         validate_program(&program).context("program validation failed")?;
         validate_value(&program.input_schema, &input).context("program input failed schema")?;
 
@@ -91,6 +117,7 @@ impl ProgramState {
             fragment_count: 0,
             patch_attempts: 0,
             pending_patches: Vec::new(),
+            run_context,
         })
     }
 
@@ -200,8 +227,10 @@ struct EffectWork {
 pub struct Runtime<W, S> {
     pub weak: W,
     pub strong: S,
+    pub local_tools: LocalToolRegistry,
     pub trace: TraceCollector,
     pub budget: RuntimeBudget,
+    continuation_store: Arc<Mutex<ContinuationStore>>,
 }
 
 impl<W, S> Runtime<W, S>
@@ -213,8 +242,10 @@ where
         Self {
             weak,
             strong,
+            local_tools: LocalToolRegistry::empty(),
             trace,
             budget: RuntimeBudget::default(),
+            continuation_store: Arc::new(Mutex::new(ContinuationStore::default())),
         }
     }
 
@@ -222,13 +253,60 @@ where
         Self {
             weak,
             strong,
+            local_tools: LocalToolRegistry::empty(),
             trace,
             budget,
+            continuation_store: Arc::new(Mutex::new(ContinuationStore::default())),
+        }
+    }
+
+    pub fn with_local_tools(
+        weak: W,
+        strong: S,
+        trace: TraceCollector,
+        local_tools: LocalToolRegistry,
+    ) -> Self {
+        Self {
+            weak,
+            strong,
+            local_tools,
+            trace,
+            budget: RuntimeBudget::default(),
+            continuation_store: Arc::new(Mutex::new(ContinuationStore::default())),
+        }
+    }
+
+    pub fn with_local_tools_and_budget(
+        weak: W,
+        strong: S,
+        trace: TraceCollector,
+        local_tools: LocalToolRegistry,
+        budget: RuntimeBudget,
+    ) -> Self {
+        Self {
+            weak,
+            strong,
+            local_tools,
+            trace,
+            budget,
+            continuation_store: Arc::new(Mutex::new(ContinuationStore::default())),
         }
     }
 
     pub async fn run_program(&self, program: Program, input: Value) -> Result<Value> {
-        let mut state = ProgramState::new(program, input, self.budget.clone())?;
+        Ok(self
+            .run_program_with_report(program, input, None)
+            .await?
+            .output)
+    }
+
+    pub async fn run_program_with_report(
+        &self,
+        program: Program,
+        input: Value,
+        run_context: Option<RunContext>,
+    ) -> Result<RuntimeRunReport> {
+        let mut state = ProgramState::new(program, input, self.budget.clone(), run_context)?;
         self.trace.emit(
             "program_validated",
             &state.trace_id,
@@ -255,7 +333,13 @@ where
         loop {
             match self.step(&mut state).await {
                 Ok(StepOutcome::Continue) => continue,
-                Ok(StepOutcome::Finished(value)) => return Ok(value),
+                Ok(StepOutcome::Finished(value)) => {
+                    return Ok(RuntimeRunReport {
+                        output: value,
+                        pending_patches: state.pending_patches,
+                        trace_events: self.trace.events(),
+                    });
+                }
                 Err(err) => {
                     self.trace.emit(
                         "program_aborted",
@@ -332,6 +416,23 @@ where
                         Ok(StepOutcome::Continue)
                     }
                 }
+            }
+            Instr::Branch {
+                condition,
+                then_pc,
+                else_pc,
+            } => {
+                let target = if guard_passes(&state.top_frame()?.env, &condition)? {
+                    then_pc
+                } else {
+                    else_pc
+                };
+                state.top_frame_mut()?.pc = target;
+                Ok(StepOutcome::Continue)
+            }
+            Instr::Jump { pc } => {
+                state.top_frame_mut()?.pc = pc;
+                Ok(StepOutcome::Continue)
             }
             Instr::Perform {
                 out,
@@ -611,6 +712,67 @@ where
                 }),
             );
 
+            if let EffectCall::LocalTool {
+                tool_name,
+                args_schema,
+            } = &effect
+            {
+                validate_value(args_schema, &input).with_context(|| {
+                    format!("local tool {tool_name} input failed effect args_schema")
+                })?;
+                let tool_input_schema = self
+                    .local_tools
+                    .input_schema(tool_name)
+                    .ok_or_else(|| anyhow!("local tool {tool_name} is not registered"))?;
+                validate_value(&tool_input_schema, &input).with_context(|| {
+                    format!("local tool {tool_name} input failed registered input_schema")
+                })?;
+                let value = self
+                    .local_tools
+                    .call(tool_name, input)
+                    .await
+                    .with_context(|| format!("local tool {tool_name} handler failed"))?;
+                let tool_output_schema = self
+                    .local_tools
+                    .output_schema(tool_name)
+                    .ok_or_else(|| anyhow!("local tool {tool_name} is not registered"))?;
+                validate_value(&tool_output_schema, &value).with_context(|| {
+                    format!("local tool {tool_name} output failed registered output_schema")
+                })?;
+                validate_value(&expected_schema, &value).with_context(|| {
+                    format!("local tool {tool_name} output failed expected_schema")
+                })?;
+                if tool_name == "fast_path_apply" {
+                    self.trace.emit(
+                        "fast_path_result",
+                        &state.trace_id,
+                        json!({
+                            "hit": value.get("hit").and_then(Value::as_bool).unwrap_or(false),
+                            "fast_path_id": value.get("fast_path_id").cloned().unwrap_or(Value::Null),
+                        }),
+                    );
+                }
+                self.trace.emit(
+                    "handler_decision",
+                    &state.trace_id,
+                    json!({
+                        "handler": handler_name,
+                        "effect": effect.kind_name(),
+                        "decision": "return_value",
+                        "confidence": 1.0,
+                        "schema_valid": true,
+                        "source": source_for_effect(&effect).as_str(),
+                        "depth": depth,
+                    }),
+                );
+                return Ok(EffectResolution {
+                    value,
+                    confidence: 1.0,
+                    observations,
+                    source: ObservationSource::LocalTool,
+                });
+            }
+
             let mut request = HandlerRequest {
                 effect: effect.clone(),
                 input,
@@ -640,11 +802,6 @@ where
                         .handle(request.clone())
                         .await
                         .with_context(|| format!("{handler_name} handler failed"))?,
-                    "local_tool" => {
-                        return Err(anyhow!(
-                            "local tool handlers are not registered in this demo"
-                        ));
-                    }
                     _ => return Err(anyhow!("unknown handler {handler_name}")),
                 };
 
@@ -920,6 +1077,13 @@ where
         validate_value(&expected_schema, &resolution.value)
             .context("strong Think return_value failed expected schema")?;
 
+        let continuation_id = continuation.continuation_id.clone();
+        let continuation = self
+            .continuation_store
+            .lock()
+            .expect("continuation store mutex poisoned")
+            .remove(&continuation_id)
+            .unwrap_or(continuation);
         self.trace.emit(
             "resume_continuation",
             &state.trace_id,
@@ -975,7 +1139,7 @@ where
         }
         allowed_decisions.push(AllowedDecision::Abort);
 
-        Ok(EffectFrame {
+        let frame = EffectFrame {
             effect_id,
             boundary_id: state.boundary_id.clone(),
             reason: capture.reason,
@@ -994,7 +1158,35 @@ where
             },
             observations: capture.observations,
             allowed_decisions,
-        })
+        };
+
+        let Some(run_context) = &state.run_context else {
+            return Ok(frame);
+        };
+        let Some(config) = &run_context.continuation_compaction else {
+            return Ok(frame);
+        };
+
+        self.continuation_store
+            .lock()
+            .expect("continuation store mutex poisoned")
+            .insert(frame.continuation.clone());
+        let (public_frame, report) =
+            compact_effect_frame(&frame, config, run_context.value_store.as_ref())?;
+        self.trace.emit(
+            "continuation_compacted",
+            &state.trace_id,
+            json!({
+                "continuation_id": report.continuation_id,
+                "full_bytes": report.full_bytes,
+                "public_bytes": report.public_bytes,
+                "stored_refs": report.stored_refs,
+                "truncated": report.truncated,
+                "run_id": run_context.run_id,
+                "event_id": run_context.event_id,
+            }),
+        );
+        Ok(public_frame)
     }
 
     fn push_call_frame(
@@ -1296,6 +1488,8 @@ fn prefix_function_refs(function: &mut FunctionDef, prefix: &str) {
             | Instr::Project { .. }
             | Instr::Perform { .. }
             | Instr::Guard { .. }
+            | Instr::Branch { .. }
+            | Instr::Jump { .. }
             | Instr::CallDynamic { .. }
             | Instr::Return { .. } => {}
         }
@@ -1344,6 +1538,18 @@ fn guard_passes(env: &Map<String, Value>, condition: &GuardExpr) -> Result<bool>
             };
             Ok(validate_value(schema, value).is_ok())
         }
+        GuardExpr::JsonPathEquals { var, path, value } => {
+            let Some(root) = env.get(var) else {
+                return Ok(false);
+            };
+            Ok(json_path(root, path).is_some_and(|actual| actual == value))
+        }
+        GuardExpr::JsonPathExists { var, path } => {
+            let Some(root) = env.get(var) else {
+                return Ok(false);
+            };
+            Ok(json_path(root, path).is_some())
+        }
     }
 }
 
@@ -1351,7 +1557,18 @@ fn guard_resume_contract(condition: &GuardExpr) -> (Option<String>, Value) {
     match condition {
         GuardExpr::VarExists { name } => (Some(name.clone()), json!({})),
         GuardExpr::JsonSchemaValid { var, schema } => (Some(var.clone()), schema.clone()),
+        GuardExpr::JsonPathEquals { var, .. } | GuardExpr::JsonPathExists { var, .. } => {
+            (Some(var.clone()), json!({}))
+        }
     }
+}
+
+fn json_path<'a>(value: &'a Value, path: &[String]) -> Option<&'a Value> {
+    let mut cursor = value;
+    for segment in path {
+        cursor = cursor.as_object()?.get(segment)?;
+    }
+    Some(cursor)
 }
 
 fn accepted_by_policy(
