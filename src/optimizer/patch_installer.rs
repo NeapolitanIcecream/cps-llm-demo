@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 
 use crate::models::EffectHandler;
 use crate::optimizer::patch_evaluator::{
-    evaluate_metrics, evaluate_program_on_events, patch_has_fast_path,
+    evaluate_candidate, evaluate_program_on_events, patch_has_fast_path,
 };
 use crate::program::ProgramPatch;
 use crate::store::patch_registry::{
@@ -49,7 +49,7 @@ pub async fn install_fixture_patch(
         patches.mark_rejected(workflow_id, patch, metadata, reason)?;
         anyhow::bail!(reason);
     }
-    let base_metrics = evaluate_program_on_events(
+    let base_evaluation = evaluate_program_on_events(
         workflow_id,
         base.clone(),
         &sample_events,
@@ -57,7 +57,7 @@ pub async fn install_fixture_patch(
         Arc::clone(&strong),
     )
     .await?;
-    let patched_metrics = evaluate_program_on_events(
+    let patched_evaluation = evaluate_program_on_events(
         workflow_id,
         patched.clone(),
         &sample_events,
@@ -65,9 +65,9 @@ pub async fn install_fixture_patch(
         Arc::clone(&strong),
     )
     .await?;
-    let evaluation = evaluate_metrics(
-        &base_metrics,
-        &patched_metrics,
+    let evaluation = evaluate_candidate(
+        &base_evaluation,
+        &patched_evaluation,
         patch_has_fast_path(&patch),
         16_384,
     );
@@ -78,10 +78,10 @@ pub async fn install_fixture_patch(
 
     let mut installed_metadata = PatchMetadata {
         metrics_delta: Some(PatchEvaluationMetrics {
-            base_strong_think_calls: base_metrics.strong_think_calls,
-            patched_strong_think_calls: patched_metrics.strong_think_calls,
-            base_fast_path_hits: base_metrics.fast_path_hits,
-            patched_fast_path_hits: patched_metrics.fast_path_hits,
+            base_strong_think_calls: base_evaluation.metrics.strong_think_calls,
+            patched_strong_think_calls: patched_evaluation.metrics.strong_think_calls,
+            base_fast_path_hits: base_evaluation.metrics.fast_path_hits,
+            patched_fast_path_hits: patched_evaluation.metrics.fast_path_hits,
         }),
         ..metadata
     };

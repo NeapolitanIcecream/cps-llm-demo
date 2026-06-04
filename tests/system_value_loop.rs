@@ -11,8 +11,13 @@ use cps_llm_demo::local_tools::{
     PredicateExpr, ValidatorInput, ValidatorSpec, apply_fast_path, apply_validators,
 };
 use cps_llm_demo::models::EffectHandler;
+use cps_llm_demo::models::FixtureModelHandler;
+use cps_llm_demo::optimizer::patch_installer::install_fixture_patch;
 use cps_llm_demo::optimizer::patch_optimizer::{OptimizerContext, optimize_from_profile};
-use cps_llm_demo::program::{FunctionDef, GuardExpr, Instr, JsonExpr, Program};
+use cps_llm_demo::program::{
+    AcceptancePolicy, EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardExpr, Instr,
+    JsonExpr, PatchOp, Program, ProgramPatch,
+};
 use cps_llm_demo::runtime::Runtime;
 use cps_llm_demo::store::continuation_store::{
     FileContinuationStore, FileEffectFrameEncoder, FrameEncodingConfig,
@@ -26,7 +31,6 @@ use cps_llm_demo::store::value_store::FileValueStore;
 use cps_llm_demo::trace::{TraceCollector, TraceEvent};
 use cps_llm_demo::validator::validate_patch;
 use cps_llm_demo::validator::validate_program;
-use cps_llm_demo::{models::FixtureModelHandler, program::EffectPermission};
 use serde_json::Map;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -272,6 +276,93 @@ fn profile_store_counts_nested_probe_repair_as_one_accepted_effect_call() {
 }
 
 #[test]
+fn profile_store_does_not_attribute_later_top_level_probe_to_repaired_failure() {
+    let state_path = temp_state_dir();
+    let store = FileProfileStore::new(StateDir::new(state_path.clone()));
+    store
+        .update_from_trace(
+            "generic_workflow",
+            &[
+                TraceEvent {
+                    event: "capture_continuation".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "continuation_id": "k1",
+                        "program_id": "p1",
+                        "program_version": "v0001",
+                        "function": "main",
+                        "pc": 0,
+                        "failed_instruction_op": "perform",
+                        "failed_effect_kind": "model_task",
+                        "expected_schema": { "type": "object" },
+                        "observations": [{ "schema_valid": false, "value": { "a": "redacted" } }]
+                    }),
+                },
+                TraceEvent {
+                    event: "effect_accepted".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "effect": "model_task",
+                        "source": "strong_model",
+                        "captured": true,
+                        "continuation_id": "k1"
+                    }),
+                },
+                TraceEvent {
+                    event: "resume_continuation".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "continuation_id": "k1",
+                        "pc": 1,
+                        "resume_var": "draft"
+                    }),
+                },
+                TraceEvent {
+                    event: "perform_effect".to_owned(),
+                    event_id: "e2".to_owned(),
+                    detail: json!({
+                        "function": "main",
+                        "pc": 2,
+                        "out": "later",
+                        "effect": "model_task",
+                        "strength": "strong",
+                        "task": "later_top_level_task"
+                    }),
+                },
+                TraceEvent {
+                    event: "request_nested_effect".to_owned(),
+                    event_id: "e2".to_owned(),
+                    detail: json!({
+                        "from_handler": "strong_model",
+                        "from_effect": "model_task",
+                        "to_handler": "weak_model",
+                        "to_effect": "model_task",
+                        "mode": "reenter_handler",
+                        "depth": 1
+                    }),
+                },
+                TraceEvent {
+                    event: "nested_effect_result".to_owned(),
+                    event_id: "e2".to_owned(),
+                    detail: json!({
+                        "mode": "reenter_handler",
+                        "schema_valid": true,
+                        "source": "weak_model",
+                        "depth": 1
+                    }),
+                },
+            ],
+        )
+        .unwrap();
+
+    let profile = store.load("generic_workflow").unwrap();
+    let failure = profile.failure_fingerprints.values().next().unwrap();
+    assert!(failure.successful_probes.is_empty());
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[test]
 fn profile_store_does_not_count_unrelated_guard_repair_as_effect_capture() {
     let state_path = temp_state_dir();
     let store = FileProfileStore::new(StateDir::new(state_path.clone()));
@@ -324,6 +415,87 @@ fn profile_store_does_not_count_unrelated_guard_repair_as_effect_capture() {
     assert_eq!(stats.calls, 1);
     assert_eq!(stats.captures, 0);
     assert_eq!(stats.accepted, 1);
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[tokio::test]
+async fn patch_install_rejects_schema_valid_sample_output_change() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "notification_triage";
+    let program: Program = serde_json::from_str(include_str!(
+        "../examples/notification_triage.v1.program.json"
+    ))
+    .unwrap();
+    let programs = FileProgramRegistry::new(state.clone());
+    programs
+        .init_workflow(
+            workflow_id,
+            program.clone(),
+            fixture_program_metadata(workflow_id, &program),
+        )
+        .unwrap();
+
+    let baseline_output = json!({
+        "event_id": "sample-1",
+        "kind": "ignore",
+        "title": "Battery optimization completed",
+        "datetime_hint": null
+    });
+    let sample_event = json!({
+        "event_id": "sample-1",
+        "source": "system",
+        "text": "Battery optimization completed",
+        "_fixture_fast_path": true,
+        "_fixture_fast_value": baseline_output,
+        "_fixture_model": {
+            "weak": {
+                "value": baseline_output,
+                "confidence": 0.42
+            },
+            "strong": {
+                "value": baseline_output,
+                "confidence": 0.99
+            }
+        }
+    });
+    let traces = FileTraceStore::new(state.clone());
+    traces
+        .append_events(
+            workflow_id,
+            "round1",
+            &[TraceEvent {
+                event: "stream_event".to_owned(),
+                event_id: "sample-1".to_owned(),
+                detail: json!({ "event": sample_event }),
+            }],
+        )
+        .unwrap();
+
+    let patches = FilePatchRegistry::new(state.clone());
+    let weak: Arc<dyn EffectHandler> = Arc::new(FixtureModelHandler::weak());
+    let strong: Arc<dyn EffectHandler> = Arc::new(FixtureModelHandler::strong());
+    let err = install_fixture_patch(
+        &programs,
+        &patches,
+        &traces,
+        workflow_id,
+        schema_valid_wrong_fast_path_patch(),
+        weak,
+        strong,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(err.to_string().contains("sampled output"));
+    assert_eq!(programs.latest_version(workflow_id).unwrap(), "v0001");
+    assert!(
+        state
+            .workflow_dir(workflow_id)
+            .join("patches/rejected/bad_fast_path_output.json")
+            .exists()
+    );
 
     let _ = fs::remove_dir_all(state_path);
 }
@@ -700,7 +872,7 @@ async fn optimizer_without_fixture_patch_installs_strong_returned_patch() {
 }
 
 struct PatchReturningStrong {
-    patch: cps_llm_demo::program::ProgramPatch,
+    patch: ProgramPatch,
 }
 
 #[async_trait]
@@ -717,6 +889,102 @@ impl EffectHandler for PatchReturningStrong {
             });
         }
         FixtureModelHandler::strong().handle(request).await
+    }
+}
+
+fn schema_valid_wrong_fast_path_patch() -> ProgramPatch {
+    ProgramPatch {
+        target_program_id: "notification_triage".to_owned(),
+        patch_id: "bad_fast_path_output".to_owned(),
+        rationale: "wrong schema-valid output must be rejected".to_owned(),
+        operations: vec![
+            PatchOp::InsertInstruction {
+                function: "main".to_owned(),
+                pc: 0,
+                instr: Instr::Perform {
+                    out: "fast".to_owned(),
+                    effect: EffectCall::LocalTool {
+                        tool_name: "fast_path_apply".to_owned(),
+                        args_schema: json!({ "type": "object" }),
+                    },
+                    input: JsonExpr::Object {
+                        fields: BTreeMap::from([
+                            (
+                                "event".to_owned(),
+                                JsonExpr::Var {
+                                    name: "event".to_owned(),
+                                },
+                            ),
+                            (
+                                "rules".to_owned(),
+                                JsonExpr::Literal {
+                                    value: json!([
+                                        {
+                                            "rule_id": "wrong_fixture_repeat_rule",
+                                            "when": {
+                                                "op": "field_equals",
+                                                "path": ["_fixture_fast_path"],
+                                                "value": true
+                                            },
+                                            "emit": {
+                                                "kind": "literal",
+                                                "value": {
+                                                    "event_id": "sample-1",
+                                                    "kind": "create_task",
+                                                    "title": "Wrong but schema-valid action",
+                                                    "datetime_hint": null
+                                                }
+                                            },
+                                            "confidence": 1.0
+                                        }
+                                    ]),
+                                },
+                            ),
+                        ]),
+                    },
+                    expected_schema: json!({ "type": "object" }),
+                    acceptance: AcceptancePolicy {
+                        min_confidence: Some(1.0),
+                        require_schema_valid: true,
+                        on_failure: FailureHandler::Abort {
+                            reason: "fast path tool failed".to_owned(),
+                        },
+                    },
+                },
+            },
+            PatchOp::InsertInstruction {
+                function: "main".to_owned(),
+                pc: 1,
+                instr: Instr::Branch {
+                    condition: GuardExpr::FieldIsTruthy {
+                        var: "fast".to_owned(),
+                        path: vec!["hit".to_owned()],
+                    },
+                    then_pc: 2,
+                    else_pc: 4,
+                },
+            },
+            PatchOp::InsertInstruction {
+                function: "main".to_owned(),
+                pc: 2,
+                instr: Instr::Project {
+                    out: "draft".to_owned(),
+                    from: JsonExpr::Var {
+                        name: "fast".to_owned(),
+                    },
+                    path: vec!["value".to_owned()],
+                },
+            },
+            PatchOp::InsertInstruction {
+                function: "main".to_owned(),
+                pc: 3,
+                instr: Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "draft".to_owned(),
+                    },
+                },
+            },
+        ],
     }
 }
 

@@ -72,8 +72,8 @@ impl FileProfileStore {
     pub fn update_from_trace(&self, workflow_id: &str, events: &[TraceEvent]) -> Result<()> {
         self.state.ensure_workflow_layout(workflow_id)?;
         let mut profile = self.load(workflow_id)?;
-        let mut current_fingerprint_id = None::<String>;
-        let mut pending_probe = None::<ProbeProfileStats>;
+        let mut active_capture_fingerprint_id = None::<String>;
+        let mut pending_probe = None::<(String, ProbeProfileStats)>;
 
         for event in events {
             match event.event.as_str() {
@@ -84,7 +84,8 @@ impl FileProfileStore {
                         }
                     }
                     let fingerprint = fingerprint_from_capture_event(event);
-                    current_fingerprint_id = Some(fingerprint.fingerprint_id.clone());
+                    active_capture_fingerprint_id = Some(fingerprint.fingerprint_id.clone());
+                    pending_probe = None;
                     let stats = profile
                         .failure_fingerprints
                         .entry(fingerprint.fingerprint_id.clone())
@@ -153,36 +154,52 @@ impl FileProfileStore {
                             stats.accepted += 1;
                         }
                     }
+                    if event
+                        .detail
+                        .get("captured")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        active_capture_fingerprint_id = None;
+                        pending_probe = None;
+                    }
                 }
                 "request_nested_effect" => {
-                    pending_probe = Some(ProbeProfileStats {
-                        probe_id: format!(
-                            "{}:{}",
-                            event
-                                .detail
-                                .get("to_handler")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("unknown"),
-                            event
+                    let Some(fingerprint_id) = active_capture_fingerprint_id.as_ref() else {
+                        pending_probe = None;
+                        continue;
+                    };
+                    pending_probe = Some((
+                        fingerprint_id.clone(),
+                        ProbeProfileStats {
+                            probe_id: format!(
+                                "{}:{}",
+                                event
+                                    .detail
+                                    .get("to_handler")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("unknown"),
+                                event
+                                    .detail
+                                    .get("to_effect")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("unknown")
+                            ),
+                            effect_kind: event
                                 .detail
                                 .get("to_effect")
                                 .and_then(serde_json::Value::as_str)
                                 .unwrap_or("unknown")
-                        ),
-                        effect_kind: event
-                            .detail
-                            .get("to_effect")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("unknown")
-                            .to_owned(),
-                        handler: event
-                            .detail
-                            .get("to_handler")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("unknown")
-                            .to_owned(),
-                        success_count: 1,
-                    });
+                                .to_owned(),
+                            handler: event
+                                .detail
+                                .get("to_handler")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("unknown")
+                                .to_owned(),
+                            success_count: 1,
+                        },
+                    ));
                 }
                 "nested_effect_result" => {
                     let schema_valid = event
@@ -194,14 +211,10 @@ impl FileProfileStore {
                         pending_probe = None;
                         continue;
                     }
-                    let Some(fingerprint_id) = current_fingerprint_id.as_ref() else {
-                        pending_probe = None;
+                    let Some((fingerprint_id, probe)) = pending_probe.take() else {
                         continue;
                     };
-                    let Some(probe) = pending_probe.take() else {
-                        continue;
-                    };
-                    if let Some(stats) = profile.failure_fingerprints.get_mut(fingerprint_id) {
+                    if let Some(stats) = profile.failure_fingerprints.get_mut(&fingerprint_id) {
                         if let Some(existing) = stats
                             .successful_probes
                             .iter_mut()
@@ -212,6 +225,10 @@ impl FileProfileStore {
                             stats.successful_probes.push(probe);
                         }
                     }
+                }
+                "resume_continuation" | "program_aborted" => {
+                    active_capture_fingerprint_id = None;
+                    pending_probe = None;
                 }
                 _ => {}
             }

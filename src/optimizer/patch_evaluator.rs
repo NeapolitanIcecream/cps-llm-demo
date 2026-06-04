@@ -22,6 +22,36 @@ pub struct PatchEvaluationReport {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProgramEvaluation {
+    pub metrics: RunMetrics,
+    pub outcomes: Vec<EventEvaluationOutcome>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EventEvaluationOutcome {
+    Succeeded(Value),
+    Failed(String),
+}
+
+pub fn evaluate_candidate(
+    base: &ProgramEvaluation,
+    patched: &ProgramEvaluation,
+    patch_has_fast_path: bool,
+    continuation_frame_limit: u64,
+) -> PatchEvaluationReport {
+    let metrics = evaluate_metrics(
+        &base.metrics,
+        &patched.metrics,
+        patch_has_fast_path,
+        continuation_frame_limit,
+    );
+    if !metrics.accepted {
+        return metrics;
+    }
+    evaluate_sample_equivalence(&base.outcomes, &patched.outcomes)
+}
+
 pub fn evaluate_metrics(
     base: &RunMetrics,
     patched: &RunMetrics,
@@ -46,13 +76,36 @@ pub fn evaluate_metrics(
     }
 }
 
+pub fn evaluate_sample_equivalence(
+    base: &[EventEvaluationOutcome],
+    patched: &[EventEvaluationOutcome],
+) -> PatchEvaluationReport {
+    if base.len() != patched.len() {
+        return rejected("patched run evaluated a different number of sampled events");
+    }
+    if let Some((index, _)) = base
+        .iter()
+        .zip(patched)
+        .enumerate()
+        .find(|(_, (base, patched))| base != patched)
+    {
+        return rejected(&format!(
+            "patched run changed sampled output at event {index}"
+        ));
+    }
+    PatchEvaluationReport {
+        accepted: true,
+        reason: "accepted".to_owned(),
+    }
+}
+
 pub async fn evaluate_program_on_events(
     workflow_id: &str,
     program: Program,
     events: &[Value],
     weak: Arc<dyn EffectHandler>,
     strong: Arc<dyn EffectHandler>,
-) -> Result<RunMetrics> {
+) -> Result<ProgramEvaluation> {
     let run_id = format!("eval-{}", Uuid::new_v4());
     let eval_state = StateDir::new(std::env::temp_dir().join(format!("{run_id}-state")));
     let frame_encoder = Arc::new(FileEffectFrameEncoder::new(
@@ -69,6 +122,7 @@ pub async fn evaluate_program_on_events(
         now_string(),
     );
     let mut accumulator = MetricsAccumulator::default();
+    let mut outcomes = Vec::with_capacity(events.len());
 
     for event in events {
         metrics.events_total += 1;
@@ -82,10 +136,15 @@ pub async fn evaluate_program_on_events(
             RuntimeBudget::default(),
         );
         let result = runtime.run_program(program.clone(), event.clone()).await;
-        if result.is_ok() {
-            metrics.events_succeeded += 1;
-        } else {
-            metrics.events_failed += 1;
+        match result {
+            Ok(output) => {
+                metrics.events_succeeded += 1;
+                outcomes.push(EventEvaluationOutcome::Succeeded(output));
+            }
+            Err(err) => {
+                metrics.events_failed += 1;
+                outcomes.push(EventEvaluationOutcome::Failed(err.to_string()));
+            }
         }
         accumulator.update_from_trace(&mut metrics, &trace.events());
     }
@@ -93,7 +152,7 @@ pub async fn evaluate_program_on_events(
     accumulator.finalize(&mut metrics);
     metrics.finished_at = now_string();
     let _ = std::fs::remove_dir_all(eval_state.root());
-    Ok(metrics)
+    Ok(ProgramEvaluation { metrics, outcomes })
 }
 
 pub fn patch_has_fast_path(patch: &ProgramPatch) -> bool {
