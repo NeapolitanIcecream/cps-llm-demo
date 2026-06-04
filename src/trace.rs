@@ -82,16 +82,6 @@ pub fn replay_trace_events(events: &[TraceEvent]) -> Result<ReplayReport> {
             "program_aborted" => {
                 aborts += 1;
             }
-            "handler_decision" => {
-                if event.detail.get("decision").and_then(Value::as_str) == Some("return_value")
-                    && event.detail.get("schema_valid") == Some(&Value::Bool(false))
-                    && event.detail.get("handler").and_then(Value::as_str) == Some("strong_model")
-                {
-                    return Err(anyhow!(
-                        "strong_model return_value failed expected schema in trace"
-                    ));
-                }
-            }
             _ => {}
         }
     }

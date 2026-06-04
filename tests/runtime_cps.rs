@@ -1047,6 +1047,45 @@ async fn strong_model_return_value_is_validated_as_returned() {
 }
 
 #[tokio::test]
+async fn replay_accepts_direct_strong_return_when_policy_does_not_require_schema_validity() {
+    let weak = SequenceHandler::empty();
+    let accepted_value = json!({ "unexpected": "shape" });
+    let strong = SequenceHandler::new(vec![Ok(return_value(accepted_value.clone(), 0.94))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+    let mut program = single_strong_program_with_expected_schema(
+        "direct_strong_policy_schema_optional",
+        action_draft_schema(),
+    );
+    program.output_schema = json!({});
+    let main = program
+        .functions
+        .get_mut("main")
+        .expect("single strong program has main");
+    main.output_schema = json!({});
+    let Instr::Perform { acceptance, .. } = &mut main.body[0] else {
+        panic!("single strong program starts with perform");
+    };
+    acceptance.require_schema_valid = false;
+
+    let output = runtime
+        .run_program(program, message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    assert_eq!(output, accepted_value);
+    assert!(weak.calls().is_empty());
+    assert_eq!(strong.calls().len(), 1);
+    assert!(trace.events().iter().any(|event| {
+        event.event == "handler_decision"
+            && event.detail["handler"] == "strong_model"
+            && event.detail["decision"] == "return_value"
+            && event.detail["schema_valid"] == false
+    }));
+    replay_trace_events(&trace.events()).unwrap();
+}
+
+#[tokio::test]
 async fn continuation_captures_second_effect_inside_map_and_resumes_ordered_output() {
     let weak = SequenceHandler::new(vec![
         Ok(return_value(json!({ "kind": "ignore" }), 0.91)),
