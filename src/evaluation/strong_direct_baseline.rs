@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::effects::{HandlerBudget, HandlerRequest, RuntimeBudget};
+use crate::effects::{HandlerBudget, HandlerDecision, HandlerRequest, RuntimeBudget};
 use crate::engine::event_source::EventSource;
 use crate::models::EffectHandler;
 use crate::program::{EffectCall, ModelStrength, ModelTaskSpec};
@@ -63,11 +63,9 @@ where
                 handler_reentries_remaining: RuntimeBudget::default().max_handler_reentries,
             },
         };
-        let result = strong.handle(request).await;
-        if result.is_ok() {
-            metrics.events_succeeded += 1;
-        } else {
-            metrics.events_failed += 1;
+        match strong.handle(request).await {
+            Ok(HandlerDecision::Abort { .. }) | Err(_) => metrics.events_failed += 1,
+            Ok(_) => metrics.events_succeeded += 1,
         }
         metrics.strong_model_task_calls += 1;
         metrics.estimated_model_calls += 1;

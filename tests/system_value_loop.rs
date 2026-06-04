@@ -5,8 +5,9 @@ use cps_llm_demo::effects::{
     AllowedDecision, Continuation, EffectFrame, EffectFrameEncoder, HandlerDecision,
     HandlerRequest, RuntimeFrame,
 };
-use cps_llm_demo::engine::event_source::JsonlEventSource;
+use cps_llm_demo::engine::event_source::{InMemoryEventSource, JsonlEventSource};
 use cps_llm_demo::engine::run_coordinator::run_stream;
+use cps_llm_demo::evaluation::strong_direct_baseline::baseline_strong_direct;
 use cps_llm_demo::local_tools::{
     PredicateExpr, ValidatorInput, ValidatorSpec, apply_fast_path, apply_validators,
 };
@@ -23,7 +24,7 @@ use cps_llm_demo::runtime::Runtime;
 use cps_llm_demo::store::continuation_store::{
     FileContinuationStore, FileEffectFrameEncoder, FrameEncodingConfig,
 };
-use cps_llm_demo::store::metrics_store::RunMetrics;
+use cps_llm_demo::store::metrics_store::{FileMetricsStore, RunMetrics};
 use cps_llm_demo::store::patch_registry::{FilePatchRegistry, fixture_patch_metadata};
 use cps_llm_demo::store::profile_store::FileProfileStore;
 use cps_llm_demo::store::program_registry::{FileProgramRegistry, fixture_program_metadata};
@@ -235,6 +236,53 @@ fn metrics_include_compile_effects_in_estimated_model_calls() {
 
     assert_eq!(metrics.program_compile_calls, 1);
     assert_eq!(metrics.estimated_model_calls, 4);
+}
+
+#[tokio::test]
+async fn strong_direct_baseline_counts_handler_abort_as_failed_event() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "baseline_abort_accounting";
+    let event_source = InMemoryEventSource::new(vec![
+        json!({
+            "event_id": "ok-1",
+            "_fixture_model": {
+                "strong": {
+                    "value": { "ok": true }
+                }
+            }
+        }),
+        json!({
+            "event_id": "abort-1",
+            "_fixture_model": {
+                "strong": {
+                    "abort": "model refused"
+                }
+            }
+        }),
+    ]);
+
+    let summary = baseline_strong_direct(
+        state.clone(),
+        workflow_id,
+        "return an object".to_owned(),
+        event_source,
+        Arc::new(FixtureModelHandler::strong()),
+    )
+    .await
+    .unwrap();
+    let metrics = FileMetricsStore::new(state)
+        .read(workflow_id, &summary.run_id)
+        .unwrap();
+
+    assert_eq!(summary.events_total, 2);
+    assert_eq!(metrics.events_total, 2);
+    assert_eq!(metrics.events_succeeded, 1);
+    assert_eq!(metrics.events_failed, 1);
+    assert_eq!(metrics.strong_model_task_calls, 2);
+    assert_eq!(metrics.estimated_model_calls, 2);
+
+    let _ = fs::remove_dir_all(state_path);
 }
 
 #[test]
