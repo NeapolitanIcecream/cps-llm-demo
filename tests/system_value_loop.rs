@@ -412,6 +412,146 @@ fn state_dir_rejects_unsafe_workflow_ids_before_writing() {
 }
 
 #[test]
+fn init_workflow_rejects_existing_workflow_without_mixing_stale_state() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "reinit_guard";
+    let mut initial_program: Program = serde_json::from_str(include_str!(
+        "../examples/notification_triage.v1.program.json"
+    ))
+    .unwrap();
+    initial_program.program_id = "initial_program".to_owned();
+    let programs = FileProgramRegistry::new(state.clone());
+    programs
+        .init_workflow(
+            workflow_id,
+            initial_program.clone(),
+            fixture_program_metadata(workflow_id, &initial_program),
+        )
+        .unwrap();
+
+    let mut metrics = RunMetrics::new(
+        "old-run".to_owned(),
+        workflow_id.to_owned(),
+        "stream".to_owned(),
+        initial_program.program_id.clone(),
+        "v0001".to_owned(),
+        "started".to_owned(),
+    );
+    metrics.events_total = 1;
+    FileMetricsStore::new(state.clone())
+        .write(&metrics)
+        .unwrap();
+
+    let traces = FileTraceStore::new(state.clone());
+    traces
+        .append_events(
+            workflow_id,
+            "old-run",
+            &[TraceEvent {
+                event: "stream_event".to_owned(),
+                event_id: "old-event".to_owned(),
+                detail: json!({ "event": { "event_id": "old-event", "text": "stale" } }),
+            }],
+        )
+        .unwrap();
+
+    let profiles = FileProfileStore::new(state.clone());
+    profiles
+        .update_from_trace(
+            workflow_id,
+            &[TraceEvent {
+                event: "capture_continuation".to_owned(),
+                event_id: "old-capture".to_owned(),
+                detail: json!({
+                    "continuation_id": "stale-k",
+                    "program_id": initial_program.program_id.clone(),
+                    "program_version": "v0001",
+                    "function": "main",
+                    "pc": 0,
+                    "failed_instruction_op": "perform",
+                    "failed_effect_kind": "model_task",
+                    "expected_schema": { "type": "object" },
+                    "observations": []
+                }),
+            }],
+        )
+        .unwrap();
+
+    let patches = FilePatchRegistry::new(state.clone());
+    let patch = registry_test_patch("stale_patch");
+    patches
+        .record_proposed(
+            workflow_id,
+            patch.clone(),
+            fixture_patch_metadata(workflow_id, &patch.patch_id, "v0001", &patch.rationale),
+        )
+        .unwrap();
+
+    let continuation_store = FileContinuationStore::new(state.clone(), workflow_id);
+    let continuation = Continuation {
+        continuation_id: "stale-k".to_owned(),
+        boundary_id: "boundary".to_owned(),
+        program_id: "initial_program".to_owned(),
+        stack: vec![RuntimeFrame {
+            function: "main".to_owned(),
+            pc: 0,
+            env: Map::new(),
+            return_to: None,
+        }],
+        resume_var: None,
+        resume_pc: 0,
+        expected_schema: json!({ "type": "null" }),
+        fuel_remaining: 1,
+        effect_depth: 0,
+    };
+    continuation_store.put(&continuation).unwrap();
+    let value_store = FileValueStore::new(state.clone(), workflow_id);
+    let value_ref = value_store.put(&json!({ "stale": true })).unwrap();
+
+    let mut new_program = initial_program.clone();
+    new_program.program_id = "new_initial_program".to_owned();
+    let err = programs
+        .init_workflow(
+            workflow_id,
+            new_program,
+            fixture_program_metadata(workflow_id, &initial_program),
+        )
+        .unwrap_err();
+
+    assert!(err.to_string().contains("already exists"));
+    assert_eq!(programs.latest_version(workflow_id).unwrap(), "v0001");
+    assert_eq!(
+        programs.load_latest(workflow_id).unwrap().program_id,
+        "initial_program"
+    );
+    assert_eq!(
+        FileMetricsStore::new(state.clone())
+            .list(workflow_id)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(traces.read_run(workflow_id, "old-run").unwrap().len(), 1);
+    assert_eq!(
+        profiles
+            .load(workflow_id)
+            .unwrap()
+            .failure_fingerprints
+            .len(),
+        1
+    );
+    assert_eq!(patches.list_proposed(workflow_id).unwrap().len(), 1);
+    assert_eq!(continuation_store.get("stale-k").unwrap(), continuation);
+    assert_eq!(
+        value_store.get(&value_ref).unwrap(),
+        json!({ "stale": true })
+    );
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[test]
 fn profile_store_records_successful_probe_for_failure_fingerprint() {
     let state_path = temp_state_dir();
     let store = FileProfileStore::new(StateDir::new(state_path.clone()));

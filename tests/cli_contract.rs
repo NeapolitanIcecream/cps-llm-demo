@@ -391,6 +391,39 @@ fn cli_init_workflow_from_task_records_strong_compile_metric() {
 }
 
 #[test]
+fn cli_init_workflow_rejects_existing_workflow() {
+    let state_dir = make_temp_workdir();
+
+    let mut first = Command::cargo_bin("cps-llm-demo").unwrap();
+    first
+        .arg("init-workflow")
+        .arg("--workflow")
+        .arg("existing_fixture")
+        .arg("--program")
+        .arg("examples/message_action.v2.program.json")
+        .arg("--state-dir")
+        .arg(&state_dir)
+        .assert()
+        .success();
+
+    let mut second = Command::cargo_bin("cps-llm-demo").unwrap();
+    second
+        .arg("init-workflow")
+        .arg("--workflow")
+        .arg("existing_fixture")
+        .arg("--program")
+        .arg("examples/message_action.v2.program.json")
+        .arg("--state-dir")
+        .arg(&state_dir)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"))
+        .stdout(predicate::str::is_empty());
+
+    let _ = fs::remove_dir_all(state_dir);
+}
+
+#[test]
 fn cli_run_program_without_api_key_has_clear_error() {
     let input = write_temp_messages();
     let program = write_temp_program();

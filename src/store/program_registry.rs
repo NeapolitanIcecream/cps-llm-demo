@@ -48,8 +48,13 @@ impl FileProgramRegistry {
         mut program: Program,
         mut meta: ProgramMetadata,
     ) -> Result<()> {
-        self.state.ensure_workflow_layout(workflow_id)?;
         let workflow_dir = self.state.workflow_dir(workflow_id)?;
+        if workflow_dir.exists() {
+            return Err(anyhow!(
+                "workflow {workflow_id:?} already exists; init-workflow will not overwrite existing workflow state"
+            ));
+        }
+        self.state.ensure_workflow_layout(workflow_id)?;
         program.version = "v0001".to_owned();
         meta.workflow_id = workflow_id.to_owned();
         meta.program_id = program.program_id.clone();
