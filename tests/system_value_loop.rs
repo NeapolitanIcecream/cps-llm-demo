@@ -12,6 +12,7 @@ use cps_llm_demo::local_tools::{
 };
 use cps_llm_demo::models::EffectHandler;
 use cps_llm_demo::models::FixtureModelHandler;
+use cps_llm_demo::observability::metrics::MetricsAccumulator;
 use cps_llm_demo::optimizer::patch_installer::install_fixture_patch;
 use cps_llm_demo::optimizer::patch_optimizer::{OptimizerContext, optimize_from_profile};
 use cps_llm_demo::program::{
@@ -22,6 +23,7 @@ use cps_llm_demo::runtime::Runtime;
 use cps_llm_demo::store::continuation_store::{
     FileContinuationStore, FileEffectFrameEncoder, FrameEncodingConfig,
 };
+use cps_llm_demo::store::metrics_store::RunMetrics;
 use cps_llm_demo::store::patch_registry::FilePatchRegistry;
 use cps_llm_demo::store::profile_store::FileProfileStore;
 use cps_llm_demo::store::program_registry::{FileProgramRegistry, fixture_program_metadata};
@@ -89,6 +91,150 @@ fn validator_apply_is_generic() {
 
     assert!(output.passed);
     assert!(output.failed_validator_ids.is_empty());
+}
+
+#[test]
+fn metrics_count_uncaptured_acceptance_from_effect_accepted_events() {
+    let mut metrics = test_run_metrics();
+    let mut accumulator = MetricsAccumulator::default();
+    let events = vec![
+        TraceEvent {
+            event: "perform_effect".to_owned(),
+            event_id: "direct".to_owned(),
+            detail: json!({
+                "function": "main",
+                "pc": 0,
+                "out": "draft",
+                "effect": "model_task",
+                "strength": "weak"
+            }),
+        },
+        TraceEvent {
+            event: "effect_accepted".to_owned(),
+            event_id: "direct".to_owned(),
+            detail: json!({
+                "effect": "model_task",
+                "captured": false
+            }),
+        },
+        TraceEvent {
+            event: "capture_continuation".to_owned(),
+            event_id: "guard-1".to_owned(),
+            detail: json!({
+                "continuation_id": "k-guard-1",
+                "failed_instruction_op": "guard",
+                "failed_effect_kind": "think"
+            }),
+        },
+        TraceEvent {
+            event: "perform_effect".to_owned(),
+            event_id: "aborted".to_owned(),
+            detail: json!({
+                "function": "main",
+                "pc": 1,
+                "out": "draft",
+                "effect": "model_task",
+                "strength": "weak"
+            }),
+        },
+        TraceEvent {
+            event: "program_aborted".to_owned(),
+            event_id: "aborted".to_owned(),
+            detail: json!({
+                "reason": "perform failed"
+            }),
+        },
+        TraceEvent {
+            event: "perform_effect".to_owned(),
+            event_id: "captured".to_owned(),
+            detail: json!({
+                "function": "main",
+                "pc": 2,
+                "out": "draft",
+                "effect": "model_task",
+                "strength": "weak"
+            }),
+        },
+        TraceEvent {
+            event: "capture_continuation".to_owned(),
+            event_id: "captured".to_owned(),
+            detail: json!({
+                "continuation_id": "k-perform",
+                "failed_instruction_op": "perform",
+                "failed_effect_kind": "model_task"
+            }),
+        },
+        TraceEvent {
+            event: "effect_accepted".to_owned(),
+            event_id: "captured".to_owned(),
+            detail: json!({
+                "effect": "model_task",
+                "captured": true
+            }),
+        },
+        TraceEvent {
+            event: "capture_continuation".to_owned(),
+            event_id: "guard-2".to_owned(),
+            detail: json!({
+                "continuation_id": "k-guard-2",
+                "failed_instruction_op": "guard",
+                "failed_effect_kind": "think"
+            }),
+        },
+    ];
+
+    accumulator.update_from_trace(&mut metrics, &events);
+    accumulator.finalize(&mut metrics);
+
+    assert_eq!(metrics.effects_total, 3);
+    assert_eq!(metrics.effects_captured, 3);
+    assert_eq!(metrics.effects_accepted_without_capture, 1);
+}
+
+#[test]
+fn metrics_include_compile_effects_in_estimated_model_calls() {
+    let mut metrics = test_run_metrics();
+    let mut accumulator = MetricsAccumulator::default();
+    let events = vec![
+        TraceEvent {
+            event: "handler_request".to_owned(),
+            event_id: "weak".to_owned(),
+            detail: json!({
+                "handler": "weak_model",
+                "effect": "model_task"
+            }),
+        },
+        TraceEvent {
+            event: "handler_request".to_owned(),
+            event_id: "strong-task".to_owned(),
+            detail: json!({
+                "handler": "strong_model",
+                "effect": "model_task"
+            }),
+        },
+        TraceEvent {
+            event: "handler_request".to_owned(),
+            event_id: "think".to_owned(),
+            detail: json!({
+                "handler": "strong_model",
+                "effect": "think"
+            }),
+        },
+        TraceEvent {
+            event: "handler_request".to_owned(),
+            event_id: "compile".to_owned(),
+            detail: json!({
+                "handler": "strong_model",
+                "effect": "compile_program"
+            }),
+        },
+    ];
+
+    accumulator.update_from_trace(&mut metrics, &events);
+    accumulator.finalize(&mut metrics);
+
+    assert_eq!(metrics.program_compile_calls, 1);
+    assert_eq!(metrics.estimated_model_calls, 4);
 }
 
 #[test]
@@ -1281,6 +1427,17 @@ fn temp_state_dir() -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("cps-value-loop-{}", uuid::Uuid::new_v4()));
     fs::create_dir(&path).unwrap();
     path
+}
+
+fn test_run_metrics() -> RunMetrics {
+    RunMetrics::new(
+        "test-run".to_owned(),
+        "generic_workflow".to_owned(),
+        "stream".to_owned(),
+        "p1".to_owned(),
+        "v0001".to_owned(),
+        "started".to_owned(),
+    )
 }
 
 fn cargo_ok<const N: usize>(args: [&str; N]) {

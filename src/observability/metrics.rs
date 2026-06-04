@@ -27,6 +27,11 @@ impl MetricsAccumulator {
                     _ => {}
                 },
                 "perform_effect" => metrics.effects_total += 1,
+                "effect_accepted" => {
+                    if event.detail.get("captured").and_then(Value::as_bool) == Some(false) {
+                        metrics.effects_accepted_without_capture += 1;
+                    }
+                }
                 "capture_continuation" => metrics.effects_captured += 1,
                 "request_nested_effect" => {
                     metrics.nested_effect_requests += 1;
@@ -57,14 +62,13 @@ impl MetricsAccumulator {
                 _ => {}
             }
         }
-        metrics.estimated_model_calls =
-            metrics.weak_model_calls + metrics.strong_model_task_calls + metrics.strong_think_calls;
+        metrics.estimated_model_calls = metrics.weak_model_calls
+            + metrics.strong_model_task_calls
+            + metrics.strong_think_calls
+            + metrics.program_compile_calls;
     }
 
     pub fn finalize(&mut self, metrics: &mut RunMetrics) {
-        metrics.effects_accepted_without_capture = metrics
-            .effects_total
-            .saturating_sub(metrics.effects_captured);
         self.frame_bytes.sort_unstable();
         if self.frame_bytes.is_empty() {
             return;
