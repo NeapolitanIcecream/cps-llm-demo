@@ -121,29 +121,193 @@ fn validate_function(
         return Err(anyhow!("function {name} must end with return"));
     }
 
-    let mut defined = BTreeSet::new();
+    let mut initial_defined = BTreeSet::new();
     for param in &function.params {
         ensure_not_reserved_input_binding(param, &format!("function {name} parameter"), None)?;
-        if !defined.insert(param.clone()) {
+        if !initial_defined.insert(param.clone()) {
             return Err(anyhow!("function {name} has duplicate parameter {param}"));
         }
     }
     if input_is_bound {
-        defined.insert(INPUT_VAR.to_owned());
+        initial_defined.insert(INPUT_VAR.to_owned());
     }
 
     for (pc, instr) in function.body.iter().enumerate() {
-        validate_instr(program, name, pc, instr, &defined)?;
-        if let Some(out) = instr.output_var() {
-            ensure_not_reserved_input_binding(out, "instruction output", Some(name))?;
-            defined.insert(out.to_owned());
-        }
-        if let Some(repair_target) = guard_think_repair_target(instr) {
-            defined.insert(repair_target.to_owned());
+        validate_instr_shape(program, name, pc, instr)?;
+    }
+
+    validate_definite_assignments(program, name, function, initial_defined)?;
+
+    Ok(())
+}
+
+fn validate_definite_assignments(
+    program: &Program,
+    function_name: &str,
+    function: &FunctionDef,
+    initial_defined: BTreeSet<String>,
+) -> Result<()> {
+    let mut reachable_defined = vec![None; function.body.len()];
+    if !function.body.is_empty() {
+        reachable_defined[0] = Some(initial_defined);
+    }
+
+    for (pc, instr) in function.body.iter().enumerate() {
+        let Some(defined) = reachable_defined[pc].clone() else {
+            continue;
+        };
+
+        validate_instr(program, function_name, pc, instr, &defined)?;
+
+        let mut after = defined;
+        apply_instr_definitions(instr, &mut after);
+        for successor in instr_successors(function, pc, instr) {
+            merge_successor_defined(&mut reachable_defined[successor], &after);
         }
     }
 
     Ok(())
+}
+
+fn apply_instr_definitions(instr: &Instr, defined: &mut BTreeSet<String>) {
+    if let Some(out) = instr.output_var() {
+        defined.insert(out.to_owned());
+    }
+    if let Some(repair_target) = guard_think_repair_target(instr) {
+        defined.insert(repair_target.to_owned());
+    }
+}
+
+fn instr_successors(function: &FunctionDef, pc: usize, instr: &Instr) -> Vec<usize> {
+    match instr {
+        Instr::Branch {
+            then_pc, else_pc, ..
+        } if then_pc == else_pc => vec![*then_pc],
+        Instr::Branch {
+            then_pc, else_pc, ..
+        } => vec![*then_pc, *else_pc],
+        Instr::Jump { pc: target_pc } => vec![*target_pc],
+        Instr::Return { .. } => Vec::new(),
+        Instr::Let { .. }
+        | Instr::Project { .. }
+        | Instr::Perform { .. }
+        | Instr::Guard { .. }
+        | Instr::Call { .. }
+        | Instr::Map { .. }
+        | Instr::CallDynamic { .. } => {
+            let next_pc = pc + 1;
+            if next_pc < function.body.len() {
+                vec![next_pc]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+}
+
+fn merge_successor_defined(current: &mut Option<BTreeSet<String>>, incoming: &BTreeSet<String>) {
+    match current {
+        Some(existing) => existing.retain(|name| incoming.contains(name)),
+        None => *current = Some(incoming.clone()),
+    }
+}
+
+fn validate_instr_shape(
+    program: &Program,
+    function_name: &str,
+    pc: usize,
+    instr: &Instr,
+) -> Result<()> {
+    if let Some(out) = instr.output_var() {
+        ensure_not_reserved_input_binding(out, "instruction output", Some(function_name))?;
+    }
+
+    match instr {
+        Instr::Let { .. }
+        | Instr::Project { .. }
+        | Instr::CallDynamic { .. }
+        | Instr::Return { .. } => Ok(()),
+        Instr::Perform {
+            effect,
+            expected_schema,
+            acceptance,
+            ..
+        } => {
+            validate_json_schema(expected_schema).map_err(|err| {
+                anyhow!("perform expected_schema is invalid at {function_name}:{pc}: {err}")
+            })?;
+            validate_supported_effect_call(effect, function_name, pc)?;
+            if !effect_allowed(&program.allowed_effects, effect) {
+                return Err(anyhow!(
+                    "effect {} is not allowed at {function_name}:{pc}",
+                    effect.kind_name()
+                ));
+            }
+            if matches!(
+                &acceptance.on_failure,
+                FailureHandler::CaptureToThink { .. }
+            ) {
+                ensure_think_permission(
+                    program,
+                    function_name,
+                    pc,
+                    "capture_to_think failure handler",
+                )?;
+            }
+            Ok(())
+        }
+        Instr::Guard { condition, on_fail } => {
+            validate_guard_shape(condition, function_name, pc)?;
+            if matches!(on_fail, GuardFail::Think { .. }) {
+                ensure_think_permission(program, function_name, pc, "guard think repair")?;
+                ensure_not_reserved_input_binding(
+                    guard_repair_target(condition),
+                    "guard think repair target",
+                    Some(function_name),
+                )?;
+            }
+            Ok(())
+        }
+        Instr::Branch {
+            condition,
+            then_pc,
+            else_pc,
+        } => {
+            validate_guard_shape(condition, function_name, pc)?;
+            validate_forward_target(program, function_name, pc, *then_pc, "branch then_pc")?;
+            validate_forward_target(program, function_name, pc, *else_pc, "branch else_pc")
+        }
+        Instr::Jump { pc: target_pc } => {
+            validate_forward_target(program, function_name, pc, *target_pc, "jump pc")
+        }
+        Instr::Call { function, args, .. } => {
+            let target = program.functions.get(function).ok_or_else(|| {
+                anyhow!("call target function {function} does not exist at {function_name}:{pc}")
+            })?;
+            if target.params.len() != args.len() {
+                return Err(anyhow!(
+                    "call target {function} expects {} args but got {} at {function_name}:{pc}",
+                    target.params.len(),
+                    args.len()
+                ));
+            }
+            Ok(())
+        }
+        Instr::Map {
+            function, item_var, ..
+        } => {
+            ensure_not_reserved_input_binding(item_var, "map item_var", Some(function_name))?;
+            let target = program.functions.get(function).ok_or_else(|| {
+                anyhow!("map target function {function} does not exist at {function_name}:{pc}")
+            })?;
+            if target.params.len() != 1 {
+                return Err(anyhow!(
+                    "map target {function} must have exactly one parameter at {function_name}:{pc}"
+                ));
+            }
+            Ok(())
+        }
+    }
 }
 
 fn validate_instr(
@@ -289,6 +453,14 @@ fn ensure_not_reserved_input_binding(name: &str, context: &str, owner: Option<&s
             "{context} {INPUT_VAR} is reserved for runtime input"
         )),
     }
+}
+
+fn validate_guard_shape(condition: &GuardExpr, function_name: &str, pc: usize) -> Result<()> {
+    if let GuardExpr::JsonSchemaValid { schema, .. } = condition {
+        validate_json_schema(schema)
+            .map_err(|err| anyhow!("guard schema is invalid at {function_name}:{pc}: {err}"))?;
+    }
+    Ok(())
 }
 
 fn validate_guard_condition(

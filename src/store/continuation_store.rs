@@ -1,9 +1,9 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::effects::{
-    Continuation, EffectFrame, EffectFrameEncoder, EncodedEffectFrame, ReturnSlot,
+    Continuation, EffectFrame, EffectFrameEncoder, EncodedEffectFrame, ReturnSlot, RuntimeFrame,
 };
 use crate::store::state_dir::{StateDir, read_json, write_json_pretty};
 use crate::store::value_store::FileValueStore;
@@ -134,6 +134,11 @@ impl EffectFrameEncoder for FileEffectFrameEncoder {
         }
 
         if encoded_bytes > self.config.max_model_visible_frame_bytes {
+            elide_model_visible_continuation(&mut compact, &continuation_ref);
+            encoded_bytes = serde_json::to_vec(&compact)?.len();
+        }
+
+        if encoded_bytes > self.config.max_model_visible_frame_bytes {
             anyhow::bail!(
                 "encoded effect frame is {} bytes, over configured limit {}",
                 encoded_bytes,
@@ -167,6 +172,46 @@ fn compact_value(store: &FileValueStore, value: &mut Value, max_inline: usize) -
     let reference = store.put(value)?;
     *value = FileValueStore::placeholder(&reference);
     Ok(())
+}
+
+fn elide_model_visible_continuation(frame: &mut EffectFrame, reference: &ContinuationRef) {
+    let stack_depth = frame.continuation.stack.len();
+    let (function, pc, return_to_elided) = frame
+        .continuation
+        .stack
+        .last()
+        .map(|runtime_frame| {
+            (
+                runtime_frame.function.clone(),
+                runtime_frame.pc,
+                runtime_frame.return_to.is_some(),
+            )
+        })
+        .unwrap_or_else(|| ("<elided>".to_owned(), frame.continuation.resume_pc, false));
+
+    let mut env = Map::new();
+    env.insert(
+        "$continuation_ref".to_owned(),
+        Value::String(reference.uri.clone()),
+    );
+    env.insert(
+        "$continuation_stack_depth".to_owned(),
+        Value::from(stack_depth as u64),
+    );
+    env.insert("$continuation_env_elided".to_owned(), Value::Bool(true));
+    if return_to_elided {
+        env.insert(
+            "$continuation_return_to_elided".to_owned(),
+            Value::Bool(true),
+        );
+    }
+
+    frame.continuation.stack = vec![RuntimeFrame {
+        function,
+        pc,
+        env,
+        return_to: None,
+    }];
 }
 
 fn truncate_string(value: &str, max_chars: usize) -> String {

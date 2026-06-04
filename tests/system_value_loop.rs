@@ -209,6 +209,71 @@ fn jump_target_out_of_range_is_rejected() {
 }
 
 #[test]
+fn branch_target_rejects_variable_defined_only_on_skipped_path() {
+    let mut program = branch_program();
+    program.functions.get_mut("main").unwrap().body = vec![
+        Instr::Let {
+            var: "flag".to_owned(),
+            expr: JsonExpr::Literal { value: json!(true) },
+        },
+        Instr::Branch {
+            condition: GuardExpr::FieldIsTruthy {
+                var: "flag".to_owned(),
+                path: Vec::new(),
+            },
+            then_pc: 3,
+            else_pc: 2,
+        },
+        Instr::Let {
+            var: "x".to_owned(),
+            expr: JsonExpr::Literal {
+                value: json!("defined only on else"),
+            },
+        },
+        Instr::Return {
+            value: JsonExpr::Var {
+                name: "x".to_owned(),
+            },
+        },
+    ];
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("variable x is used before it is defined")
+    );
+}
+
+#[test]
+fn jump_target_rejects_variable_defined_only_on_skipped_path() {
+    let mut program = branch_program();
+    program.functions.get_mut("main").unwrap().body = vec![
+        Instr::Jump { pc: 2 },
+        Instr::Let {
+            var: "x".to_owned(),
+            expr: JsonExpr::Literal {
+                value: json!("unreachable definition"),
+            },
+        },
+        Instr::Return {
+            value: JsonExpr::Var {
+                name: "x".to_owned(),
+            },
+        },
+    ];
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("variable x is used before it is defined")
+    );
+}
+
+#[test]
 fn cli_fixture_value_loop_proves_kpis() {
     let state = temp_state_dir();
     assert_eq!(
@@ -536,6 +601,78 @@ fn frame_encoder_stores_large_values_and_enforces_budget() {
         },
     );
     assert!(too_small.encode(&frame).is_err());
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[test]
+fn frame_encoder_elides_stored_continuation_when_small_values_exceed_budget() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "generic_workflow";
+    let stack = (0..64)
+        .map(|frame_index| {
+            let mut env = Map::new();
+            for value_index in 0..8 {
+                env.insert(
+                    format!("v{value_index}"),
+                    json!(format!("small-{frame_index}-{value_index}")),
+                );
+            }
+            RuntimeFrame {
+                function: format!("function_{frame_index}"),
+                pc: frame_index,
+                env,
+                return_to: None,
+            }
+        })
+        .collect();
+    let continuation = Continuation {
+        continuation_id: "k-deep-small".to_owned(),
+        boundary_id: "b1".to_owned(),
+        program_id: "p1".to_owned(),
+        stack,
+        resume_var: Some("out".to_owned()),
+        resume_pc: 2,
+        expected_schema: json!({}),
+        fuel_remaining: 10,
+        effect_depth: 0,
+    };
+    let frame = EffectFrame {
+        effect_id: "e1".to_owned(),
+        boundary_id: "b1".to_owned(),
+        reason: "test".to_owned(),
+        failed_effect: None,
+        failed_instruction: None,
+        continuation: continuation.clone(),
+        observations: Vec::new(),
+        allowed_decisions: vec![AllowedDecision::ReturnValue],
+    };
+    let encoder = FileEffectFrameEncoder::new(
+        state.clone(),
+        workflow_id,
+        FrameEncodingConfig {
+            max_inline_value_bytes: 1024,
+            max_model_visible_frame_bytes: 4096,
+        },
+    );
+
+    let encoded = encoder.encode(&frame).unwrap();
+
+    assert!(encoded.encoded_bytes <= 4096);
+    assert_eq!(
+        encoded.original_continuation_ref.as_deref(),
+        Some("continuationstore://k-deep-small")
+    );
+    assert_eq!(encoded.model_visible_frame.continuation.stack.len(), 1);
+    assert_eq!(
+        encoded.model_visible_frame.continuation.stack[0].env["$continuation_ref"],
+        json!("continuationstore://k-deep-small")
+    );
+    let stored = FileContinuationStore::new(state.clone(), workflow_id)
+        .get("k-deep-small")
+        .unwrap();
+    assert_eq!(stored, continuation);
+
     let _ = fs::remove_dir_all(state_path);
 }
 
