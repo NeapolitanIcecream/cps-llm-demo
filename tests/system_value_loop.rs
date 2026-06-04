@@ -36,10 +36,10 @@ use cps_llm_demo::validator::validate_patch;
 use cps_llm_demo::validator::validate_program;
 use serde_json::Map;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[test]
 fn fast_path_apply_is_generic() {
@@ -1189,6 +1189,113 @@ async fn optimizer_without_fixture_patch_installs_strong_returned_patch() {
     let _ = fs::remove_dir_all(state_path);
 }
 
+#[tokio::test]
+async fn run_stream_rejects_malformed_runtime_patch_id_without_aborting_later_events() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "runtime_patch_id_regression";
+    let program = runtime_patch_program();
+    let programs = FileProgramRegistry::new(state.clone());
+    programs
+        .init_workflow(
+            workflow_id,
+            program.clone(),
+            fixture_program_metadata(workflow_id, &program),
+        )
+        .unwrap();
+
+    let weak: Arc<dyn EffectHandler> = Arc::new(ScriptedHandler::empty());
+    let strong: Arc<dyn EffectHandler> = Arc::new(ScriptedHandler::new(vec![
+        HandlerDecision::ReturnProgramPatch {
+            patch: ProgramPatch {
+                target_program_id: program.program_id.clone(),
+                patch_id: "bad/id".to_owned(),
+                operations: Vec::new(),
+                rationale: "malformed patch id should be rejected".to_owned(),
+            },
+            rationale: "propose malformed runtime patch".to_owned(),
+        },
+        HandlerDecision::ReturnValue {
+            value: Value::Null,
+            confidence: 1.0,
+            rationale: "second event continues".to_owned(),
+        },
+    ]));
+
+    let summary = run_stream(
+        state.clone(),
+        workflow_id,
+        InMemoryEventSource::new(vec![
+            json!({ "event_id": "first" }),
+            json!({ "event_id": "second" }),
+        ]),
+        weak,
+        strong,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.events_total, 2);
+    assert_eq!(summary.events_succeeded, 1);
+    assert_eq!(summary.events_failed, 1);
+
+    let metrics = FileMetricsStore::new(state.clone())
+        .read(workflow_id, &summary.run_id)
+        .unwrap();
+    assert_eq!(metrics.events_total, 2);
+    assert_eq!(metrics.events_succeeded, 1);
+    assert_eq!(metrics.events_failed, 1);
+    assert_eq!(metrics.patches_proposed, 1);
+    assert_eq!(metrics.patches_validated, 0);
+    assert_eq!(metrics.patches_rejected, 1);
+
+    let events = FileTraceStore::new(state.clone())
+        .read_run(workflow_id, &summary.run_id)
+        .unwrap();
+    assert!(events.iter().any(|event| event.event == "patch_invalid"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event == "stream_event" && event.event_id == "second")
+    );
+    assert!(
+        FilePatchRegistry::new(state)
+            .list_proposed(workflow_id)
+            .unwrap()
+            .is_empty()
+    );
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+struct ScriptedHandler {
+    decisions: Mutex<VecDeque<HandlerDecision>>,
+}
+
+impl ScriptedHandler {
+    fn new(decisions: Vec<HandlerDecision>) -> Self {
+        Self {
+            decisions: Mutex::new(decisions.into()),
+        }
+    }
+
+    fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+}
+
+#[async_trait]
+impl EffectHandler for ScriptedHandler {
+    async fn handle(&self, _request: HandlerRequest) -> Result<HandlerDecision> {
+        self.decisions
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| anyhow::anyhow!("unexpected handler call"))
+    }
+}
+
 struct PatchReturningStrong {
     patch: ProgramPatch,
 }
@@ -1550,6 +1657,28 @@ async fn patch_can_insert_validator_apply() {
     assert_eq!(output, json!({ "a": "x" }));
 }
 
+#[test]
+fn validate_patch_rejects_unsafe_patch_id() {
+    let base = branch_program();
+    let patch = ProgramPatch {
+        target_program_id: base.program_id.clone(),
+        patch_id: "bad patch/id".to_owned(),
+        operations: Vec::new(),
+        rationale: "unsafe IDs must not become version or registry path components".to_owned(),
+    };
+
+    let err = validate_patch(&base, &patch).unwrap_err();
+
+    assert!(
+        err.to_string().contains("patch_id"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        err.to_string().contains("unsafe filename characters"),
+        "unexpected error: {err}"
+    );
+}
+
 fn branch_program() -> Program {
     let mut functions = BTreeMap::new();
     functions.insert(
@@ -1607,6 +1736,51 @@ fn registry_test_patch(patch_id: &str) -> ProgramPatch {
         patch_id: patch_id.to_owned(),
         operations: Vec::new(),
         rationale: "registry path safety test".to_owned(),
+    }
+}
+
+fn runtime_patch_program() -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["event".to_owned()],
+            output_schema: json!({ "type": "null" }),
+            body: vec![
+                Instr::Perform {
+                    out: "patch_ack".to_owned(),
+                    effect: EffectCall::Think {
+                        reason: "runtime may propose a future patch".to_owned(),
+                    },
+                    input: JsonExpr::Var {
+                        name: "event".to_owned(),
+                    },
+                    expected_schema: json!({ "type": "null" }),
+                    acceptance: AcceptancePolicy {
+                        min_confidence: Some(1.0),
+                        require_schema_valid: true,
+                        on_failure: FailureHandler::Abort {
+                            reason: "patch effect failed".to_owned(),
+                        },
+                    },
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "patch_ack".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+
+    Program {
+        program_id: "runtime_patch_id_regression".to_owned(),
+        version: "v0001".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({ "type": "object" }),
+        output_schema: json!({ "type": "null" }),
+        functions,
+        allowed_effects: vec![EffectPermission::Think],
     }
 }
 

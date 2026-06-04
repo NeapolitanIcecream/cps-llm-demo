@@ -13,7 +13,7 @@ use crate::store::patch_registry::{
 use crate::store::program_registry::{FileProgramRegistry, ProgramMetadata, ProgramSource};
 use crate::store::state_dir::now_string;
 use crate::store::trace_store::FileTraceStore;
-use crate::validator::validate_patch;
+use crate::validator::{validate_patch, validate_patch_id};
 
 pub async fn install_fixture_patch(
     programs: &FileProgramRegistry,
@@ -26,6 +26,7 @@ pub async fn install_fixture_patch(
 ) -> Result<String> {
     let base_version = programs.latest_version(workflow_id)?;
     let base = programs.load_version(workflow_id, &base_version)?;
+    validate_patch_id(&patch.patch_id).context("patch validation failed")?;
     let metadata = fixture_patch_metadata(
         workflow_id,
         &patch.patch_id,

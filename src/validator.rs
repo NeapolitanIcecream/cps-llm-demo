@@ -8,6 +8,7 @@ use crate::program::{
     EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardExpr, GuardFail, Instr,
     JsonExpr, ModelStrength, PatchOp, Program, ProgramFragment, ProgramPatch,
 };
+use crate::store::state_dir::validate_path_component;
 
 const MAX_INSTRUCTIONS_PER_FUNCTION: usize = 1024;
 const INPUT_VAR: &str = "$input";
@@ -60,6 +61,7 @@ pub fn validate_fragment(fragment: &ProgramFragment) -> Result<()> {
 }
 
 pub fn validate_patch(program: &Program, patch: &ProgramPatch) -> Result<Program> {
+    validate_patch_id(&patch.patch_id)?;
     if patch.target_program_id != program.program_id {
         return Err(anyhow!(
             "patch target_program_id {} does not match program {}",
@@ -75,6 +77,10 @@ pub fn validate_patch(program: &Program, patch: &ProgramPatch) -> Result<Program
     patched.version = format!("{}+{}", program.version, patch.patch_id);
     validate_program(&patched)?;
     Ok(patched)
+}
+
+pub fn validate_patch_id(patch_id: &str) -> Result<()> {
+    validate_path_component("patch_id", patch_id)
 }
 
 pub fn effect_allowed(allowed: &[EffectPermission], effect: &EffectCall) -> bool {
