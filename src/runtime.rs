@@ -29,6 +29,12 @@ pub enum StepOutcome {
     Finished(Value),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProgramRunResult {
+    pub output: Value,
+    pub pending_patches: Vec<ProgramPatch>,
+}
+
 #[derive(Debug, Clone)]
 struct ProgramState {
     boundary_id: String,
@@ -271,6 +277,14 @@ where
     }
 
     pub async fn run_program(&self, program: Program, input: Value) -> Result<Value> {
+        Ok(self.run_program_with_result(program, input).await?.output)
+    }
+
+    pub async fn run_program_with_result(
+        &self,
+        program: Program,
+        input: Value,
+    ) -> Result<ProgramRunResult> {
         let mut state = ProgramState::new(program, input, self.budget.clone())?;
         self.trace.emit(
             "program_validated",
@@ -298,7 +312,12 @@ where
         loop {
             match self.step(&mut state).await {
                 Ok(StepOutcome::Continue) => continue,
-                Ok(StepOutcome::Finished(value)) => return Ok(value),
+                Ok(StepOutcome::Finished(output)) => {
+                    return Ok(ProgramRunResult {
+                        output,
+                        pending_patches: state.pending_patches.clone(),
+                    });
+                }
                 Err(err) => {
                     self.trace.emit(
                         "program_aborted",

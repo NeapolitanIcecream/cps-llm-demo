@@ -12,6 +12,7 @@ use crate::observability::metrics::MetricsAccumulator;
 use crate::runtime::Runtime;
 use crate::store::continuation_store::{FileEffectFrameEncoder, FrameEncodingConfig};
 use crate::store::metrics_store::{FileMetricsStore, RunMetrics};
+use crate::store::patch_registry::{FilePatchRegistry, PatchMetadata, PatchSource, PatchStatus};
 use crate::store::profile_store::FileProfileStore;
 use crate::store::program_registry::FileProgramRegistry;
 use crate::store::state_dir::{StateDir, now_string};
@@ -43,6 +44,7 @@ where
     let traces = FileTraceStore::new(state.clone());
     let metrics_store = FileMetricsStore::new(state.clone());
     let profiles = FileProfileStore::new(state.clone());
+    let patch_registry = FilePatchRegistry::new(state.clone());
     let program = programs.load_latest(workflow_id)?;
     let run_id = uuid::Uuid::new_v4().to_string();
     let mut metrics = RunMetrics::new(
@@ -63,6 +65,14 @@ where
     while let Some(event) = event_source.next_event()? {
         metrics.events_total += 1;
         let trace = TraceCollector::default();
+        let event_id = event_id_or_generate(&event);
+        trace.emit(
+            "stream_event",
+            event_id,
+            serde_json::json!({
+                "event": event.clone(),
+            }),
+        );
         let runtime = Runtime::with_frame_encoder(
             Arc::clone(&weak),
             Arc::clone(&strong),
@@ -71,9 +81,27 @@ where
             trace.clone(),
             RuntimeBudget::default(),
         );
-        let result = runtime.run_program(program.clone(), event).await;
-        if result.is_ok() {
+        let result = runtime
+            .run_program_with_result(program.clone(), event)
+            .await;
+        if let Ok(result) = &result {
             metrics.events_succeeded += 1;
+            for patch in &result.pending_patches {
+                let metadata = PatchMetadata {
+                    patch_id: patch.patch_id.clone(),
+                    workflow_id: workflow_id.to_owned(),
+                    target_program_version: program.version.clone(),
+                    status: PatchStatus::Proposed,
+                    source: PatchSource::RuntimeStrongThink,
+                    created_at: now_string(),
+                    evaluated_at: None,
+                    installed_at: None,
+                    rationale: patch.rationale.clone(),
+                    metrics_delta: None,
+                };
+                patch_registry.record_proposed(workflow_id, patch.clone(), metadata.clone())?;
+                patch_registry.mark_validated(workflow_id, patch.clone(), metadata)?;
+            }
         } else {
             metrics.events_failed += 1;
         }

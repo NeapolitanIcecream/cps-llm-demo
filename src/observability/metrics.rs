@@ -13,41 +13,30 @@ impl MetricsAccumulator {
     pub fn update_from_trace(&mut self, metrics: &mut RunMetrics, events: &[TraceEvent]) {
         for event in events {
             match event.event.as_str() {
-                "handler_request" => {
-                    match event.detail.get("handler").and_then(Value::as_str) {
-                        Some("weak_model") => metrics.weak_model_calls += 1,
-                        Some("strong_model") => {
-                            match event.detail.get("effect").and_then(Value::as_str) {
-                                Some("think") => metrics.strong_think_calls += 1,
-                                Some("model_task") => metrics.strong_model_task_calls += 1,
-                                Some("compile_program") => metrics.program_compile_calls += 1,
-                                _ => {}
-                            }
-                        }
-                        Some("local_tool") => metrics.local_tool_calls += 1,
-                        _ => {}
-                    }
-                    if event
-                        .detail
-                        .get("depth")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0)
-                        > 0
-                    {
-                        metrics.probe_requests += 1;
-                        if event.detail.get("handler").and_then(Value::as_str) == Some("weak_model")
-                        {
-                            metrics.probe_weak_model_calls += 1;
-                        }
-                        if event.detail.get("handler").and_then(Value::as_str) == Some("local_tool")
-                        {
-                            metrics.probe_local_tool_calls += 1;
+                "handler_request" => match event.detail.get("handler").and_then(Value::as_str) {
+                    Some("weak_model") => metrics.weak_model_calls += 1,
+                    Some("strong_model") => {
+                        match event.detail.get("effect").and_then(Value::as_str) {
+                            Some("think") => metrics.strong_think_calls += 1,
+                            Some("model_task") => metrics.strong_model_task_calls += 1,
+                            Some("compile_program") => metrics.program_compile_calls += 1,
+                            _ => {}
                         }
                     }
-                }
+                    Some("local_tool") => metrics.local_tool_calls += 1,
+                    _ => {}
+                },
                 "perform_effect" => metrics.effects_total += 1,
                 "capture_continuation" => metrics.effects_captured += 1,
-                "request_nested_effect" => metrics.nested_effect_requests += 1,
+                "request_nested_effect" => {
+                    metrics.nested_effect_requests += 1;
+                    metrics.probe_requests += 1;
+                    match event.detail.get("to_handler").and_then(Value::as_str) {
+                        Some("weak_model") => metrics.probe_weak_model_calls += 1,
+                        Some("local_tool") => metrics.probe_local_tool_calls += 1,
+                        _ => {}
+                    }
+                }
                 "reenter_handler" => metrics.probe_reentries += 1,
                 "fast_path_hit" => metrics.fast_path_hits += 1,
                 "fast_path_miss" => metrics.fast_path_misses += 1,

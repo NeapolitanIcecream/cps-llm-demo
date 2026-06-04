@@ -20,6 +20,16 @@ pub struct FailureFingerprintStats {
     pub count: u64,
     pub sample_continuation_refs: Vec<String>,
     pub sample_event_refs: Vec<String>,
+    #[serde(default)]
+    pub successful_probes: Vec<ProbeProfileStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProbeProfileStats {
+    pub probe_id: String,
+    pub effect_kind: String,
+    pub handler: String,
+    pub success_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -53,20 +63,29 @@ impl FileProfileStore {
             .workflow_dir(workflow_id)
             .join("profiles")
             .join("profile.json");
-        if !path.exists() {
-            return Ok(ProfileStoreData::default());
+        if path.exists() {
+            return read_json(&path);
         }
-        read_json(&path)
+        self.load_split_files(workflow_id)
     }
 
     pub fn update_from_trace(&self, workflow_id: &str, events: &[TraceEvent]) -> Result<()> {
         self.state.ensure_workflow_layout(workflow_id)?;
         let mut profile = self.load(workflow_id)?;
+        let mut current_fingerprint_id = None::<String>;
+        let mut pending_probe = None::<ProbeProfileStats>;
+        let mut last_effect_key = None::<String>;
 
         for event in events {
             match event.event.as_str() {
                 "capture_continuation" => {
+                    if let Some(effect_key) = &last_effect_key {
+                        if let Some(stats) = profile.effect_stats.get_mut(effect_key) {
+                            stats.captures += 1;
+                        }
+                    }
                     let fingerprint = fingerprint_from_capture_event(event);
+                    current_fingerprint_id = Some(fingerprint.fingerprint_id.clone());
                     let stats = profile
                         .failure_fingerprints
                         .entry(fingerprint.fingerprint_id.clone())
@@ -75,6 +94,7 @@ impl FileProfileStore {
                             count: 0,
                             sample_continuation_refs: Vec::new(),
                             sample_event_refs: Vec::new(),
+                            successful_probes: Vec::new(),
                         });
                     stats.count += 1;
                     if let Some(continuation_id) = event
@@ -117,24 +137,131 @@ impl FileProfileStore {
                         .effect_stats
                         .entry(effect.clone())
                         .or_insert(EffectStats {
-                            effect_key: effect,
+                            effect_key: effect.clone(),
                             calls: 0,
                             captures: 0,
                             accepted: 0,
                         });
                     stats.calls += 1;
+                    last_effect_key = Some(effect);
+                }
+                "handler_decision" => {
+                    let accepted = event
+                        .detail
+                        .get("decision")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("return_value")
+                        && event
+                            .detail
+                            .get("schema_valid")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false);
+                    if accepted {
+                        if let Some(effect_key) = &last_effect_key {
+                            if let Some(stats) = profile.effect_stats.get_mut(effect_key) {
+                                stats.accepted += 1;
+                            }
+                        }
+                    }
+                }
+                "request_nested_effect" => {
+                    pending_probe = Some(ProbeProfileStats {
+                        probe_id: format!(
+                            "{}:{}",
+                            event
+                                .detail
+                                .get("to_handler")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("unknown"),
+                            event
+                                .detail
+                                .get("to_effect")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("unknown")
+                        ),
+                        effect_kind: event
+                            .detail
+                            .get("to_effect")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown")
+                            .to_owned(),
+                        handler: event
+                            .detail
+                            .get("to_handler")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown")
+                            .to_owned(),
+                        success_count: 1,
+                    });
+                }
+                "nested_effect_result" => {
+                    let schema_valid = event
+                        .detail
+                        .get("schema_valid")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false);
+                    if !schema_valid {
+                        pending_probe = None;
+                        continue;
+                    }
+                    let Some(fingerprint_id) = current_fingerprint_id.as_ref() else {
+                        pending_probe = None;
+                        continue;
+                    };
+                    let Some(probe) = pending_probe.take() else {
+                        continue;
+                    };
+                    if let Some(stats) = profile.failure_fingerprints.get_mut(fingerprint_id) {
+                        if let Some(existing) = stats
+                            .successful_probes
+                            .iter_mut()
+                            .find(|existing| existing.probe_id == probe.probe_id)
+                        {
+                            existing.success_count += 1;
+                        } else {
+                            stats.successful_probes.push(probe);
+                        }
+                    }
                 }
                 _ => {}
             }
         }
 
+        self.write_profile_files(workflow_id, &profile)
+    }
+
+    fn load_split_files(&self, workflow_id: &str) -> Result<ProfileStoreData> {
+        let profiles_dir = self.state.workflow_dir(workflow_id).join("profiles");
+        let mut data = ProfileStoreData::default();
+        let failures = profiles_dir.join("failure_fingerprints.json");
+        if failures.exists() {
+            data.failure_fingerprints = read_json(&failures)?;
+        }
+        let fast_paths = profiles_dir.join("fast_path_stats.json");
+        if fast_paths.exists() {
+            data.fast_path_stats = read_json(&fast_paths)?;
+        }
+        let effects = profiles_dir.join("effect_stats.json");
+        if effects.exists() {
+            data.effect_stats = read_json(&effects)?;
+        }
+        Ok(data)
+    }
+
+    fn write_profile_files(&self, workflow_id: &str, profile: &ProfileStoreData) -> Result<()> {
+        let profiles_dir = self.state.workflow_dir(workflow_id).join("profiles");
+        write_json_pretty(&profiles_dir.join("profile.json"), profile)?;
         write_json_pretty(
-            &self
-                .state
-                .workflow_dir(workflow_id)
-                .join("profiles")
-                .join("profile.json"),
-            &profile,
+            &profiles_dir.join("failure_fingerprints.json"),
+            &profile.failure_fingerprints,
+        )?;
+        write_json_pretty(
+            &profiles_dir.join("fast_path_stats.json"),
+            &profile.fast_path_stats,
+        )?;
+        write_json_pretty(
+            &profiles_dir.join("effect_stats.json"),
+            &profile.effect_stats,
         )
     }
 }

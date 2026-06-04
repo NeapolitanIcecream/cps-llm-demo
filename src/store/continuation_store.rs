@@ -5,7 +5,7 @@ use serde_json::Value;
 use crate::effects::{
     Continuation, EffectFrame, EffectFrameEncoder, EncodedEffectFrame, ReturnSlot,
 };
-use crate::store::state_dir::{StateDir, write_json_pretty};
+use crate::store::state_dir::{StateDir, read_json, write_json_pretty};
 use crate::store::value_store::FileValueStore;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -43,6 +43,16 @@ impl FileContinuationStore {
             continuation,
         )?;
         Ok(reference)
+    }
+
+    pub fn get(&self, continuation_id: &str) -> Result<Continuation> {
+        read_json(
+            &self
+                .state
+                .workflow_dir(&self.workflow_id)
+                .join("continuations")
+                .join(format!("{continuation_id}.json")),
+        )
     }
 }
 
@@ -121,6 +131,14 @@ impl EffectFrameEncoder for FileEffectFrameEncoder {
         if encoded_bytes > self.config.max_model_visible_frame_bytes {
             compact.observations.clear();
             encoded_bytes = serde_json::to_vec(&compact)?.len();
+        }
+
+        if encoded_bytes > self.config.max_model_visible_frame_bytes {
+            anyhow::bail!(
+                "encoded effect frame is {} bytes, over configured limit {}",
+                encoded_bytes,
+                self.config.max_model_visible_frame_bytes
+            );
         }
 
         Ok(EncodedEffectFrame {

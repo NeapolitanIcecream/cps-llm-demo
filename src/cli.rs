@@ -14,10 +14,11 @@ use crate::evaluation::strong_direct_baseline::baseline_strong_direct;
 use crate::models::{EffectHandler, FixtureModelHandler, ResponsesStrongModel, ResponsesWeakModel};
 use crate::observability::report::build_metrics_report;
 use crate::optimizer::patch_installer::install_fixture_patch;
+use crate::optimizer::patch_optimizer::{OptimizerContext, optimize_from_profile};
 use crate::program::{EffectCall, ModelStrength, ModelTaskSpec, Program, ProgramPatch};
 use crate::runtime::Runtime;
 use crate::schema::{action_drafts_schema, message_events_schema, program_schema, schema_bundle};
-use crate::store::metrics_store::FileMetricsStore;
+use crate::store::metrics_store::{FileMetricsStore, RunMetrics};
 use crate::store::program_registry::{
     FileProgramRegistry, ProgramMetadata, ProgramSource, fixture_program_metadata,
 };
@@ -144,6 +145,18 @@ pub enum Command {
 
         #[arg(long, default_value_t = 3)]
         max_patches: usize,
+
+        #[arg(long, env = "OPENAI_BASE_URL", default_value = DEFAULT_BASE_URL)]
+        base_url: String,
+
+        #[arg(long, env = "OPENAI_API_KEY")]
+        api_key: Option<String>,
+
+        #[arg(long, env = "CPS_WEAK_MODEL", default_value = DEFAULT_WEAK_MODEL)]
+        weak_model: String,
+
+        #[arg(long, env = "CPS_STRONG_MODEL", default_value = DEFAULT_STRONG_MODEL)]
+        strong_model: String,
     },
     BaselineStrongDirect {
         #[arg(long)]
@@ -312,7 +325,23 @@ pub async fn run() -> Result<()> {
                     return Err(anyhow!("init-workflow requires --task or --program"));
                 }
             };
+            let compiled_by_strong = matches!(metadata.source, ProgramSource::StrongCompile);
+            let compiled_program_id = program.program_id.clone();
             registry.init_workflow(&workflow, program, metadata)?;
+            if compiled_by_strong {
+                let mut metrics = RunMetrics::new(
+                    uuid::Uuid::new_v4().to_string(),
+                    workflow.clone(),
+                    "compile".to_owned(),
+                    compiled_program_id,
+                    "v0001".to_owned(),
+                    now_string(),
+                );
+                metrics.program_compile_calls = 1;
+                metrics.estimated_model_calls = 1;
+                metrics.finished_at = now_string();
+                FileMetricsStore::new(state).write(&metrics)?;
+            }
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
@@ -344,17 +373,36 @@ pub async fn run() -> Result<()> {
             state_dir,
             patch,
             max_patches,
+            base_url,
+            api_key,
+            weak_model,
+            strong_model,
         } => {
-            let Some(patch_path) = patch else {
-                return Err(anyhow!(
-                    "optimize without --patch needs a live strong optimizer; fixture mode requires --patch (max_patches={max_patches})"
-                ));
-            };
             let state = StateDir::new(state_dir);
             let programs = FileProgramRegistry::new(state.clone());
-            let patches = crate::store::patch_registry::FilePatchRegistry::new(state);
-            let patch = read_patch(&patch_path)?;
-            let installed_version = install_fixture_patch(&programs, &patches, &workflow, patch)?;
+            let patches = crate::store::patch_registry::FilePatchRegistry::new(state.clone());
+            let traces = crate::store::trace_store::FileTraceStore::new(state.clone());
+            let profiles = crate::store::profile_store::FileProfileStore::new(state);
+            let (weak, strong) = handler_pair(base_url, api_key, weak_model, strong_model)?;
+            let installed_version = if let Some(patch_path) = patch {
+                let patch = read_patch(&patch_path)?;
+                install_fixture_patch(&programs, &patches, &traces, &workflow, patch, weak, strong)
+                    .await?
+            } else {
+                optimize_from_profile(
+                    OptimizerContext {
+                        programs: &programs,
+                        patches: &patches,
+                        traces: &traces,
+                        profiles: &profiles,
+                        weak,
+                        strong,
+                    },
+                    &workflow,
+                    max_patches,
+                )
+                .await?
+            };
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({

@@ -94,6 +94,8 @@ cargo run -- metrics-report \
 
 The report includes `latest_program_version`, per-run metrics, and a summary that checks whether fast-path hit rate increased, StrongThink rate decreased, the strong-direct baseline used one strong call per event, and continuation frames stayed under the configured byte limit.
 
+`optimize --patch` installs a fixture `ProgramPatch` after validating it and evaluating it against stored stream events. Without `--patch`, `optimize` reads profile fingerprints, asks the strong handler for a typed `ProgramPatch`, evaluates the returned patch, and installs it only if the evaluation passes.
+
 ## What To Look For
 
 Demo A, ordinary program execution:

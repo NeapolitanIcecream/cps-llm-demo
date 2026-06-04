@@ -100,12 +100,13 @@ impl EffectHandler for FixtureModelHandler {
             FixtureModelKind::Weak => "weak",
             FixtureModelKind::Strong => "strong",
         };
-        let fixture = request
-            .input
-            .get("_fixture_model")
-            .and_then(Value::as_object)
-            .and_then(|model| model.get(key))
-            .or_else(|| request.input.get("_fixture_model_default"))
+        let fixture = fixture_model_value(&request.input, key)
+            .cloned()
+            .or_else(|| {
+                let frame = request.effect_frame.as_ref()?;
+                let frame = serde_json::to_value(frame).ok()?;
+                fixture_model_value(&frame, key).cloned()
+            })
             .ok_or_else(|| anyhow!("fixture model input is missing _fixture_model.{key}"))?;
         if let Some(reason) = fixture.get("abort").and_then(Value::as_str) {
             return Ok(HandlerDecision::Abort {
@@ -122,6 +123,27 @@ impl EffectHandler for FixtureModelHandler {
             confidence,
             rationale: format!("fixture {key} value"),
         })
+    }
+}
+
+fn fixture_model_value<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    if let Some(fixture) = value
+        .get("_fixture_model")
+        .and_then(Value::as_object)
+        .and_then(|model| model.get(key))
+        .or_else(|| value.get("_fixture_model_default"))
+    {
+        return Some(fixture);
+    }
+
+    match value {
+        Value::Object(object) => object
+            .values()
+            .find_map(|value| fixture_model_value(value, key)),
+        Value::Array(values) => values
+            .iter()
+            .find_map(|value| fixture_model_value(value, key)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
     }
 }
 

@@ -69,6 +69,16 @@ impl FilePatchRegistry {
         self.write_record(workflow_id, PatchStatus::Proposed, patch, metadata)
     }
 
+    pub fn mark_validated(
+        &self,
+        workflow_id: &str,
+        patch: ProgramPatch,
+        mut metadata: PatchMetadata,
+    ) -> Result<()> {
+        metadata.status = PatchStatus::Validated;
+        self.write_record(workflow_id, PatchStatus::Validated, patch, metadata)
+    }
+
     pub fn mark_installed(
         &self,
         workflow_id: &str,

@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::store::state_dir::{StateDir, stable_hash_value, write_json_pretty};
+use crate::store::state_dir::{StateDir, read_json, stable_hash_value, write_json_pretty};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ValueRef {
@@ -43,6 +43,20 @@ impl FileValueStore {
             value,
         )?;
         Ok(reference)
+    }
+
+    pub fn get(&self, reference: &ValueRef) -> Result<Value> {
+        let hash = reference
+            .uri
+            .strip_prefix("valuestore://")
+            .unwrap_or(&reference.schema_hash);
+        read_json(
+            &self
+                .state
+                .workflow_dir(&self.workflow_id)
+                .join("values")
+                .join(format!("{hash}.json")),
+        )
     }
 
     pub fn placeholder(reference: &ValueRef) -> Value {

@@ -50,26 +50,32 @@ pub fn build_metrics_report(
         .filter(|_| stream_runs.len() > 1);
     let baseline = runs.iter().find(|run| run.mode == "strong_direct");
 
-    let cps_strong_calls = stream_runs
+    let cps_strong_calls = runs
         .iter()
-        .map(|run| run.strong_think_calls + run.strong_model_task_calls + run.program_compile_calls)
-        .sum::<u64>();
+        .map(|run| run.program_compile_calls)
+        .sum::<u64>()
+        + stream_runs
+            .iter()
+            .map(|run| run.strong_think_calls + run.strong_model_task_calls)
+            .sum::<u64>();
     let strong_direct_calls = baseline
         .map(|run| run.strong_model_task_calls + run.strong_think_calls)
         .unwrap_or(0);
-    let strong_call_reduction_vs_baseline = if strong_direct_calls == 0 {
-        0.0
-    } else {
-        1.0 - (cps_strong_calls as f64 / strong_direct_calls as f64)
-    };
+    let stream_events_total = stream_runs.iter().map(|run| run.events_total).sum::<u64>();
+    let baseline_events_total = baseline.map(|run| run.events_total).unwrap_or(0);
+    let strong_call_reduction_vs_baseline =
+        if strong_direct_calls == 0 || stream_events_total == 0 || baseline_events_total == 0 {
+            0.0
+        } else {
+            let cps_rate = cps_strong_calls as f64 / stream_events_total as f64;
+            let baseline_rate = strong_direct_calls as f64 / baseline_events_total as f64;
+            1.0 - (cps_rate / baseline_rate)
+        };
 
     let summary = MetricsSummary {
-        events_total: stream_runs.iter().map(|run| run.events_total).sum(),
+        events_total: stream_events_total,
         strong_direct_calls,
-        cps_strong_compile_calls: stream_runs
-            .iter()
-            .map(|run| run.program_compile_calls)
-            .sum(),
+        cps_strong_compile_calls: runs.iter().map(|run| run.program_compile_calls).sum(),
         cps_strong_think_calls_round1: round1.map(|run| run.strong_think_calls).unwrap_or(0),
         cps_strong_think_calls_round2: round2.map(|run| run.strong_think_calls).unwrap_or(0),
         fast_path_hit_rate_round1: round1.map(|run| run.fast_path_hit_rate()).unwrap_or(0.0),
