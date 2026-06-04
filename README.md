@@ -54,7 +54,7 @@ cargo run -- replay --trace trace.jsonl
 
 The system-layer commands run a workflow across JSONL event streams, store program versions and metrics in a local state directory, install a typed patch, and compare the CPS path with a strong-direct baseline.
 
-This transcript uses fixture handlers when `OPENAI_API_KEY` is unset, so it does not call external models:
+This transcript uses 100-event round fixtures and fixture handlers when `OPENAI_API_KEY` is unset, so it does not call external models:
 
 ```bash
 STATE=/tmp/cps-llm-state

@@ -484,12 +484,12 @@ pub async fn run() -> Result<()> {
             let strong = ResponsesStrongModel::new(client, config.strong_model);
 
             let task = ModelTaskSpec {
-                name: "classify_and_extract_action_draft".to_owned(),
-                instructions: "Given one message event, return one action draft.".to_owned(),
+                name: "probe_json_transform".to_owned(),
+                instructions: "Given one JSON object, return one JSON object.".to_owned(),
             };
             let input = json!({
-                "event_id": "probe-calendar",
-                "text": "Friday 3pm product review meeting"
+                "event_id": "probe-1",
+                "text": "sample input"
             });
             let request = HandlerRequest {
                 effect: EffectCall::ModelTask {
@@ -497,7 +497,7 @@ pub async fn run() -> Result<()> {
                     task,
                 },
                 input,
-                expected_schema: crate::schema::action_draft_schema(),
+                expected_schema: json!({ "type": "object" }),
                 continuation_summary: None,
                 effect_frame: None,
                 observations: Vec::new(),
@@ -513,7 +513,7 @@ pub async fn run() -> Result<()> {
                     reason: "probe".to_owned(),
                 },
                 input: serde_json::to_value(&weak_decision)?,
-                expected_schema: crate::schema::action_draft_schema(),
+                expected_schema: json!({ "type": "object" }),
                 continuation_summary: None,
                 effect_frame: None,
                 observations: Vec::new(),

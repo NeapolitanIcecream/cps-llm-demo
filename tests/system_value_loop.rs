@@ -157,6 +157,20 @@ fn jump_target_out_of_range_is_rejected() {
 #[test]
 fn cli_fixture_value_loop_proves_kpis() {
     let state = temp_state_dir();
+    assert_eq!(
+        fs::read_to_string("examples/notification_triage.round1.jsonl")
+            .unwrap()
+            .lines()
+            .count(),
+        100
+    );
+    assert_eq!(
+        fs::read_to_string("examples/notification_triage.round2.jsonl")
+            .unwrap()
+            .lines()
+            .count(),
+        100
+    );
 
     cargo_ok([
         "init-workflow",
@@ -252,7 +266,8 @@ fn cli_fixture_value_loop_proves_kpis() {
     ]);
 
     assert_eq!(report["latest_program_version"], "v0002");
-    assert_eq!(report["summary"]["strong_direct_calls"], 8);
+    assert_eq!(report["summary"]["events_total"], 200);
+    assert_eq!(report["summary"]["strong_direct_calls"], 100);
     for run in report["runs"].as_array().unwrap() {
         assert_eq!(
             run["events_failed"], 0,

@@ -24,8 +24,7 @@ pub fn action_draft_schema() -> Value {
         "properties": {
             "event_id": { "type": "string" },
             "kind": {
-                "type": "string",
-                "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+                "type": "string"
             },
             "title": { "type": "string" },
             "datetime_hint": {
