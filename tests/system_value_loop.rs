@@ -23,7 +23,7 @@ use cps_llm_demo::store::program_registry::{FileProgramRegistry, fixture_program
 use cps_llm_demo::store::state_dir::StateDir;
 use cps_llm_demo::store::trace_store::FileTraceStore;
 use cps_llm_demo::store::value_store::FileValueStore;
-use cps_llm_demo::trace::TraceCollector;
+use cps_llm_demo::trace::{TraceCollector, TraceEvent};
 use cps_llm_demo::validator::validate_patch;
 use cps_llm_demo::validator::validate_program;
 use cps_llm_demo::{models::FixtureModelHandler, program::EffectPermission};
@@ -85,6 +85,60 @@ fn validator_apply_is_generic() {
 
     assert!(output.passed);
     assert!(output.failed_validator_ids.is_empty());
+}
+
+#[test]
+fn profile_store_records_successful_probe_for_failure_fingerprint() {
+    let state_path = temp_state_dir();
+    let store = FileProfileStore::new(StateDir::new(state_path.clone()));
+    store
+        .update_from_trace(
+            "generic_workflow",
+            &[
+                TraceEvent {
+                    event: "capture_continuation".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "continuation_id": "k1",
+                        "program_id": "p1",
+                        "program_version": "v0001",
+                        "function": "main",
+                        "pc": 3,
+                        "failed_effect_kind": "think",
+                        "expected_schema": { "type": "object" },
+                        "observations": [{ "schema_valid": false, "value": { "a": "redacted" } }]
+                    }),
+                },
+                TraceEvent {
+                    event: "request_nested_effect".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "to_handler": "weak_model",
+                        "to_effect": "model_task"
+                    }),
+                },
+                TraceEvent {
+                    event: "nested_effect_result".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "schema_valid": true
+                    }),
+                },
+            ],
+        )
+        .unwrap();
+
+    let profile = store.load("generic_workflow").unwrap();
+    let failure = profile.failure_fingerprints.values().next().unwrap();
+    assert_eq!(failure.count, 1);
+    assert_eq!(failure.successful_probes.len(), 1);
+    assert_eq!(
+        failure.successful_probes[0].probe_id,
+        "weak_model:model_task"
+    );
+    assert_eq!(failure.successful_probes[0].success_count, 1);
+
+    let _ = fs::remove_dir_all(state_path);
 }
 
 #[tokio::test]
