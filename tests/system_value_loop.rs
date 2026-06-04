@@ -16,6 +16,7 @@ use cps_llm_demo::models::FixtureModelHandler;
 use cps_llm_demo::observability::metrics::MetricsAccumulator;
 use cps_llm_demo::optimizer::patch_installer::install_fixture_patch;
 use cps_llm_demo::optimizer::patch_optimizer::{OptimizerContext, optimize_from_profile};
+use cps_llm_demo::optimizer::patch_request::PatchRequest;
 use cps_llm_demo::program::{
     AcceptancePolicy, EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardExpr, Instr,
     JsonExpr, PatchOp, Program, ProgramPatch,
@@ -27,7 +28,9 @@ use cps_llm_demo::store::continuation_store::{
 use cps_llm_demo::store::metrics_store::{FileMetricsStore, RunMetrics};
 use cps_llm_demo::store::patch_registry::{FilePatchRegistry, fixture_patch_metadata};
 use cps_llm_demo::store::profile_store::FileProfileStore;
-use cps_llm_demo::store::program_registry::{FileProgramRegistry, fixture_program_metadata};
+use cps_llm_demo::store::program_registry::{
+    FileProgramRegistry, ProgramMetadata, ProgramSource, fixture_program_metadata,
+};
 use cps_llm_demo::store::state_dir::StateDir;
 use cps_llm_demo::store::trace_store::FileTraceStore;
 use cps_llm_demo::store::value_store::FileValueStore;
@@ -458,6 +461,53 @@ fn profile_store_records_successful_probe_for_failure_fingerprint() {
         "weak_model:model_task"
     );
     assert_eq!(failure.successful_probes[0].success_count, 1);
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[test]
+fn profile_store_keeps_same_failure_shape_separate_by_program_version() {
+    let state_path = temp_state_dir();
+    let store = FileProfileStore::new(StateDir::new(state_path.clone()));
+
+    store
+        .update_from_trace(
+            "generic_workflow",
+            &[
+                versioned_failure_capture_event(
+                    "stale-v1",
+                    "k-stale-v1",
+                    "profile_program",
+                    "v0001",
+                ),
+                versioned_failure_capture_event(
+                    "latest-v2",
+                    "k-latest-v2",
+                    "profile_program",
+                    "v0002",
+                ),
+            ],
+        )
+        .unwrap();
+
+    let profile = store.load("generic_workflow").unwrap();
+    assert_eq!(profile.failure_fingerprints.len(), 2);
+
+    let mut failures = profile.failure_fingerprints.values().collect::<Vec<_>>();
+    failures.sort_by(|left, right| {
+        left.fingerprint
+            .program_version
+            .cmp(&right.fingerprint.program_version)
+    });
+
+    assert_eq!(failures[0].fingerprint.program_version, "v0001");
+    assert_eq!(failures[0].count, 1);
+    assert_eq!(failures[1].fingerprint.program_version, "v0002");
+    assert_eq!(failures[1].count, 1);
+    assert_ne!(
+        failures[0].fingerprint.fingerprint_id,
+        failures[1].fingerprint.fingerprint_id
+    );
 
     let _ = fs::remove_dir_all(state_path);
 }
@@ -1190,6 +1240,102 @@ async fn optimizer_without_fixture_patch_installs_strong_returned_patch() {
 }
 
 #[tokio::test]
+async fn optimizer_after_installed_patch_uses_only_latest_version_failures() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "versioned_optimizer_profile";
+    let program = branch_program();
+    let programs = FileProgramRegistry::new(state.clone());
+    programs
+        .init_workflow(
+            workflow_id,
+            program.clone(),
+            fixture_program_metadata(workflow_id, &program),
+        )
+        .unwrap();
+    let installed = programs
+        .install_version(
+            workflow_id,
+            program.clone(),
+            ProgramMetadata {
+                workflow_id: workflow_id.to_owned(),
+                program_id: program.program_id.clone(),
+                version: String::new(),
+                created_at: String::new(),
+                source: ProgramSource::PatchInstall,
+                parent_version: Some("v0001".to_owned()),
+                patch_id: Some("advance_to_v2".to_owned()),
+                task_hash: "advance_to_v2".to_owned(),
+            },
+        )
+        .unwrap();
+    assert_eq!(installed, "v0002");
+
+    let profiles = FileProfileStore::new(state.clone());
+    profiles
+        .update_from_trace(
+            workflow_id,
+            &[
+                versioned_failure_capture_event(
+                    "stale-v1-a",
+                    "k-stale-v1-a",
+                    &program.program_id,
+                    "v0001",
+                ),
+                versioned_failure_capture_event(
+                    "stale-v1-b",
+                    "k-stale-v1-b",
+                    &program.program_id,
+                    "v0001",
+                ),
+                versioned_failure_capture_event(
+                    "latest-v2",
+                    "k-latest-v2",
+                    &program.program_id,
+                    "v0002",
+                ),
+            ],
+        )
+        .unwrap();
+
+    let optimizer_requests = Arc::new(Mutex::new(Vec::<PatchRequest>::new()));
+    let patches = FilePatchRegistry::new(state.clone());
+    let traces = FileTraceStore::new(state.clone());
+    let weak: Arc<dyn EffectHandler> = Arc::new(ScriptedHandler::empty());
+    let strong: Arc<dyn EffectHandler> = Arc::new(RecordingOptimizerStrong {
+        requests: Arc::clone(&optimizer_requests),
+    });
+    let error = optimize_from_profile(
+        OptimizerContext {
+            programs: &programs,
+            patches: &patches,
+            traces: &traces,
+            profiles: &profiles,
+            weak,
+            strong,
+        },
+        workflow_id,
+        1,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("strong optimizer aborted"),
+        "unexpected optimizer error: {error}"
+    );
+
+    let requests = optimizer_requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request.base_program.version, "v0002");
+    assert_eq!(request.failure_fingerprint.program_version, "v0002");
+    assert_eq!(request.compact_examples.len(), 1);
+    assert_eq!(request.compact_examples[0].shape["count"], json!(1));
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[tokio::test]
 async fn run_stream_rejects_malformed_runtime_patch_id_without_aborting_later_events() {
     let state_path = temp_state_dir();
     let state = StateDir::new(state_path.clone());
@@ -1314,6 +1460,27 @@ impl EffectHandler for PatchReturningStrong {
             });
         }
         FixtureModelHandler::strong().handle(request).await
+    }
+}
+
+struct RecordingOptimizerStrong {
+    requests: Arc<Mutex<Vec<PatchRequest>>>,
+}
+
+#[async_trait]
+impl EffectHandler for RecordingOptimizerStrong {
+    async fn handle(&self, request: HandlerRequest) -> Result<HandlerDecision> {
+        match request.effect.model_task_name() {
+            Some("optimize_program_patch") => {}
+            _ => return Err(anyhow::anyhow!("unexpected optimizer handler request")),
+        }
+        self.requests
+            .lock()
+            .unwrap()
+            .push(serde_json::from_value(request.input)?);
+        Ok(HandlerDecision::Abort {
+            reason: "request captured".to_owned(),
+        })
     }
 }
 
@@ -1677,6 +1844,30 @@ fn validate_patch_rejects_unsafe_patch_id() {
         err.to_string().contains("unsafe filename characters"),
         "unexpected error: {err}"
     );
+}
+
+fn versioned_failure_capture_event(
+    event_id: &str,
+    continuation_id: &str,
+    program_id: &str,
+    program_version: &str,
+) -> TraceEvent {
+    TraceEvent {
+        event: "capture_continuation".to_owned(),
+        event_id: event_id.to_owned(),
+        detail: json!({
+            "continuation_id": continuation_id,
+            "program_id": program_id,
+            "program_version": program_version,
+            "function": "main",
+            "pc": 0,
+            "failed_instruction_op": "perform",
+            "failed_effect_kind": "model_task",
+            "failed_task_name": "classify",
+            "expected_schema": { "type": "object" },
+            "observations": [{ "schema_valid": false, "value": { "status": "bad" } }]
+        }),
+    }
 }
 
 fn branch_program() -> Program {

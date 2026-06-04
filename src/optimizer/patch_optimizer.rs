@@ -30,14 +30,30 @@ pub async fn optimize_from_profile(
 ) -> Result<String> {
     let latest = context.programs.load_latest(workflow_id)?;
     let profile = context.profiles.load(workflow_id)?;
+    let latest_program_id = latest.program_id.as_str();
+    let latest_program_version = latest.version.as_str();
     let mut failures = profile
         .failure_fingerprints
         .values()
+        .filter(|stats| {
+            stats.fingerprint.program_id == latest_program_id
+                && stats.fingerprint.program_version == latest_program_version
+        })
         .cloned()
         .collect::<Vec<_>>();
-    failures.sort_by(|left, right| right.count.cmp(&left.count));
+    failures.sort_by(|left, right| {
+        right.count.cmp(&left.count).then_with(|| {
+            left.fingerprint
+                .fingerprint_id
+                .cmp(&right.fingerprint.fingerprint_id)
+        })
+    });
     if failures.is_empty() {
-        return Err(anyhow!("optimizer found no failure fingerprints"));
+        return Err(anyhow!(
+            "optimizer found no failure fingerprints for program {} version {}",
+            latest.program_id,
+            latest.version
+        ));
     }
 
     let mut last_error = None;

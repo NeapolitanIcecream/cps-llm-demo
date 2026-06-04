@@ -19,6 +19,7 @@ pub struct FailureFingerprint {
 
 pub fn fingerprint_from_capture_event(event: &TraceEvent) -> FailureFingerprint {
     let program_id = string_detail(event, "program_id").unwrap_or("unknown");
+    let program_version = string_detail(event, "program_version").unwrap_or("unknown");
     let function = string_detail(event, "function").unwrap_or("unknown");
     let pc = event.detail.get("pc").and_then(Value::as_u64).unwrap_or(0) as usize;
     let failed_effect_kind = string_detail(event, "failed_effect_kind").unwrap_or("unknown");
@@ -40,6 +41,7 @@ pub fn fingerprint_from_capture_event(event: &TraceEvent) -> FailureFingerprint 
         .unwrap_or_else(|| stable_hash_bytes(b"unknown-observations"));
     let raw_id = json!({
         "program_id": program_id,
+        "program_version": program_version,
         "function": function,
         "pc": pc,
         "failed_effect_kind": failed_effect_kind,
@@ -53,9 +55,7 @@ pub fn fingerprint_from_capture_event(event: &TraceEvent) -> FailureFingerprint 
     FailureFingerprint {
         fingerprint_id,
         program_id: program_id.to_owned(),
-        program_version: string_detail(event, "program_version")
-            .unwrap_or("unknown")
-            .to_owned(),
+        program_version: program_version.to_owned(),
         function: function.to_owned(),
         pc,
         failed_effect_kind: failed_effect_kind.to_owned(),
