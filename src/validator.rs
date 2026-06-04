@@ -138,6 +138,9 @@ fn validate_function(
             ensure_not_reserved_input_binding(out, "instruction output", Some(name))?;
             defined.insert(out.to_owned());
         }
+        if let Some(repair_target) = guard_think_repair_target(instr) {
+            defined.insert(repair_target.to_owned());
+        }
     }
 
     Ok(())
@@ -186,7 +189,11 @@ fn validate_instr(
         }
         Instr::Guard { condition, on_fail } => {
             match condition {
-                crate::program::GuardExpr::VarExists { name } => ensure_defined(name, defined)?,
+                crate::program::GuardExpr::VarExists { name } => {
+                    if !matches!(on_fail, GuardFail::Think { .. }) {
+                        ensure_defined(name, defined)?;
+                    }
+                }
                 crate::program::GuardExpr::JsonSchemaValid { var, schema } => {
                     ensure_defined(var, defined)?;
                     validate_json_schema(schema).map_err(|err| {
@@ -282,6 +289,16 @@ fn guard_repair_target(condition: &crate::program::GuardExpr) -> &str {
     match condition {
         crate::program::GuardExpr::VarExists { name } => name,
         crate::program::GuardExpr::JsonSchemaValid { var, .. } => var,
+    }
+}
+
+fn guard_think_repair_target(instr: &Instr) -> Option<&str> {
+    match instr {
+        Instr::Guard {
+            condition,
+            on_fail: GuardFail::Think { .. },
+        } => Some(guard_repair_target(condition)),
+        _ => None,
     }
 }
 

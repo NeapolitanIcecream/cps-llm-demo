@@ -583,6 +583,58 @@ fn input_var_cannot_be_guard_think_repair_target() {
     );
 }
 
+#[tokio::test]
+async fn var_exists_guard_can_introduce_missing_binding_with_think() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["message".to_owned()],
+            output_schema: action_draft_schema(),
+            body: vec![
+                Instr::Guard {
+                    condition: GuardExpr::VarExists {
+                        name: "draft".to_owned(),
+                    },
+                    on_fail: GuardFail::Think {
+                        reason: "draft missing; synthesize it".to_owned(),
+                    },
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "draft".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+    let program = Program {
+        program_id: "var_exists_repair".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: message_event_schema(),
+        output_schema: action_draft_schema(),
+        functions,
+        allowed_effects: vec![EffectPermission::Think],
+    };
+    validate_program(&program).unwrap();
+
+    let weak = SequenceHandler::empty();
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.92))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let output = runtime
+        .run_program(program, message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    assert_eq!(output, action_value("m1"));
+    assert!(weak.calls().is_empty());
+    assert_eq!(strong.calls().len(), 1);
+    replay_trace_events(&trace.events()).unwrap();
+}
+
 #[test]
 fn functions_must_end_with_return_during_validation() {
     let mut functions = BTreeMap::new();
