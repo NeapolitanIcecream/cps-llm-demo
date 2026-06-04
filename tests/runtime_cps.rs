@@ -1460,11 +1460,66 @@ async fn weak_generated_program_fragment_can_call_think() {
     );
     assert!(matches!(strong.calls()[0].effect, EffectCall::Think { .. }));
     assert!(strong.calls()[0].effect_frame.is_none());
-    assert!(trace.events().iter().any(|event| {
-        event.event == "exec_instr"
-            && event.detail["function"] == "__fragment_0__generated_processor"
-            && event.detail["op"] == "perform"
-    }));
+    let generated_exec = trace
+        .events()
+        .into_iter()
+        .find(|event| {
+            event.event == "exec_instr"
+                && event.detail["op"] == "perform"
+                && event.detail["function"]
+                    .as_str()
+                    .is_some_and(|function| function.ends_with("__generated_processor"))
+        })
+        .expect("generated fragment perform should be traced");
+    let generated_function = generated_exec.detail["function"].as_str().unwrap();
+    assert!(generated_function.starts_with("__fragment_"));
+}
+
+#[tokio::test]
+async fn dynamic_fragment_install_avoids_host_function_prefix_collisions() {
+    let weak = SequenceHandler::new(vec![Ok(HandlerDecision::ReturnProgramFragment {
+        fragment: generated_processor_fragment(),
+        rationale: "generated processor".to_owned(),
+    })]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.94))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+    let mut program = fractal_program();
+    program.functions.insert(
+        "__fragment_0__generated_processor".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: action_draft_schema(),
+            body: vec![Instr::Return {
+                value: JsonExpr::Literal {
+                    value: action_value("host"),
+                },
+            }],
+        },
+    );
+
+    let output = runtime
+        .run_program(program, message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    assert_eq!(output, action_value("m1"));
+    assert_eq!(weak.calls().len(), 1);
+    assert_eq!(strong.calls().len(), 1);
+    let generated_exec = trace
+        .events()
+        .into_iter()
+        .find(|event| {
+            event.event == "exec_instr"
+                && event.detail["op"] == "perform"
+                && event.detail["function"]
+                    .as_str()
+                    .is_some_and(|function| function.ends_with("__generated_processor"))
+        })
+        .expect("generated fragment perform should be traced");
+    let generated_function = generated_exec.detail["function"].as_str().unwrap();
+    assert_ne!(generated_function, "__fragment_0__generated_processor");
+    assert!(generated_function.starts_with("__fragment_"));
 }
 
 #[tokio::test]

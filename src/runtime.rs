@@ -1147,7 +1147,10 @@ where
                 ));
             }
         }
-        let prefix = format!("__fragment_{}__", state.fragment_count);
+        let prefix = format!(
+            "__fragment_{}__",
+            uuid::Uuid::new_v4().to_string().replace('-', "")
+        );
         state.fragment_count += 1;
 
         let mut functions = BTreeMap::new();
