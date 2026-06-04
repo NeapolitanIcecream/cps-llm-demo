@@ -25,7 +25,7 @@ impl FileTraceStore {
         self.state.ensure_workflow_layout(workflow_id)?;
         let path = self
             .state
-            .workflow_dir(workflow_id)
+            .workflow_dir(workflow_id)?
             .join("traces")
             .join(format!("{run_id}.jsonl"));
         let mut raw = String::new();
@@ -43,7 +43,7 @@ impl FileTraceStore {
     pub fn read_run(&self, workflow_id: &str, run_id: &str) -> Result<Vec<TraceEvent>> {
         let path = self
             .state
-            .workflow_dir(workflow_id)
+            .workflow_dir(workflow_id)?
             .join("traces")
             .join(format!("{run_id}.jsonl"));
         let raw = std::fs::read_to_string(&path)
@@ -52,7 +52,7 @@ impl FileTraceStore {
     }
 
     pub fn list_stored_events(&self, workflow_id: &str, limit: usize) -> Result<Vec<Value>> {
-        let traces_dir = self.state.workflow_dir(workflow_id).join("traces");
+        let traces_dir = self.state.workflow_dir(workflow_id)?.join("traces");
         let mut events = BTreeMap::new();
         if !traces_dir.exists() {
             return Ok(Vec::new());

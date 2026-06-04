@@ -2,7 +2,9 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::program::ProgramPatch;
-use crate::store::state_dir::{StateDir, now_string, read_json, write_json_pretty};
+use crate::store::state_dir::{
+    StateDir, now_string, read_json, validate_path_component, write_json_pretty,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -133,7 +135,7 @@ impl FilePatchRegistry {
         write_json_pretty(
             &self
                 .state
-                .workflow_dir(workflow_id)
+                .workflow_dir(workflow_id)?
                 .join("patches")
                 .join(dir)
                 .join(filename),
@@ -144,7 +146,7 @@ impl FilePatchRegistry {
     fn list_status(&self, workflow_id: &str, status_dir: &str) -> Result<Vec<PatchRecord>> {
         let dir = self
             .state
-            .workflow_dir(workflow_id)
+            .workflow_dir(workflow_id)?
             .join("patches")
             .join(status_dir);
         let mut records = Vec::new();
@@ -162,26 +164,8 @@ impl FilePatchRegistry {
 }
 
 fn patch_record_filename(patch_id: &str) -> Result<String> {
-    validate_patch_id_path_component(patch_id)?;
+    validate_path_component("patch_id", patch_id)?;
     Ok(format!("{patch_id}.json"))
-}
-
-fn validate_patch_id_path_component(patch_id: &str) -> Result<()> {
-    if patch_id.is_empty() {
-        bail!("patch_id must not be empty");
-    }
-    if patch_id == "." || patch_id == ".." {
-        bail!("patch_id must be a safe filename component");
-    }
-    if !patch_id
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
-        bail!(
-            "patch_id {patch_id:?} contains unsafe filename characters; use ASCII letters, digits, '.', '_' or '-'"
-        );
-    }
-    Ok(())
 }
 
 pub fn fixture_patch_metadata(

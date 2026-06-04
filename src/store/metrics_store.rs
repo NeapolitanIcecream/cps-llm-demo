@@ -137,7 +137,7 @@ impl FileMetricsStore {
         write_json_pretty(
             &self
                 .state
-                .workflow_dir(&metrics.workflow_id)
+                .workflow_dir(&metrics.workflow_id)?
                 .join("metrics")
                 .join(format!("{}.json", metrics.run_id)),
             metrics,
@@ -148,7 +148,7 @@ impl FileMetricsStore {
         read_json(
             &self
                 .state
-                .workflow_dir(workflow_id)
+                .workflow_dir(workflow_id)?
                 .join("metrics")
                 .join(format!("{run_id}.json")),
         )
@@ -173,7 +173,7 @@ impl FileMetricsStore {
     }
 
     pub fn list(&self, workflow_id: &str) -> Result<Vec<RunMetrics>> {
-        let metrics_dir = self.state.workflow_dir(workflow_id).join("metrics");
+        let metrics_dir = self.state.workflow_dir(workflow_id)?.join("metrics");
         let mut runs = Vec::new();
         if !metrics_dir.exists() {
             return Ok(runs);

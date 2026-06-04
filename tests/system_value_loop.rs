@@ -269,12 +269,14 @@ fn patch_registry_rejects_unsafe_patch_ids_before_writing() {
     assert!(
         !state
             .workflow_dir(workflow_id)
+            .unwrap()
             .join("metrics/evil.json")
             .exists()
     );
     assert!(
         !state
             .workflow_dir(workflow_id)
+            .unwrap()
             .join("patches/proposed/nested/evil.json")
             .exists()
     );
@@ -319,6 +321,7 @@ fn patch_registry_preserves_valid_patch_id_status_records() {
         assert!(
             state
                 .workflow_dir(workflow_id)
+                .unwrap()
                 .join("patches")
                 .join(status)
                 .join("fixture_fast_path_v1.json")
@@ -326,6 +329,33 @@ fn patch_registry_preserves_valid_patch_id_status_records() {
             "missing {status} record"
         );
     }
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[test]
+fn state_dir_rejects_unsafe_workflow_ids_before_writing() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let outside_name = format!("cps-workflow-escape-{}", uuid::Uuid::new_v4());
+    let traversal = format!("../../{outside_name}");
+
+    for workflow_id in [
+        traversal.as_str(),
+        "nested/workflow",
+        r"nested\workflow",
+        "",
+        ".",
+        "..",
+    ] {
+        let err = state.ensure_workflow_layout(workflow_id).unwrap_err();
+        assert!(
+            err.to_string().contains("workflow_id"),
+            "unexpected error for {workflow_id:?}: {err}"
+        );
+    }
+
+    assert!(!state_path.parent().unwrap().join(&outside_name).exists());
 
     let _ = fs::remove_dir_all(state_path);
 }
@@ -732,6 +762,7 @@ async fn patch_install_rejects_schema_valid_sample_output_change() {
     assert!(
         state
             .workflow_dir(workflow_id)
+            .unwrap()
             .join("patches/rejected/bad_fast_path_output.json")
             .exists()
     );

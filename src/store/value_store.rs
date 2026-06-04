@@ -37,7 +37,7 @@ impl FileValueStore {
         write_json_pretty(
             &self
                 .state
-                .workflow_dir(&self.workflow_id)
+                .workflow_dir(&self.workflow_id)?
                 .join("values")
                 .join(format!("{hash}.json")),
             value,
@@ -53,7 +53,7 @@ impl FileValueStore {
         read_json(
             &self
                 .state
-                .workflow_dir(&self.workflow_id)
+                .workflow_dir(&self.workflow_id)?
                 .join("values")
                 .join(format!("{hash}.json")),
         )

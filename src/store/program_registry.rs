@@ -49,7 +49,7 @@ impl FileProgramRegistry {
         mut meta: ProgramMetadata,
     ) -> Result<()> {
         self.state.ensure_workflow_layout(workflow_id)?;
-        let workflow_dir = self.state.workflow_dir(workflow_id);
+        let workflow_dir = self.state.workflow_dir(workflow_id)?;
         program.version = "v0001".to_owned();
         meta.workflow_id = workflow_id.to_owned();
         meta.program_id = program.program_id.clone();
@@ -81,7 +81,7 @@ impl FileProgramRegistry {
         read_text(
             &self
                 .state
-                .workflow_dir(workflow_id)
+                .workflow_dir(workflow_id)?
                 .join("programs")
                 .join("latest"),
         )
@@ -92,7 +92,7 @@ impl FileProgramRegistry {
         read_json(
             &self
                 .state
-                .workflow_dir(workflow_id)
+                .workflow_dir(workflow_id)?
                 .join("programs")
                 .join(version)
                 .join("program.json"),
@@ -118,7 +118,7 @@ impl FileProgramRegistry {
         write_text(
             &self
                 .state
-                .workflow_dir(workflow_id)
+                .workflow_dir(workflow_id)?
                 .join("programs")
                 .join("latest"),
             &format!("{version}\n"),
@@ -127,7 +127,7 @@ impl FileProgramRegistry {
     }
 
     pub fn list_versions(&self, workflow_id: &str) -> Result<Vec<ProgramMetadata>> {
-        let programs_dir = self.state.workflow_dir(workflow_id).join("programs");
+        let programs_dir = self.state.workflow_dir(workflow_id)?.join("programs");
         let mut versions = Vec::new();
         for entry in std::fs::read_dir(&programs_dir)? {
             let entry = entry?;
@@ -151,7 +151,7 @@ impl FileProgramRegistry {
     ) -> Result<()> {
         let version_dir = self
             .state
-            .workflow_dir(workflow_id)
+            .workflow_dir(workflow_id)?
             .join("programs")
             .join(&program.version);
         write_json_pretty(&version_dir.join("program.json"), program)?;

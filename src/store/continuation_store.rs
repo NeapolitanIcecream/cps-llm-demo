@@ -37,7 +37,7 @@ impl FileContinuationStore {
         write_json_pretty(
             &self
                 .state
-                .workflow_dir(&self.workflow_id)
+                .workflow_dir(&self.workflow_id)?
                 .join("continuations")
                 .join(format!("{}.json", continuation.continuation_id)),
             continuation,
@@ -49,7 +49,7 @@ impl FileContinuationStore {
         read_json(
             &self
                 .state
-                .workflow_dir(&self.workflow_id)
+                .workflow_dir(&self.workflow_id)?
                 .join("continuations")
                 .join(format!("{continuation_id}.json")),
         )

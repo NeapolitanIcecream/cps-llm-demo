@@ -60,7 +60,7 @@ impl FileProfileStore {
     pub fn load(&self, workflow_id: &str) -> Result<ProfileStoreData> {
         let path = self
             .state
-            .workflow_dir(workflow_id)
+            .workflow_dir(workflow_id)?
             .join("profiles")
             .join("profile.json");
         if path.exists() {
@@ -238,7 +238,7 @@ impl FileProfileStore {
     }
 
     fn load_split_files(&self, workflow_id: &str) -> Result<ProfileStoreData> {
-        let profiles_dir = self.state.workflow_dir(workflow_id).join("profiles");
+        let profiles_dir = self.state.workflow_dir(workflow_id)?.join("profiles");
         let mut data = ProfileStoreData::default();
         let failures = profiles_dir.join("failure_fingerprints.json");
         if failures.exists() {
@@ -256,7 +256,7 @@ impl FileProfileStore {
     }
 
     fn write_profile_files(&self, workflow_id: &str, profile: &ProfileStoreData) -> Result<()> {
-        let profiles_dir = self.state.workflow_dir(workflow_id).join("profiles");
+        let profiles_dir = self.state.workflow_dir(workflow_id)?.join("profiles");
         write_json_pretty(&profiles_dir.join("profile.json"), profile)?;
         write_json_pretty(
             &profiles_dir.join("failure_fingerprints.json"),
