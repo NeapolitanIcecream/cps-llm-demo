@@ -145,22 +145,14 @@ impl FileProfileStore {
                     stats.calls += 1;
                     last_effect_key = Some(effect);
                 }
-                "handler_decision" => {
-                    let accepted = event
+                "effect_accepted" => {
+                    if let Some(effect_key) = event
                         .detail
-                        .get("decision")
+                        .get("effect")
                         .and_then(serde_json::Value::as_str)
-                        == Some("return_value")
-                        && event
-                            .detail
-                            .get("schema_valid")
-                            .and_then(serde_json::Value::as_bool)
-                            .unwrap_or(false);
-                    if accepted {
-                        if let Some(effect_key) = &last_effect_key {
-                            if let Some(stats) = profile.effect_stats.get_mut(effect_key) {
-                                stats.accepted += 1;
-                            }
+                    {
+                        if let Some(stats) = profile.effect_stats.get_mut(effect_key) {
+                            stats.accepted += 1;
                         }
                     }
                 }

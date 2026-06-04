@@ -526,6 +526,23 @@ where
                     &resolution.value,
                     resolution.confidence,
                 ) {
+                    self.trace.emit(
+                        "effect_accepted",
+                        &state.trace_id,
+                        json!({
+                            "function": &function,
+                            "pc": pc,
+                            "out": &out,
+                            "effect": effect.kind_name(),
+                            "strength": effect.strength().map(|strength| match strength {
+                                ModelStrength::Weak => "weak",
+                                ModelStrength::Strong => "strong",
+                            }),
+                            "task": effect.model_task_name(),
+                            "source": resolution.source.as_str(),
+                            "captured": false,
+                        }),
+                    );
                     let frame = state.top_frame_mut()?;
                     frame.env.insert(out, resolution.value);
                     frame.pc += 1;
@@ -1011,6 +1028,10 @@ where
             model_visible_frame = encoded.model_visible_frame;
         }
         let reason = model_visible_frame.reason.clone();
+        let repaired_effect = match &model_visible_frame.failed_instruction {
+            Some(Instr::Perform { effect, .. }) => Some(effect.clone()),
+            _ => None,
+        };
         let effect = EffectCall::Think { reason };
         if !effect_allowed(&state.program.allowed_effects, &effect) {
             return Err(anyhow!(
@@ -1034,6 +1055,28 @@ where
             .await?;
         validate_value(&expected_schema, &resolution.value)
             .context("strong Think return_value failed expected schema")?;
+
+        if let Some(failed_effect) = repaired_effect.as_ref() {
+            self.trace.emit(
+                "effect_accepted",
+                &state.trace_id,
+                json!({
+                    "effect": failed_effect.kind_name(),
+                    "strength": failed_effect.strength().map(|strength| match strength {
+                        ModelStrength::Weak => "weak",
+                        ModelStrength::Strong => "strong",
+                    }),
+                    "task": failed_effect.model_task_name(),
+                    "source": resolution.source.as_str(),
+                    "captured": true,
+                    "continuation_id": &continuation.continuation_id,
+                    "function": continuation.stack.last().map(|frame| frame.function.as_str()),
+                    "resume_pc": continuation.resume_pc,
+                    "resume_var": continuation.resume_var.as_ref(),
+                    "depth": continuation.effect_depth,
+                }),
+            );
+        }
 
         self.trace.emit(
             "resume_continuation",

@@ -1453,6 +1453,14 @@ async fn strong_handler_can_request_weak_probe_and_reenter() {
         event.event == "reenter_handler"
             && event.detail["observation_name"] == "datetime_candidates"
     }));
+    let accepted_effects = trace
+        .events()
+        .into_iter()
+        .filter(|event| event.event == "effect_accepted")
+        .collect::<Vec<_>>();
+    assert_eq!(accepted_effects.len(), 1);
+    assert_eq!(accepted_effects[0].detail["effect"], "model_task");
+    assert_eq!(accepted_effects[0].detail["captured"], true);
 }
 
 #[tokio::test]

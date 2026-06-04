@@ -141,6 +141,135 @@ fn profile_store_records_successful_probe_for_failure_fingerprint() {
     let _ = fs::remove_dir_all(state_path);
 }
 
+#[test]
+fn profile_store_counts_nested_probe_repair_as_one_accepted_effect_call() {
+    let state_path = temp_state_dir();
+    let store = FileProfileStore::new(StateDir::new(state_path.clone()));
+    store
+        .update_from_trace(
+            "generic_workflow",
+            &[
+                TraceEvent {
+                    event: "perform_effect".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "function": "main",
+                        "pc": 0,
+                        "out": "draft",
+                        "effect": "model_task",
+                        "strength": "weak",
+                        "task": "classify_and_extract_action_draft"
+                    }),
+                },
+                TraceEvent {
+                    event: "handler_decision".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "handler": "weak_model",
+                        "effect": "model_task",
+                        "decision": "return_value",
+                        "schema_valid": false,
+                        "depth": 0
+                    }),
+                },
+                TraceEvent {
+                    event: "capture_continuation".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "continuation_id": "k1",
+                        "program_id": "p1",
+                        "program_version": "v0001",
+                        "function": "main",
+                        "pc": 0,
+                        "failed_effect_kind": "model_task",
+                        "expected_schema": { "type": "object" },
+                        "observations": [{ "schema_valid": false, "value": { "a": "redacted" } }]
+                    }),
+                },
+                TraceEvent {
+                    event: "handler_decision".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "handler": "strong_model",
+                        "effect": "think",
+                        "decision": "request_effect",
+                        "schema_valid": null,
+                        "depth": 1
+                    }),
+                },
+                TraceEvent {
+                    event: "request_nested_effect".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "from_handler": "strong_model",
+                        "from_effect": "think",
+                        "to_handler": "weak_model",
+                        "to_effect": "model_task",
+                        "mode": "reenter_handler",
+                        "depth": 2
+                    }),
+                },
+                TraceEvent {
+                    event: "handler_decision".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "handler": "weak_model",
+                        "effect": "model_task",
+                        "decision": "return_value",
+                        "schema_valid": true,
+                        "depth": 2
+                    }),
+                },
+                TraceEvent {
+                    event: "nested_effect_result".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "mode": "reenter_handler",
+                        "schema_valid": true,
+                        "source": "weak_model",
+                        "depth": 2
+                    }),
+                },
+                TraceEvent {
+                    event: "handler_decision".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "handler": "strong_model",
+                        "effect": "think",
+                        "decision": "return_value",
+                        "schema_valid": true,
+                        "depth": 1
+                    }),
+                },
+                TraceEvent {
+                    event: "effect_accepted".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "effect": "model_task",
+                        "source": "strong_model",
+                        "captured": true,
+                        "continuation_id": "k1"
+                    }),
+                },
+            ],
+        )
+        .unwrap();
+
+    let profile = store.load("generic_workflow").unwrap();
+    let stats = profile.effect_stats.get("model_task").unwrap();
+    assert_eq!(stats.calls, 1);
+    assert_eq!(stats.captures, 1);
+    assert_eq!(stats.accepted, 1);
+    let failure = profile.failure_fingerprints.values().next().unwrap();
+    assert_eq!(
+        failure.successful_probes[0].probe_id,
+        "weak_model:model_task"
+    );
+    assert_eq!(failure.successful_probes[0].success_count, 1);
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
 #[tokio::test]
 async fn branch_selects_then_pc() {
     let program = branch_program();

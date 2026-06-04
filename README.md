@@ -147,6 +147,7 @@ handler_decision handler=weak_model decision=return_value schema_valid=true
 capture_continuation function=process_message resume_pc=2 resume_var=draft map_index=0
 handler_request handler=strong_model effect=think
 handler_decision handler=strong_model decision=return_value
+effect_accepted effect=model_task captured=true
 resume_continuation pc=2 resume_var=draft
 return_from_function function=process_message
 map_item_done index=0
@@ -166,6 +167,7 @@ enter_function function=__fragment_0__generated_processor
 exec_instr function=__fragment_0__generated_processor op=perform effect=think
 handler_request handler=strong_model effect=think
 handler_decision handler=strong_model decision=return_value
+effect_accepted effect=think captured=false
 return_from_function function=__fragment_0__generated_processor
 ```
 
