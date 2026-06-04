@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::program::ProgramPatch;
@@ -115,6 +115,14 @@ impl FilePatchRegistry {
         patch: ProgramPatch,
         metadata: PatchMetadata,
     ) -> Result<()> {
+        let filename = patch_record_filename(&patch.patch_id)?;
+        if metadata.patch_id != patch.patch_id {
+            bail!(
+                "patch metadata patch_id {:?} does not match patch patch_id {:?}",
+                metadata.patch_id,
+                patch.patch_id
+            );
+        }
         self.state.ensure_workflow_layout(workflow_id)?;
         let dir = match status {
             PatchStatus::Proposed => "proposed",
@@ -128,7 +136,7 @@ impl FilePatchRegistry {
                 .workflow_dir(workflow_id)
                 .join("patches")
                 .join(dir)
-                .join(format!("{}.json", patch.patch_id)),
+                .join(filename),
             &PatchRecord { patch, metadata },
         )
     }
@@ -151,6 +159,29 @@ impl FilePatchRegistry {
         }
         Ok(records)
     }
+}
+
+fn patch_record_filename(patch_id: &str) -> Result<String> {
+    validate_patch_id_path_component(patch_id)?;
+    Ok(format!("{patch_id}.json"))
+}
+
+fn validate_patch_id_path_component(patch_id: &str) -> Result<()> {
+    if patch_id.is_empty() {
+        bail!("patch_id must not be empty");
+    }
+    if patch_id == "." || patch_id == ".." {
+        bail!("patch_id must be a safe filename component");
+    }
+    if !patch_id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        bail!(
+            "patch_id {patch_id:?} contains unsafe filename characters; use ASCII letters, digits, '.', '_' or '-'"
+        );
+    }
+    Ok(())
 }
 
 pub fn fixture_patch_metadata(

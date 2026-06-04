@@ -24,7 +24,7 @@ use cps_llm_demo::store::continuation_store::{
     FileContinuationStore, FileEffectFrameEncoder, FrameEncodingConfig,
 };
 use cps_llm_demo::store::metrics_store::RunMetrics;
-use cps_llm_demo::store::patch_registry::FilePatchRegistry;
+use cps_llm_demo::store::patch_registry::{FilePatchRegistry, fixture_patch_metadata};
 use cps_llm_demo::store::profile_store::FileProfileStore;
 use cps_llm_demo::store::program_registry::{FileProgramRegistry, fixture_program_metadata};
 use cps_llm_demo::store::state_dir::StateDir;
@@ -235,6 +235,99 @@ fn metrics_include_compile_effects_in_estimated_model_calls() {
 
     assert_eq!(metrics.program_compile_calls, 1);
     assert_eq!(metrics.estimated_model_calls, 4);
+}
+
+#[test]
+fn patch_registry_rejects_unsafe_patch_ids_before_writing() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let patches = FilePatchRegistry::new(state.clone());
+    let workflow_id = "notification_triage";
+
+    for patch_id in [
+        "../../metrics/evil",
+        "nested/evil",
+        r"nested\evil",
+        "",
+        ".",
+        "..",
+    ] {
+        let patch = registry_test_patch(patch_id);
+        let err = patches
+            .record_proposed(
+                workflow_id,
+                patch.clone(),
+                fixture_patch_metadata(workflow_id, &patch.patch_id, "v0001", &patch.rationale),
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("patch_id"),
+            "unexpected error for {patch_id:?}: {err}"
+        );
+    }
+
+    assert!(
+        !state
+            .workflow_dir(workflow_id)
+            .join("metrics/evil.json")
+            .exists()
+    );
+    assert!(
+        !state
+            .workflow_dir(workflow_id)
+            .join("patches/proposed/nested/evil.json")
+            .exists()
+    );
+    assert!(patches.list_proposed(workflow_id).unwrap().is_empty());
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[test]
+fn patch_registry_preserves_valid_patch_id_status_records() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let patches = FilePatchRegistry::new(state.clone());
+    let workflow_id = "notification_triage";
+    let patch = registry_test_patch("fixture_fast_path_v1");
+    let metadata = fixture_patch_metadata(workflow_id, &patch.patch_id, "v0001", &patch.rationale);
+
+    patches
+        .record_proposed(workflow_id, patch.clone(), metadata.clone())
+        .unwrap();
+    let proposed = patches.list_proposed(workflow_id).unwrap();
+    assert_eq!(proposed.len(), 1);
+    assert_eq!(proposed[0].patch.patch_id, patch.patch_id);
+    assert_eq!(proposed[0].metadata.patch_id, patch.patch_id);
+
+    patches
+        .mark_validated(workflow_id, patch.clone(), metadata.clone())
+        .unwrap();
+    patches
+        .mark_rejected(
+            workflow_id,
+            patch.clone(),
+            metadata.clone(),
+            "not enough improvement",
+        )
+        .unwrap();
+    patches
+        .mark_installed(workflow_id, patch.clone(), metadata, "v0002")
+        .unwrap();
+
+    for status in ["proposed", "validated", "rejected", "installed"] {
+        assert!(
+            state
+                .workflow_dir(workflow_id)
+                .join("patches")
+                .join(status)
+                .join("fixture_fast_path_v1.json")
+                .exists(),
+            "missing {status} record"
+        );
+    }
+
+    let _ = fs::remove_dir_all(state_path);
 }
 
 #[test]
@@ -1427,6 +1520,15 @@ fn temp_state_dir() -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("cps-value-loop-{}", uuid::Uuid::new_v4()));
     fs::create_dir(&path).unwrap();
     path
+}
+
+fn registry_test_patch(patch_id: &str) -> ProgramPatch {
+    ProgramPatch {
+        target_program_id: "notification_triage".to_owned(),
+        patch_id: patch_id.to_owned(),
+        operations: Vec::new(),
+        rationale: "registry path safety test".to_owned(),
+    }
 }
 
 fn test_run_metrics() -> RunMetrics {
