@@ -65,10 +65,10 @@ where
     while let Some(event) = event_source.next_event()? {
         metrics.events_total += 1;
         let trace = TraceCollector::default();
-        let event_id = event_id_or_generate(&event);
+        let (event, event_id) = event_with_stable_id(event);
         trace.emit(
             "stream_event",
-            event_id,
+            event_id.clone(),
             serde_json::json!({
                 "event": event.clone(),
             }),
@@ -136,4 +136,15 @@ pub fn event_id_or_generate(event: &Value) -> String {
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+}
+
+fn event_with_stable_id(event: Value) -> (Value, String) {
+    let event_id = event_id_or_generate(&event);
+    match event {
+        Value::Object(mut event) => {
+            event.insert("event_id".to_owned(), Value::String(event_id.clone()));
+            (Value::Object(event), event_id)
+        }
+        event => (event, event_id),
+    }
 }

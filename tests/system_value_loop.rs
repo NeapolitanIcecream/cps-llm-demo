@@ -1700,6 +1700,90 @@ async fn run_stream_rejects_malformed_runtime_patch_id_without_aborting_later_ev
     let _ = fs::remove_dir_all(state_path);
 }
 
+#[tokio::test]
+async fn run_stream_propagates_generated_event_ids_to_runtime_traces_and_profiles() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "generated_event_id_runtime_attribution";
+    let program: Program = serde_json::from_str(include_str!(
+        "../examples/notification_triage.v1.program.json"
+    ))
+    .unwrap();
+    let programs = FileProgramRegistry::new(state.clone());
+    programs
+        .init_workflow(
+            workflow_id,
+            program.clone(),
+            fixture_program_metadata(workflow_id, &program),
+        )
+        .unwrap();
+
+    let summary = run_stream(
+        state.clone(),
+        workflow_id,
+        InMemoryEventSource::new(vec![
+            capture_fixture_event(None),
+            capture_fixture_event(Some(Value::Null)),
+            capture_fixture_event(Some(json!(123))),
+            capture_fixture_event(Some(json!("provided-id"))),
+        ]),
+        Arc::new(FixtureModelHandler::weak()),
+        Arc::new(FixtureModelHandler::strong()),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.events_total, 4);
+    assert_eq!(summary.events_succeeded, 4);
+    assert_eq!(summary.events_failed, 0);
+
+    let trace_events = FileTraceStore::new(state.clone())
+        .read_run(workflow_id, &summary.run_id)
+        .unwrap();
+    let stream_events = trace_events
+        .iter()
+        .filter(|event| event.event == "stream_event")
+        .collect::<Vec<_>>();
+    let capture_events = trace_events
+        .iter()
+        .filter(|event| event.event == "capture_continuation")
+        .collect::<Vec<_>>();
+
+    assert_eq!(stream_events.len(), 4);
+    assert_eq!(capture_events.len(), 4);
+
+    let mut run_event_ids = Vec::new();
+    for (stream_event, capture_event) in stream_events.iter().zip(capture_events.iter()) {
+        let payload_event_id = stream_event.detail["event"]["event_id"]
+            .as_str()
+            .expect("stored stream event payload has stable event_id");
+        assert_eq!(stream_event.event_id, payload_event_id);
+        assert_eq!(capture_event.event_id, stream_event.event_id);
+        assert_ne!(capture_event.event_id, program.program_id);
+        run_event_ids.push(stream_event.event_id.clone());
+    }
+
+    assert_eq!(run_event_ids[3], "provided-id");
+    assert!(run_event_ids[..3].iter().all(|id| id != "provided-id"));
+
+    let profile = FileProfileStore::new(state).load(workflow_id).unwrap();
+    let failure = profile
+        .failure_fingerprints
+        .values()
+        .next()
+        .expect("captured weak failures are profiled");
+    assert_eq!(failure.count, 4);
+    for event_id in &run_event_ids {
+        assert!(
+            failure.sample_event_refs.contains(event_id),
+            "profile sample refs should include runtime event id {event_id}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
 struct ScriptedHandler {
     decisions: Mutex<VecDeque<HandlerDecision>>,
 }
@@ -2129,6 +2213,35 @@ fn validate_patch_rejects_unsafe_patch_id() {
         err.to_string().contains("unsafe filename characters"),
         "unexpected error: {err}"
     );
+}
+
+fn capture_fixture_event(event_id: Option<Value>) -> Value {
+    let action = json!({
+        "event_id": "draft-output",
+        "kind": "create_task",
+        "title": "Follow up",
+        "datetime_hint": null
+    });
+    let mut event = Map::new();
+    if let Some(event_id) = event_id {
+        event.insert("event_id".to_owned(), event_id);
+    }
+    event.insert("source".to_owned(), json!("test"));
+    event.insert("text".to_owned(), json!("Follow up after standup"));
+    event.insert(
+        "_fixture_model".to_owned(),
+        json!({
+            "weak": {
+                "value": action,
+                "confidence": 0.1
+            },
+            "strong": {
+                "value": action,
+                "confidence": 1.0
+            }
+        }),
+    );
+    Value::Object(event)
 }
 
 fn versioned_failure_capture_event(
