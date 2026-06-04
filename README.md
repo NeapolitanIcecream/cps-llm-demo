@@ -90,6 +90,24 @@ cargo run -- baseline-strong-direct \
 cargo run -- metrics-report \
   --workflow notification_triage \
   --state-dir $STATE
+
+# Use the run_id values returned by run-stream and baseline-strong-direct.
+cargo run -- compare-runs \
+  --baseline-run $BASELINE_RUN \
+  --before-run $ROUND1_RUN \
+  --after-run $ROUND2_RUN \
+  --state-dir $STATE
+```
+
+`compare-runs` returns the merge-readiness booleans for the fixture loop:
+
+```json
+{
+  "strong_calls_per_event_decreased": true,
+  "fast_path_coverage_increased": true,
+  "continuation_frame_size_bounded": true,
+  "program_version_advanced": true
+}
 ```
 
 The report includes `latest_program_version`, per-run metrics, and a summary that checks whether fast-path hit rate increased, StrongThink rate decreased, the strong-direct baseline used one strong call per event, and continuation frames stayed under the configured byte limit.

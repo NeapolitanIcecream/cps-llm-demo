@@ -691,6 +691,8 @@ where
             }
             state.consume_effect_budget()?;
 
+            validate_effect_input_contract(&effect, &input)?;
+
             let handler_name = effect.handler_name();
             self.trace.emit(
                 "handler_request",
@@ -1555,6 +1557,18 @@ fn accepted_by_policy(
 
 fn trace_return_value_schema_valid(expected_schema: &Value, value: &Value) -> bool {
     validate_value(expected_schema, value).is_ok()
+}
+
+fn validate_effect_input_contract(effect: &EffectCall, input: &Value) -> Result<()> {
+    let EffectCall::LocalTool {
+        tool_name,
+        args_schema,
+    } = effect
+    else {
+        return Ok(());
+    };
+    validate_value(args_schema, input)
+        .with_context(|| format!("local_tool {tool_name} input failed args_schema"))
 }
 
 fn is_handler_failure(err: &anyhow::Error) -> bool {

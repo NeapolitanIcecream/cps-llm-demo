@@ -391,12 +391,18 @@ fn validate_supported_effect_call(
     pc: usize,
 ) -> Result<()> {
     match effect {
-        EffectCall::LocalTool { tool_name, .. } => {
+        EffectCall::LocalTool {
+            tool_name,
+            args_schema,
+        } => {
             if tool_name.trim().is_empty() {
                 return Err(anyhow!(
                     "local_tool effect has empty tool_name at {function_name}:{pc}"
                 ));
             }
+            validate_json_schema(args_schema).map_err(|err| {
+                anyhow!("local_tool args_schema is invalid at {function_name}:{pc}: {err}")
+            })?;
         }
         EffectCall::CompileProgram {
             strength: ModelStrength::Weak,

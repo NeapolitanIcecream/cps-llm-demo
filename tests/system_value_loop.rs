@@ -235,7 +235,7 @@ fn cli_fixture_value_loop_proves_kpis() {
         "--state-dir",
         state.to_str().unwrap(),
     ]);
-    cargo_ok([
+    let round1 = cargo_json([
         "run-stream",
         "--workflow",
         "notification_triage",
@@ -244,6 +244,7 @@ fn cli_fixture_value_loop_proves_kpis() {
         "--state-dir",
         state.to_str().unwrap(),
     ]);
+    let round1_run_id = round1["run_id"].as_str().unwrap().to_owned();
     assert!(
         state
             .join("workflows/notification_triage/profiles/failure_fingerprints.json")
@@ -290,7 +291,7 @@ fn cli_fixture_value_loop_proves_kpis() {
             .unwrap()
             > 0
     );
-    cargo_ok([
+    let round2 = cargo_json([
         "run-stream",
         "--workflow",
         "notification_triage",
@@ -299,7 +300,8 @@ fn cli_fixture_value_loop_proves_kpis() {
         "--state-dir",
         state.to_str().unwrap(),
     ]);
-    cargo_ok([
+    let round2_run_id = round2["run_id"].as_str().unwrap().to_owned();
+    let baseline = cargo_json([
         "baseline-strong-direct",
         "--workflow",
         "notification_triage",
@@ -310,6 +312,7 @@ fn cli_fixture_value_loop_proves_kpis() {
         "--state-dir",
         state.to_str().unwrap(),
     ]);
+    let baseline_run_id = baseline["run_id"].as_str().unwrap().to_owned();
 
     let report = cargo_json([
         "metrics-report",
@@ -362,6 +365,25 @@ fn cli_fixture_value_loop_proves_kpis() {
             .unwrap()
             <= 16_384
     );
+
+    let comparison = cargo_json([
+        "compare-runs",
+        "--baseline-run",
+        baseline_run_id.as_str(),
+        "--before-run",
+        round1_run_id.as_str(),
+        "--after-run",
+        round2_run_id.as_str(),
+        "--state-dir",
+        state.to_str().unwrap(),
+    ]);
+    for (name, value) in comparison.as_object().unwrap() {
+        assert_eq!(
+            value.as_bool(),
+            Some(true),
+            "compare-runs boolean {name} should be true"
+        );
+    }
 
     let _ = fs::remove_dir_all(state);
 }

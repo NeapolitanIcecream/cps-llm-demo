@@ -736,6 +736,53 @@ async fn unregistered_local_tool_is_rejected_at_runtime() {
 }
 
 #[test]
+fn local_tool_invalid_args_schema_is_rejected_during_validation() {
+    let program = local_validator_program(
+        json!({ "type": "not-a-json-schema-type" }),
+        valid_validator_apply_input(),
+    );
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("local_tool args_schema is invalid at main:0")
+    );
+}
+
+#[tokio::test]
+async fn local_tool_input_must_match_declared_args_schema_before_dispatch() {
+    let program = local_validator_program(
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "validators", "missing"],
+            "properties": {
+                "value": {},
+                "validators": { "type": "array" },
+                "missing": { "type": "string" }
+            }
+        }),
+        valid_validator_apply_input(),
+    );
+
+    validate_program(&program).unwrap();
+    let runtime = Runtime::new(
+        SequenceHandler::empty(),
+        SequenceHandler::empty(),
+        TraceCollector::default(),
+    );
+    let error = runtime.run_program(program, json!({})).await.unwrap_err();
+
+    assert!(error.chain().any(|cause| {
+        cause
+            .to_string()
+            .contains("local_tool validator_apply input failed args_schema")
+    }));
+}
+
+#[test]
 fn weak_compile_program_is_rejected_during_validation() {
     let mut functions = BTreeMap::new();
     functions.insert(
@@ -2190,6 +2237,53 @@ fn sourced_union_schema() -> Value {
             }
         ]
     })
+}
+
+fn valid_validator_apply_input() -> Value {
+    json!({
+        "value": { "present": true },
+        "validators": []
+    })
+}
+
+fn local_validator_program(args_schema: Value, input: Value) -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({ "type": "object" }),
+            body: vec![
+                Instr::Perform {
+                    out: "validated".to_owned(),
+                    effect: EffectCall::LocalTool {
+                        tool_name: "validator_apply".to_owned(),
+                        args_schema,
+                    },
+                    input: JsonExpr::Literal { value: input },
+                    expected_schema: json!({ "type": "object" }),
+                    acceptance: accept_abort(1.0),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "validated".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+
+    Program {
+        program_id: "local_validator_apply".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({ "type": "object" }),
+        functions,
+        allowed_effects: vec![EffectPermission::LocalTool {
+            tool_name: "validator_apply".to_owned(),
+        }],
+    }
 }
 
 fn user_source_required_schema() -> Value {
