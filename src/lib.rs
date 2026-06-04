@@ -8,3 +8,4 @@ pub mod responses_client;
 pub mod runtime;
 pub mod schema;
 pub mod trace;
+pub mod validator;

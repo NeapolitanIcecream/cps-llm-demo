@@ -1,0 +1,6 @@
+{"event":"program_start","event_id":"example","detail":{"program_id":"message_action_v2"}}
+{"event":"capture_continuation","event_id":"example","detail":{"continuation_id":"example-k1","function":"process_message","resume_pc":2,"resume_var":"draft","map_index":0}}
+{"event":"handler_request","event_id":"example","detail":{"handler":"strong_model","effect":"think"}}
+{"event":"handler_decision","event_id":"example","detail":{"handler":"strong_model","decision":"return_value","schema_valid":true}}
+{"event":"resume_continuation","event_id":"example","detail":{"continuation_id":"example-k1","pc":2,"resume_var":"draft"}}
+{"event":"program_finished","event_id":"example","detail":{"program_id":"message_action_v2"}}

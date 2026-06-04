@@ -1,0 +1,155 @@
+{
+  "program_id": "fractal_subprogram_v1",
+  "version": "1.0.0",
+  "entry": "main",
+  "input_schema": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "text"],
+      "properties": {
+        "event_id": { "type": "string" },
+        "text": { "type": "string" }
+      }
+    }
+  },
+  "output_schema": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "kind", "title", "datetime_hint"],
+      "properties": {
+        "event_id": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+        },
+        "title": { "type": "string" },
+        "datetime_hint": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }]
+        }
+      }
+    }
+  },
+  "functions": {
+    "main": {
+      "params": ["messages"],
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["event_id", "kind", "title", "datetime_hint"],
+          "properties": {
+            "event_id": { "type": "string" },
+            "kind": {
+              "type": "string",
+              "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+            },
+            "title": { "type": "string" },
+            "datetime_hint": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }]
+            }
+          }
+        }
+      },
+      "body": [
+        {
+          "op": "map",
+          "out": "drafts",
+          "items": {
+            "kind": "var",
+            "name": "messages"
+          },
+          "item_var": "message",
+          "function": "process_message"
+        },
+        {
+          "op": "return",
+          "value": {
+            "kind": "var",
+            "name": "drafts"
+          }
+        }
+      ]
+    },
+    "process_message": {
+      "params": ["message"],
+      "output_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "kind", "title", "datetime_hint"],
+        "properties": {
+          "event_id": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": ["ignore", "create_task", "create_calendar_event", "draft_reply"]
+          },
+          "title": { "type": "string" },
+          "datetime_hint": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }]
+          }
+        }
+      },
+      "body": [
+        {
+          "op": "perform",
+          "out": "processor",
+          "effect": {
+            "kind": "model_task",
+            "strength": "weak",
+            "task": {
+              "name": "generate_processor_program",
+              "instructions": "Return a ProgramFragment that can process one message event into one action draft."
+            }
+          },
+          "input": {
+            "kind": "var",
+            "name": "message"
+          },
+          "expected_schema": {},
+          "acceptance": {
+            "min_confidence": 0.5,
+            "require_schema_valid": false,
+            "on_failure": {
+              "kind": "abort",
+              "reason": "weak handler did not return a usable ProgramFragment"
+            }
+          }
+        },
+        {
+          "op": "call_dynamic",
+          "out": "draft",
+          "fragment": {
+            "kind": "var",
+            "name": "processor"
+          },
+          "args": [
+            {
+              "kind": "var",
+              "name": "message"
+            }
+          ]
+        },
+        {
+          "op": "return",
+          "value": {
+            "kind": "var",
+            "name": "draft"
+          }
+        }
+      ]
+    }
+  },
+  "allowed_effects": [
+    {
+      "kind": "model_task",
+      "strength": "weak"
+    },
+    {
+      "kind": "think"
+    }
+  ]
+}

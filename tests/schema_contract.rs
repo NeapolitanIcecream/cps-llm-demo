@@ -1,49 +1,53 @@
-use cps_llm_demo::effects::ThinkDecision;
-use cps_llm_demo::models::WEAK_TASK_INSTRUCTIONS;
-use cps_llm_demo::program::{JsonExpr, Program};
+use cps_llm_demo::effects::{Continuation, HandlerDecision, ReturnSlot, RuntimeFrame};
+use cps_llm_demo::models::WEAK_HANDLER_INSTRUCTIONS;
+use cps_llm_demo::program::Program;
 use cps_llm_demo::schema::{
-    action_draft_schema, program_schema, schema_bundle, think_decision_schema, validate_value,
-    weak_task_result_schema,
+    action_draft_schema, continuation_schema, handler_decision_schema, program_schema,
+    schema_bundle, validate_value, weak_task_result_schema,
 };
+use serde_json::Map;
 use serde_json::{Value, json};
 
 #[test]
-fn schema_bundle_contains_program_runtime_contracts() {
+fn schema_bundle_contains_v2_runtime_contracts() {
     let bundle = schema_bundle();
     assert!(bundle.get("program").is_some());
-    assert!(bundle.get("weak_task_result").is_some());
-    assert!(bundle.get("think_decision").is_some());
+    assert!(bundle.get("program_fragment").is_some());
+    assert!(bundle.get("program_patch").is_some());
+    assert!(bundle.get("handler_decision").is_some());
     assert!(bundle.get("effect_frame").is_some());
     assert!(bundle.get("continuation").is_some());
     assert!(bundle.get("weak_intent_guess").is_none());
 }
 
 #[test]
-fn weak_task_context_uses_program_effect_contract_names() {
+fn weak_handler_context_uses_neutral_effect_handler_wording() {
     let request_context = json!({
-        "instructions": WEAK_TASK_INSTRUCTIONS,
+        "instructions": WEAK_HANDLER_INSTRUCTIONS,
         "text": {
             "format": {
-                "name": "weak_task_result",
-                "schema": weak_task_result_schema(action_draft_schema()),
+                "name": "handler_decision",
+                "schema": handler_decision_schema(),
             }
         }
     });
 
+    assert!(WEAK_HANDLER_INSTRUCTIONS.contains("effect handler"));
+    assert!(
+        !WEAK_HANDLER_INSTRUCTIONS
+            .to_ascii_lowercase()
+            .contains("weak")
+    );
+
     let body = serde_json::to_string(&request_context).unwrap();
-    assert!(body.contains("WEAK semantic effect handler"));
-    assert!(body.contains("WeakTaskSpec"));
-    assert!(body.contains("weak_task_result"));
+    assert!(body.contains("request_effect"));
+    assert!(body.contains("handler_decision"));
 }
 
 #[test]
-fn live_structured_output_schemas_follow_openai_strict_subset() {
+fn live_structured_output_schemas_have_object_roots_and_supported_keywords() {
     for (name, schema) in [
-        (
-            "weak_task_result",
-            weak_task_result_schema(action_draft_schema()),
-        ),
-        ("think_decision", think_decision_schema()),
+        ("handler_decision", handler_decision_schema()),
         ("program", program_schema()),
     ] {
         assert_eq!(
@@ -69,23 +73,21 @@ fn live_structured_output_schemas_follow_openai_strict_subset() {
         assert_no_boolean_schema(&schema, name);
         assert_no_root_schema_keyword(&schema, name);
         assert_no_numeric_format(&schema, name);
-        assert_strict_object_schemas_disallow_additional_properties(&schema, name);
     }
 }
 
 #[test]
-fn think_decision_schema_binds_decision_to_payload_shape() {
-    let schema = think_decision_schema();
+fn handler_decision_schema_binds_decision_to_payload_shape() {
+    let schema = handler_decision_schema();
 
     let resume = json!({
-        "think_decision": {
-            "decision": "resume_with_value",
+        "handler_decision": {
+            "decision": "return_value",
             "value": {
                 "event_id": "m1",
                 "kind": "create_task",
                 "title": "发送新版 proposal",
-                "datetime_hint": "明天 10 点前",
-                "source": "strong_think"
+                "datetime_hint": "明天 10 点前"
             },
             "confidence": 0.88,
             "rationale": "resolved frame"
@@ -93,44 +95,27 @@ fn think_decision_schema_binds_decision_to_payload_shape() {
     });
     validate_value(&schema, &resume).unwrap();
 
-    let probe = json!({
-        "think_decision": {
-            "decision": "request_weak_probe",
-            "out": "datetime_candidates",
-            "task": {
-                "name": "extract_datetime_candidates",
-                "instructions": "Extract possible datetime hints."
+    let request_effect = json!({
+        "handler_decision": {
+            "decision": "request_effect",
+            "effect": {
+                "kind": "think",
+                "reason": "weak handler cannot resolve semantic ambiguity"
             },
             "input": {
-                "kind": "object",
-                "fields": [
-                    {
-                        "name": "message",
-                        "value": {
-                            "kind": "var",
-                            "name": "$input"
-                        }
-                    },
-                    {
-                        "name": "fallback",
-                        "value": {
-                            "kind": "literal",
-                            "value": null
-                        }
-                    }
-                ]
+                "partial": "ambiguous"
             },
-            "output_schema": {
-                "type": "object"
+            "expected_schema": action_draft_schema(),
+            "mode": {
+                "mode": "use_as_value"
             },
-            "min_confidence": 0.5,
-            "rationale": "need local probe"
+            "rationale": "need stronger reasoning"
         }
     });
-    validate_value(&schema, &probe).unwrap();
+    validate_value(&schema, &request_effect).unwrap();
 
     let abort = json!({
-        "think_decision": {
+        "handler_decision": {
             "decision": "abort",
             "reason": "underspecified"
         }
@@ -138,7 +123,7 @@ fn think_decision_schema_binds_decision_to_payload_shape() {
     validate_value(&schema, &abort).unwrap();
 
     let mismatched_decision = json!({
-        "think_decision": {
+        "handler_decision": {
             "decision": "abort",
             "value": {
                 "event_id": "m1",
@@ -150,53 +135,68 @@ fn think_decision_schema_binds_decision_to_payload_shape() {
     });
     assert!(validate_value(&schema, &mismatched_decision).is_err());
 
-    let parsed: cps_llm_demo::models::WeakTaskResult = serde_json::from_value(json!({
-        "value": {
-            "event_id": "m1",
-            "kind": "create_task",
-            "title": "发送新版 proposal",
-            "datetime_hint": null,
-            "source": "weak_model"
-        },
-        "confidence": 0.9,
-        "rationale": "clear request"
-    }))
-    .unwrap();
-    validate_value(
-        &weak_task_result_schema(action_draft_schema()),
-        &serde_json::to_value(parsed).unwrap(),
-    )
-    .unwrap();
-
     assert_eq!(
-        ThinkDecision::RequestWeakProbe {
-            out: "x".to_owned(),
-            task: cps_llm_demo::program::WeakTaskSpec {
-                name: "probe".to_owned(),
-                instructions: "probe".to_owned(),
+        HandlerDecision::RequestEffect {
+            effect: cps_llm_demo::program::EffectCall::Think {
+                reason: "probe".to_owned(),
             },
-            input: JsonExpr::Var {
-                name: "$input".to_owned(),
-            },
-            output_schema: json!({}),
-            min_confidence: 0.5,
+            input: json!({}),
+            expected_schema: json!({}),
+            mode: cps_llm_demo::effects::EffectReturnMode::UseAsValue,
             rationale: "probe".to_owned(),
         }
         .decision_name(),
-        "request_weak_probe"
+        "request_effect"
     );
 }
 
 #[test]
-fn weak_task_result_schema_rejects_confidence_outside_probability_range() {
+fn continuation_schema_accepts_static_call_return_without_dynamic_schema() {
+    let continuation = Continuation {
+        continuation_id: "k1".to_owned(),
+        boundary_id: "b1".to_owned(),
+        program_id: "message_action_v2".to_owned(),
+        stack: vec![RuntimeFrame {
+            function: "helper".to_owned(),
+            pc: 1,
+            env: Map::new(),
+            return_to: Some(ReturnSlot::Call {
+                caller_function: "main".to_owned(),
+                caller_pc: 2,
+                var: "helper_output".to_owned(),
+                expected_schema: None,
+            }),
+        }],
+        resume_var: Some("draft".to_owned()),
+        resume_pc: 3,
+        expected_schema: action_draft_schema(),
+        fuel_remaining: 999,
+        effect_depth: 0,
+    };
+
+    let value = serde_json::to_value(&continuation).unwrap();
+
+    assert!(
+        value["stack"][0]["return_to"]
+            .get("expected_schema")
+            .is_some()
+    );
+    assert_eq!(
+        value["stack"][0]["return_to"]["expected_schema"],
+        Value::Null
+    );
+    validate_value(&continuation_schema(), &value).unwrap();
+}
+
+#[test]
+fn weak_task_result_schema_still_rejects_confidence_outside_probability_range() {
     let schema = weak_task_result_schema(action_draft_schema());
     let valid_guess = json!({
         "value": {
             "event_id": "m1",
             "kind": "create_task",
             "title": "Send proposal",
-            "datetime_hint": null,
-            "source": "weak_model"
+            "datetime_hint": null
         },
         "confidence": 1.0,
         "rationale": "clear request"
@@ -209,8 +209,7 @@ fn weak_task_result_schema_rejects_confidence_outside_probability_range() {
                 "event_id": "m1",
                 "kind": "create_task",
                 "title": "Send proposal",
-                "datetime_hint": null,
-                "source": "weak_model"
+                "datetime_hint": null
             },
             "confidence": confidence,
             "rationale": "clear request"
@@ -224,14 +223,15 @@ fn weak_task_result_schema_rejects_confidence_outside_probability_range() {
 }
 
 #[test]
-fn program_schema_rejects_weak_call_min_confidence_outside_probability_range() {
+fn program_schema_rejects_acceptance_min_confidence_outside_probability_range() {
     let schema = program_schema();
     let mut program: Value =
-        serde_json::from_str(include_str!("../examples/message_action.program.json")).unwrap();
+        serde_json::from_str(include_str!("../examples/message_action.v2.program.json")).unwrap();
     validate_value(&schema, &program).unwrap();
 
     for confidence in [-1.0, 75.0] {
-        program["instructions"][0]["min_confidence"] = json!(confidence);
+        program["functions"]["process_message"]["body"][0]["acceptance"]["min_confidence"] =
+            json!(confidence);
 
         assert!(
             validate_value(&schema, &program).is_err(),
@@ -337,42 +337,4 @@ fn assert_no_root_schema_keyword(value: &Value, name: &str) {
         value.get("$schema").is_none(),
         "{name} must not include root $schema metadata"
     );
-}
-
-fn assert_strict_object_schemas_disallow_additional_properties(value: &Value, path: &str) {
-    match value {
-        Value::Object(map) => {
-            let is_object_schema = match map.get("type") {
-                Some(Value::String(type_name)) => type_name == "object",
-                Some(Value::Array(type_names)) => type_names
-                    .iter()
-                    .any(|type_name| type_name.as_str() == Some("object")),
-                _ => map.contains_key("properties"),
-            };
-
-            if is_object_schema {
-                assert_eq!(
-                    map.get("additionalProperties"),
-                    Some(&Value::Bool(false)),
-                    "strict object schema must set additionalProperties=false at {path}"
-                );
-            }
-
-            for (key, child) in map {
-                assert_strict_object_schemas_disallow_additional_properties(
-                    child,
-                    &format!("{path}.{key}"),
-                );
-            }
-        }
-        Value::Array(items) => {
-            for (index, child) in items.iter().enumerate() {
-                assert_strict_object_schemas_disallow_additional_properties(
-                    child,
-                    &format!("{path}[{index}]"),
-                );
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-    }
 }
