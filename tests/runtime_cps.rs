@@ -1174,6 +1174,33 @@ async fn captured_repair_receives_rejected_perform_value() {
 }
 
 #[tokio::test]
+async fn capture_to_think_handles_handler_errors() {
+    let weak = SequenceHandler::new(vec![Err("weak handler unavailable".to_owned())]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.92))]);
+    let trace = TraceCollector::default();
+    let runtime = Runtime::new(weak.clone(), strong.clone(), trace.clone());
+
+    let output = runtime
+        .run_program(single_weak_program(), message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    assert_eq!(output, action_value("m1"));
+    assert_eq!(weak.calls().len(), 1);
+    let strong_calls = strong.calls();
+    assert_eq!(strong_calls.len(), 1);
+    let frame = strong_calls[0].effect_frame.as_ref().unwrap();
+    let perform_error = frame
+        .observations
+        .iter()
+        .find(|observation| observation.name == "perform_error")
+        .expect("captured repair should include the handler error");
+    assert_eq!(perform_error.value["error"], "weak handler unavailable");
+    assert_eq!(perform_error.value["source"], "weak_model");
+    replay_trace_events(&trace.events()).unwrap();
+}
+
+#[tokio::test]
 async fn weak_handler_can_request_think_via_runtime() {
     let weak = SequenceHandler::new(vec![Ok(HandlerDecision::RequestEffect {
         effect: EffectCall::Think {

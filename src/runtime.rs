@@ -372,7 +372,7 @@ where
                     }),
                 );
 
-                let resolution = self
+                let resolution = match self
                     .resolve_effect(
                         state,
                         EffectWork {
@@ -384,7 +384,44 @@ where
                             depth: 0,
                         },
                     )
-                    .await?;
+                    .await
+                {
+                    Ok(resolution) => resolution,
+                    Err(err) => match acceptance.on_failure.clone() {
+                        _ if !is_handler_failure(&err) => {
+                            return Err(err);
+                        }
+                        FailureHandler::Abort { reason } => {
+                            return Err(err.context(format!("perform failed: {reason}")));
+                        }
+                        FailureHandler::CaptureToThink { reason } => {
+                            let error = root_error_message(&err);
+                            let observation = Observation {
+                                name: "perform_error".to_owned(),
+                                value: json!({
+                                    "error": error,
+                                    "source": source_for_effect(&effect).as_str(),
+                                }),
+                                source: ObservationSource::Runtime,
+                            };
+                            let frame = self.make_effect_frame(
+                                state,
+                                EffectCapture {
+                                    resume_pc: pc + 1,
+                                    resume_var: Some(out),
+                                    expected_schema,
+                                    reason,
+                                    failed_effect: Some(effect),
+                                    failed_instruction: Some(failed_instruction),
+                                    observations: vec![observation],
+                                    effect_depth: 0,
+                                },
+                            )?;
+                            self.handle_captured_think(state, frame).await?;
+                            return Ok(StepOutcome::Continue);
+                        }
+                    },
+                };
 
                 if accepted_by_policy(
                     &expected_schema,
@@ -593,8 +630,16 @@ where
             let mut reentries = 0;
             loop {
                 let decision = match handler_name {
-                    "weak_model" => self.weak.handle(request.clone()).await?,
-                    "strong_model" => self.strong.handle(request.clone()).await?,
+                    "weak_model" => self
+                        .weak
+                        .handle(request.clone())
+                        .await
+                        .with_context(|| format!("{handler_name} handler failed"))?,
+                    "strong_model" => self
+                        .strong
+                        .handle(request.clone())
+                        .await
+                        .with_context(|| format!("{handler_name} handler failed"))?,
                     "local_tool" => {
                         return Err(anyhow!(
                             "local tool handlers are not registered in this demo"
@@ -1327,6 +1372,22 @@ fn accepted_by_policy(
 
 fn trace_return_value_schema_valid(expected_schema: &Value, value: &Value) -> bool {
     validate_value(expected_schema, value).is_ok()
+}
+
+fn is_handler_failure(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        matches!(
+            cause.to_string().as_str(),
+            "weak_model handler failed" | "strong_model handler failed"
+        )
+    })
+}
+
+fn root_error_message(err: &anyhow::Error) -> String {
+    err.chain()
+        .last()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| err.to_string())
 }
 
 fn ensure_captured_decision_allowed(
