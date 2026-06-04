@@ -49,7 +49,7 @@ pub enum ReturnSlot {
         caller_function: String,
         caller_pc: usize,
         var: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         expected_schema: Option<Value>,
     },
     MapElement {

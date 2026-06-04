@@ -1,10 +1,11 @@
-use cps_llm_demo::effects::HandlerDecision;
+use cps_llm_demo::effects::{Continuation, HandlerDecision, ReturnSlot, RuntimeFrame};
 use cps_llm_demo::models::WEAK_HANDLER_INSTRUCTIONS;
 use cps_llm_demo::program::Program;
 use cps_llm_demo::schema::{
-    action_draft_schema, handler_decision_schema, program_schema, schema_bundle, validate_value,
-    weak_task_result_schema,
+    action_draft_schema, continuation_schema, handler_decision_schema, program_schema,
+    schema_bundle, validate_value, weak_task_result_schema,
 };
+use serde_json::Map;
 use serde_json::{Value, json};
 
 #[test]
@@ -147,6 +148,44 @@ fn handler_decision_schema_binds_decision_to_payload_shape() {
         .decision_name(),
         "request_effect"
     );
+}
+
+#[test]
+fn continuation_schema_accepts_static_call_return_without_dynamic_schema() {
+    let continuation = Continuation {
+        continuation_id: "k1".to_owned(),
+        boundary_id: "b1".to_owned(),
+        program_id: "message_action_v2".to_owned(),
+        stack: vec![RuntimeFrame {
+            function: "helper".to_owned(),
+            pc: 1,
+            env: Map::new(),
+            return_to: Some(ReturnSlot::Call {
+                caller_function: "main".to_owned(),
+                caller_pc: 2,
+                var: "helper_output".to_owned(),
+                expected_schema: None,
+            }),
+        }],
+        resume_var: Some("draft".to_owned()),
+        resume_pc: 3,
+        expected_schema: action_draft_schema(),
+        fuel_remaining: 999,
+        effect_depth: 0,
+    };
+
+    let value = serde_json::to_value(&continuation).unwrap();
+
+    assert!(
+        value["stack"][0]["return_to"]
+            .get("expected_schema")
+            .is_some()
+    );
+    assert_eq!(
+        value["stack"][0]["return_to"]["expected_schema"],
+        Value::Null
+    );
+    validate_value(&continuation_schema(), &value).unwrap();
 }
 
 #[test]
