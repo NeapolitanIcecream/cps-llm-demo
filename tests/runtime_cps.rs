@@ -632,7 +632,19 @@ async fn var_exists_guard_can_introduce_missing_binding_with_think() {
     assert_eq!(output, action_value("m1"));
     assert!(weak.calls().is_empty());
     assert_eq!(strong.calls().len(), 1);
-    replay_trace_events(&trace.events()).unwrap();
+    let events = trace.events();
+    let capture = events
+        .iter()
+        .find(|event| event.event == "capture_continuation")
+        .expect("guard repair captures continuation");
+    assert_eq!(capture.detail["failed_instruction_op"], "guard");
+    assert_eq!(capture.detail["failed_effect_kind"], "think");
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event == "effect_accepted" && event.detail["captured"] == true)
+    );
+    replay_trace_events(&events).unwrap();
 }
 
 #[test]

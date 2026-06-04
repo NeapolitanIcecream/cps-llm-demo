@@ -144,7 +144,7 @@ handler_decision handler=weak_model decision=return_value
 exec_instr function=process_message pc=1 op=perform
 handler_request handler=weak_model effect=model_task task=extract_action_draft_from_intent
 handler_decision handler=weak_model decision=return_value schema_valid=true
-capture_continuation function=process_message resume_pc=2 resume_var=draft map_index=0
+capture_continuation function=process_message resume_pc=2 resume_var=draft map_index=0 failed_instruction_op=perform failed_effect_kind=model_task
 handler_request handler=strong_model effect=think
 handler_decision handler=strong_model decision=return_value
 effect_accepted effect=model_task captured=true

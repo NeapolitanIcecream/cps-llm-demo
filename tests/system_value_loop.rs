@@ -181,6 +181,7 @@ fn profile_store_counts_nested_probe_repair_as_one_accepted_effect_call() {
                         "program_version": "v0001",
                         "function": "main",
                         "pc": 0,
+                        "failed_instruction_op": "perform",
                         "failed_effect_kind": "model_task",
                         "expected_schema": { "type": "object" },
                         "observations": [{ "schema_valid": false, "value": { "a": "redacted" } }]
@@ -266,6 +267,63 @@ fn profile_store_counts_nested_probe_repair_as_one_accepted_effect_call() {
         "weak_model:model_task"
     );
     assert_eq!(failure.successful_probes[0].success_count, 1);
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[test]
+fn profile_store_does_not_count_unrelated_guard_repair_as_effect_capture() {
+    let state_path = temp_state_dir();
+    let store = FileProfileStore::new(StateDir::new(state_path.clone()));
+    store
+        .update_from_trace(
+            "generic_workflow",
+            &[
+                TraceEvent {
+                    event: "perform_effect".to_owned(),
+                    event_id: "e1".to_owned(),
+                    detail: json!({
+                        "function": "main",
+                        "pc": 0,
+                        "out": "draft",
+                        "effect": "model_task",
+                        "strength": "weak",
+                        "task": "classify_and_extract_action_draft"
+                    }),
+                },
+                TraceEvent {
+                    event: "effect_accepted".to_owned(),
+                    event_id: "e2".to_owned(),
+                    detail: json!({
+                        "effect": "model_task",
+                        "source": "weak_model",
+                        "captured": false
+                    }),
+                },
+                TraceEvent {
+                    event: "capture_continuation".to_owned(),
+                    event_id: "e3".to_owned(),
+                    detail: json!({
+                        "continuation_id": "k1",
+                        "program_id": "p1",
+                        "program_version": "v0001",
+                        "function": "main",
+                        "pc": 2,
+                        "failed_instruction_op": "guard",
+                        "failed_effect_kind": "think",
+                        "expected_schema": { "type": "object" },
+                        "observations": []
+                    }),
+                },
+            ],
+        )
+        .unwrap();
+
+    let profile = store.load("generic_workflow").unwrap();
+    let stats = profile.effect_stats.get("model_task").unwrap();
+    assert_eq!(stats.calls, 1);
+    assert_eq!(stats.captures, 0);
+    assert_eq!(stats.accepted, 1);
 
     let _ = fs::remove_dir_all(state_path);
 }

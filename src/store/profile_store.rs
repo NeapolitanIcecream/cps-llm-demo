@@ -74,12 +74,11 @@ impl FileProfileStore {
         let mut profile = self.load(workflow_id)?;
         let mut current_fingerprint_id = None::<String>;
         let mut pending_probe = None::<ProbeProfileStats>;
-        let mut last_effect_key = None::<String>;
 
         for event in events {
             match event.event.as_str() {
                 "capture_continuation" => {
-                    if let Some(effect_key) = &last_effect_key {
+                    if let Some(effect_key) = captured_perform_effect_key(event) {
                         if let Some(stats) = profile.effect_stats.get_mut(effect_key) {
                             stats.captures += 1;
                         }
@@ -143,7 +142,6 @@ impl FileProfileStore {
                             accepted: 0,
                         });
                     stats.calls += 1;
-                    last_effect_key = Some(effect);
                 }
                 "effect_accepted" => {
                     if let Some(effect_key) = event
@@ -261,5 +259,19 @@ impl FileProfileStore {
 fn push_sample(samples: &mut Vec<String>, value: &str) {
     if samples.len() < 8 && !samples.iter().any(|sample| sample == value) {
         samples.push(value.to_owned());
+    }
+}
+
+fn captured_perform_effect_key(event: &TraceEvent) -> Option<&str> {
+    match event
+        .detail
+        .get("failed_instruction_op")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("perform") => event
+            .detail
+            .get("failed_effect_kind")
+            .and_then(serde_json::Value::as_str),
+        _ => None,
     }
 }

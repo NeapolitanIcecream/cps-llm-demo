@@ -1108,6 +1108,7 @@ where
                 Some(ReturnSlot::MapElement { map_index, .. }) => Some(*map_index),
                 _ => None,
             });
+        let failed_instruction_op = capture.failed_instruction.as_ref().map(Instr::op_name);
         self.trace.emit(
             "capture_continuation",
             &state.trace_id,
@@ -1124,6 +1125,7 @@ where
                 "reason": &capture.reason,
                 "stack_depth": state.stack.len(),
                 "map_index": map_index,
+                "failed_instruction_op": failed_instruction_op,
                 "failed_effect_kind": capture.failed_effect.as_ref().map(EffectCall::kind_name),
                 "failed_task_name": capture.failed_effect.as_ref().and_then(EffectCall::model_task_name),
                 "expected_schema": &capture.expected_schema,
