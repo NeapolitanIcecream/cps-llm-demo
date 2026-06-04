@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Result, anyhow};
 use serde_json::Value;
 
+use crate::local_tools::{builtin_local_tool_names, is_implemented_local_tool};
 use crate::program::{
     EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardExpr, GuardFail, Instr,
     JsonExpr, ModelStrength, PatchOp, Program, ProgramFragment, ProgramPatch,
@@ -539,6 +540,7 @@ fn validate_supported_effect_permissions(program: &Program) -> Result<()> {
                 if tool_name.trim().is_empty() {
                     return Err(anyhow!("local_tool permission has empty tool_name"));
                 }
+                ensure_implemented_local_tool(tool_name, "local_tool permission")?;
             }
             EffectPermission::CompileProgram {
                 strength: ModelStrength::Weak,
@@ -572,6 +574,10 @@ fn validate_supported_effect_call(
                     "local_tool effect has empty tool_name at {function_name}:{pc}"
                 ));
             }
+            ensure_implemented_local_tool(
+                tool_name,
+                &format!("local_tool effect at {function_name}:{pc}"),
+            )?;
             validate_json_schema(args_schema).map_err(|err| {
                 anyhow!("local_tool args_schema is invalid at {function_name}:{pc}: {err}")
             })?;
@@ -600,6 +606,17 @@ fn validate_supported_effect_call(
         EffectCall::ModelTask { .. } | EffectCall::Think { .. } => {}
     }
     Ok(())
+}
+
+fn ensure_implemented_local_tool(tool_name: &str, context: &str) -> Result<()> {
+    if is_implemented_local_tool(tool_name) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "{context} references unimplemented tool {tool_name}; available local tools: {}",
+            builtin_local_tool_names().join(", ")
+        ))
+    }
 }
 
 fn ensure_think_permission(

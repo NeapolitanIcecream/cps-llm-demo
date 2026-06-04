@@ -12,6 +12,19 @@ use crate::models::EffectHandler;
 use crate::program::EffectCall;
 use crate::schema::validate_value;
 
+pub const FAST_PATH_APPLY_TOOL_NAME: &str = "fast_path_apply";
+pub const VALIDATOR_APPLY_TOOL_NAME: &str = "validator_apply";
+pub const BUILTIN_LOCAL_TOOL_NAMES: &[&str] =
+    &[FAST_PATH_APPLY_TOOL_NAME, VALIDATOR_APPLY_TOOL_NAME];
+
+pub fn builtin_local_tool_names() -> &'static [&'static str] {
+    BUILTIN_LOCAL_TOOL_NAMES
+}
+
+pub fn is_implemented_local_tool(tool_name: &str) -> bool {
+    BUILTIN_LOCAL_TOOL_NAMES.contains(&tool_name)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct FastPathInput {
     pub event: Value,
@@ -117,7 +130,7 @@ impl LocalToolRegistry {
     }
 
     pub fn with_builtin_tools() -> Self {
-        Self::new(["fast_path_apply", "validator_apply"])
+        Self::new(BUILTIN_LOCAL_TOOL_NAMES.iter().copied())
     }
 
     pub fn contains(&self, tool_name: &str) -> bool {
@@ -145,8 +158,8 @@ impl EffectHandler for LocalToolRegistry {
         }
 
         let value = match tool_name.as_str() {
-            "fast_path_apply" => serde_json::to_value(apply_fast_path(request.input)?)?,
-            "validator_apply" => serde_json::to_value(apply_validators(request.input)?)?,
+            FAST_PATH_APPLY_TOOL_NAME => serde_json::to_value(apply_fast_path(request.input)?)?,
+            VALIDATOR_APPLY_TOOL_NAME => serde_json::to_value(apply_validators(request.input)?)?,
             _ => return Err(anyhow!("local tool {tool_name} is not implemented")),
         };
 

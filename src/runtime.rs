@@ -11,7 +11,7 @@ use crate::effects::{
     EffectReturnMode, HandlerBudget, HandlerDecision, HandlerRequest, Observation,
     ObservationSource, ReturnSlot, RuntimeBudget, RuntimeFrame,
 };
-use crate::local_tools::LocalToolRegistry;
+use crate::local_tools::{FAST_PATH_APPLY_TOOL_NAME, LocalToolRegistry};
 use crate::models::EffectHandler;
 use crate::program::{
     AcceptancePolicy, EffectCall, FailureHandler, FunctionDef, GuardExpr, GuardFail, Instr,
@@ -1434,7 +1434,7 @@ impl<W, S> Runtime<W, S> {
         let EffectCall::LocalTool { tool_name, .. } = effect else {
             return;
         };
-        if tool_name != "fast_path_apply" {
+        if tool_name != FAST_PATH_APPLY_TOOL_NAME {
             return;
         }
         let hit = value.get("hit").and_then(Value::as_bool).unwrap_or(false);

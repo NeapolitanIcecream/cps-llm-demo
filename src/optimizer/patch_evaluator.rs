@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::effects::RuntimeBudget;
-use crate::local_tools::LocalToolRegistry;
+use crate::local_tools::{FAST_PATH_APPLY_TOOL_NAME, LocalToolRegistry};
 use crate::models::EffectHandler;
 use crate::observability::metrics::MetricsAccumulator;
 use crate::program::{EffectCall, Instr, PatchOp, Program, ProgramPatch};
@@ -116,7 +116,7 @@ fn instr_has_fast_path(instr: &Instr) -> bool {
         Instr::Perform {
             effect: EffectCall::LocalTool { tool_name, .. },
             ..
-        } if tool_name == "fast_path_apply"
+        } if tool_name == FAST_PATH_APPLY_TOOL_NAME
     )
 }
 

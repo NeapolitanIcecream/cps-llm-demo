@@ -10,6 +10,7 @@ This is a runtime semantics demo, not a product agent. A strong model can compil
 - Weak runs only when the runtime schedules an allowed weak effect, such as direct `Perform(ModelTask { strength: Weak })` or an allowed nested `HandlerDecision::RequestEffect` targeting a weak model task.
 - Strong runs only when the runtime schedules an allowed strong effect, such as direct `Perform(ModelTask { strength: Strong })`, `Perform(Think)`, `CompileProgram { strength: Strong }`, runtime handling of a captured `Think` frame, or an allowed nested `HandlerDecision::RequestEffect`.
 - `Program.allowed_effects` is enforced before scheduling direct `Perform` effects and runtime-scheduled nested effects requested via `HandlerDecision::RequestEffect`.
+- The built-in `local_tool` names are `fast_path_apply` and `validator_apply`; validation rejects other local-tool names before runtime dispatch.
 - `Continuation` contains a serializable stack: boundary id, program id, runtime frames, resume var, resume pc, expected schema, fuel, and effect depth.
 - Rust runtime code does not branch on message/task/calendar/OTP/business keywords. Domain semantics live in task files, Program fixtures, prompts, and test data.
 - Handler return values are schema-validated as returned. Action drafts are business payloads; runtime provenance is recorded in observations and trace metadata, not injected into returned JSON.

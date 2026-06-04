@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow};
 use serde_json::json;
 
 use crate::effects::{HandlerBudget, HandlerDecision, HandlerRequest, RuntimeBudget};
+use crate::local_tools::builtin_local_tool_names;
 use crate::models::EffectHandler;
 use crate::optimizer::patch_installer::install_fixture_patch;
 use crate::optimizer::patch_request::{CompactEffectExample, PatchRequest, PatchTarget};
@@ -124,7 +125,10 @@ fn build_patch_request(
             "replace_instruction".to_owned(),
             "update_acceptance_policy".to_owned(),
         ],
-        allowed_local_tools: vec!["fast_path_apply".to_owned(), "validator_apply".to_owned()],
+        allowed_local_tools: builtin_local_tool_names()
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
         target: PatchTarget::AddFastPath,
     }
 }

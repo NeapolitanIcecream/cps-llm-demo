@@ -681,58 +681,42 @@ fn functions_must_end_with_return_during_validation() {
     );
 }
 
-#[tokio::test]
-async fn unregistered_local_tool_is_rejected_at_runtime() {
-    let mut functions = BTreeMap::new();
-    functions.insert(
-        "main".to_owned(),
-        FunctionDef {
-            params: Vec::new(),
-            output_schema: json!({ "type": "string" }),
-            body: vec![
-                Instr::Perform {
-                    out: "tool_output".to_owned(),
-                    effect: EffectCall::LocalTool {
-                        tool_name: "unregistered_tool".to_owned(),
-                        args_schema: json!({ "type": "object" }),
-                    },
-                    input: JsonExpr::Literal { value: json!({}) },
-                    expected_schema: json!({ "type": "string" }),
-                    acceptance: accept_abort(0.0),
-                },
-                Instr::Return {
-                    value: JsonExpr::Var {
-                        name: "tool_output".to_owned(),
-                    },
-                },
-            ],
-        },
+#[test]
+fn unimplemented_local_tool_permission_is_rejected_during_validation() {
+    let mut program = single_weak_program();
+    program.allowed_effects.push(EffectPermission::LocalTool {
+        tool_name: "unregistered_tool".to_owned(),
+    });
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("local_tool permission references unimplemented tool unregistered_tool")
     );
-    let program = Program {
-        program_id: "local_tool_unregistered".to_owned(),
-        version: "1.0.0".to_owned(),
-        entry: "main".to_owned(),
-        input_schema: json!({ "type": "object" }),
-        output_schema: json!({ "type": "string" }),
-        functions,
-        allowed_effects: vec![EffectPermission::LocalTool {
-            tool_name: "unregistered_tool".to_owned(),
-        }],
+}
+
+#[test]
+fn direct_unimplemented_local_tool_call_is_rejected_during_validation() {
+    let mut program =
+        local_validator_program(json!({ "type": "object" }), valid_validator_apply_input());
+    let main = program.functions.get_mut("main").unwrap();
+    let Instr::Perform { effect, .. } = &mut main.body[0] else {
+        panic!("expected local tool perform instruction");
+    };
+    *effect = EffectCall::LocalTool {
+        tool_name: "unimplemented_tool".to_owned(),
+        args_schema: json!({ "type": "object" }),
     };
 
-    validate_program(&program).unwrap();
-    let runtime = Runtime::new(
-        SequenceHandler::empty(),
-        SequenceHandler::empty(),
-        TraceCollector::default(),
-    );
-    let error = runtime.run_program(program, json!({})).await.unwrap_err();
+    let error = validate_program(&program).unwrap_err();
 
-    assert!(error.chain().any(|cause| {
-        cause
-            .to_string()
-            .contains("local tool unregistered_tool is not registered")
-    }));
+    assert!(
+        error.to_string().contains(
+            "local_tool effect at main:0 references unimplemented tool unimplemented_tool"
+        )
+    );
 }
 
 #[test]
