@@ -10,6 +10,7 @@ use crate::local_tools::LocalToolRegistry;
 use crate::models::EffectHandler;
 use crate::observability::metrics::MetricsAccumulator;
 use crate::runtime::Runtime;
+use crate::schema::validate_value;
 use crate::store::continuation_store::{FileEffectFrameEncoder, FrameEncodingConfig};
 use crate::store::metrics_store::{FileMetricsStore, RunMetrics};
 use crate::store::patch_registry::{FilePatchRegistry, PatchMetadata, PatchSource, PatchStatus};
@@ -65,7 +66,8 @@ where
     while let Some(event) = event_source.next_event()? {
         metrics.events_total += 1;
         let trace = TraceCollector::default();
-        let (event, event_id) = event_with_stable_id(event);
+        let event_id = event_id_or_generate(&event);
+        let event = event_with_schema_permitted_id(event, &program.input_schema, &event_id);
         trace.emit(
             "stream_event",
             event_id.clone(),
@@ -82,7 +84,7 @@ where
             RuntimeBudget::default(),
         );
         let result = runtime
-            .run_program_with_result(program.clone(), event)
+            .run_program_with_result_and_trace_id(program.clone(), event, event_id)
             .await;
         if let Ok(result) = &result {
             metrics.events_succeeded += 1;
@@ -138,13 +140,15 @@ pub fn event_id_or_generate(event: &Value) -> String {
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
 }
 
-fn event_with_stable_id(event: Value) -> (Value, String) {
-    let event_id = event_id_or_generate(&event);
-    match event {
-        Value::Object(mut event) => {
-            event.insert("event_id".to_owned(), Value::String(event_id.clone()));
-            (Value::Object(event), event_id)
-        }
-        event => (event, event_id),
+fn event_with_schema_permitted_id(event: Value, input_schema: &Value, event_id: &str) -> Value {
+    let Value::Object(mut object) = event.clone() else {
+        return event;
+    };
+    object.insert("event_id".to_owned(), Value::String(event_id.to_owned()));
+    let candidate = Value::Object(object);
+    if validate_value(input_schema, &candidate).is_ok() {
+        candidate
+    } else {
+        event
     }
 }

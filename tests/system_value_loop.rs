@@ -1784,6 +1784,132 @@ async fn run_stream_propagates_generated_event_ids_to_runtime_traces_and_profile
     let _ = fs::remove_dir_all(state_path);
 }
 
+#[tokio::test]
+async fn run_stream_keeps_generated_trace_id_without_mutating_closed_schema_input() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "closed_schema_generated_event_id";
+    let mut program: Program = serde_json::from_str(include_str!(
+        "../examples/notification_triage.v1.program.json"
+    ))
+    .unwrap();
+    program.program_id = workflow_id.to_owned();
+    program.input_schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "source": { "type": "string" },
+            "text": { "type": "string" },
+            "_fixture_model": { "type": "object" }
+        },
+        "required": ["source", "text", "_fixture_model"]
+    });
+    let programs = FileProgramRegistry::new(state.clone());
+    programs
+        .init_workflow(
+            workflow_id,
+            program.clone(),
+            fixture_program_metadata(workflow_id, &program),
+        )
+        .unwrap();
+
+    let summary = run_stream(
+        state.clone(),
+        workflow_id,
+        InMemoryEventSource::new(vec![capture_fixture_event(None)]),
+        Arc::new(FixtureModelHandler::weak()),
+        Arc::new(FixtureModelHandler::strong()),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.events_total, 1);
+    assert_eq!(summary.events_succeeded, 1);
+    assert_eq!(summary.events_failed, 0);
+
+    let trace_events = FileTraceStore::new(state.clone())
+        .read_run(workflow_id, &summary.run_id)
+        .unwrap();
+    let stream_event = trace_events
+        .iter()
+        .find(|event| event.event == "stream_event")
+        .expect("stream event is stored");
+    assert_ne!(stream_event.event_id, program.program_id);
+    assert!(
+        stream_event.detail["event"].get("event_id").is_none(),
+        "closed-schema stream payload should not be mutated with trace metadata"
+    );
+    let capture_event = trace_events
+        .iter()
+        .find(|event| event.event == "capture_continuation")
+        .expect("weak failure capture is traced");
+    assert_eq!(capture_event.event_id, stream_event.event_id);
+
+    let profile = FileProfileStore::new(state).load(workflow_id).unwrap();
+    let failure = profile
+        .failure_fingerprints
+        .values()
+        .next()
+        .expect("captured weak failure is profiled");
+    assert_eq!(failure.count, 1);
+    assert!(failure.sample_event_refs.contains(&stream_event.event_id));
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[tokio::test]
+async fn run_stream_uses_generated_trace_id_for_jsonl_non_object_input() {
+    let state_path = temp_state_dir();
+    let events_path = state_path.join("events.jsonl");
+    fs::write(&events_path, "\"raw-event\"\n").unwrap();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "jsonl_non_object_generated_event_id";
+    let program = echo_program(workflow_id, json!({ "type": "string" }));
+    let programs = FileProgramRegistry::new(state.clone());
+    programs
+        .init_workflow(
+            workflow_id,
+            program.clone(),
+            fixture_program_metadata(workflow_id, &program),
+        )
+        .unwrap();
+
+    let summary = run_stream(
+        state.clone(),
+        workflow_id,
+        JsonlEventSource::from_path(&events_path).unwrap(),
+        Arc::new(ScriptedHandler::empty()),
+        Arc::new(ScriptedHandler::empty()),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.events_total, 1);
+    assert_eq!(summary.events_succeeded, 1);
+    assert_eq!(summary.events_failed, 0);
+
+    let trace_events = FileTraceStore::new(state)
+        .read_run(workflow_id, &summary.run_id)
+        .unwrap();
+    let stream_event = trace_events
+        .iter()
+        .find(|event| event.event == "stream_event")
+        .expect("stream event is stored");
+    assert_ne!(stream_event.event_id, program.program_id);
+    assert_eq!(stream_event.detail["event"], json!("raw-event"));
+    for event_name in ["program_validated", "program_start", "enter_function"] {
+        let runtime_event = trace_events
+            .iter()
+            .find(|event| event.event == event_name)
+            .unwrap_or_else(|| panic!("{event_name} is traced"));
+        assert_eq!(runtime_event.event_id, stream_event.event_id);
+    }
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
 struct ScriptedHandler {
     decisions: Mutex<VecDeque<HandlerDecision>>,
 }
@@ -2370,6 +2496,32 @@ fn runtime_patch_program() -> Program {
         output_schema: json!({ "type": "null" }),
         functions,
         allowed_effects: vec![EffectPermission::Think],
+    }
+}
+
+fn echo_program(program_id: &str, schema: Value) -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: vec!["event".to_owned()],
+            output_schema: schema.clone(),
+            body: vec![Instr::Return {
+                value: JsonExpr::Var {
+                    name: "event".to_owned(),
+                },
+            }],
+        },
+    );
+
+    Program {
+        program_id: program_id.to_owned(),
+        version: "v0001".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: schema.clone(),
+        output_schema: schema,
+        functions,
+        allowed_effects: Vec::<EffectPermission>::new(),
     }
 }
 

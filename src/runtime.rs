@@ -51,15 +51,22 @@ struct ProgramState {
 }
 
 impl ProgramState {
-    fn new(program: Program, input: Value, budget: RuntimeBudget) -> Result<Self> {
+    fn new(
+        program: Program,
+        input: Value,
+        budget: RuntimeBudget,
+        trace_id_override: Option<String>,
+    ) -> Result<Self> {
         validate_program(&program).context("program validation failed")?;
         validate_value(&program.input_schema, &input).context("program input failed schema")?;
 
-        let trace_id = input
-            .get("event_id")
-            .and_then(Value::as_str)
-            .unwrap_or(&program.program_id)
-            .to_owned();
+        let trace_id = trace_id_override.unwrap_or_else(|| {
+            input
+                .get("event_id")
+                .and_then(Value::as_str)
+                .unwrap_or(&program.program_id)
+                .to_owned()
+        });
         let entry = program
             .functions
             .get(&program.entry)
@@ -285,7 +292,27 @@ where
         program: Program,
         input: Value,
     ) -> Result<ProgramRunResult> {
-        let mut state = ProgramState::new(program, input, self.budget.clone())?;
+        self.run_program_with_result_inner(program, input, None)
+            .await
+    }
+
+    pub async fn run_program_with_result_and_trace_id(
+        &self,
+        program: Program,
+        input: Value,
+        trace_id: String,
+    ) -> Result<ProgramRunResult> {
+        self.run_program_with_result_inner(program, input, Some(trace_id))
+            .await
+    }
+
+    async fn run_program_with_result_inner(
+        &self,
+        program: Program,
+        input: Value,
+        trace_id_override: Option<String>,
+    ) -> Result<ProgramRunResult> {
+        let mut state = ProgramState::new(program, input, self.budget.clone(), trace_id_override)?;
         self.trace.emit(
             "program_validated",
             &state.trace_id,
