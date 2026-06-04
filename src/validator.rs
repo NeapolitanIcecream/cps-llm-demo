@@ -71,8 +71,9 @@ pub fn validate_patch(program: &Program, patch: &ProgramPatch) -> Result<Program
     }
 
     let mut patched = program.clone();
+    let original_control_flow_functions = functions_with_control_flow(program);
     for operation in &patch.operations {
-        apply_patch_op(&mut patched, operation)?;
+        apply_patch_op(&mut patched, operation, &original_control_flow_functions)?;
     }
     patched.version = format!("{}+{}", program.version, patch.patch_id);
     validate_program(&patched)?;
@@ -708,7 +709,11 @@ fn dfs_no_cycle(
     Ok(())
 }
 
-fn apply_patch_op(program: &mut Program, operation: &PatchOp) -> Result<()> {
+fn apply_patch_op(
+    program: &mut Program,
+    operation: &PatchOp,
+    original_control_flow_functions: &BTreeSet<String>,
+) -> Result<()> {
     match operation {
         PatchOp::ReplaceInstruction {
             function,
@@ -730,6 +735,9 @@ fn apply_patch_op(program: &mut Program, operation: &PatchOp) -> Result<()> {
             let body = function_body_mut(program, function)?;
             if *pc > body.len() {
                 return Err(anyhow!("insert pc {pc} is outside function {function}"));
+            }
+            if original_control_flow_functions.contains(function) {
+                reject_insert_that_shifts_control_flow_target(function, *pc, body)?;
             }
             body.insert(*pc, instr.clone());
             Ok(())
@@ -772,4 +780,49 @@ fn function_body_mut<'a>(program: &'a mut Program, function: &str) -> Result<&'a
         .get_mut(function)
         .map(|function| &mut function.body)
         .ok_or_else(|| anyhow!("function {function} does not exist"))
+}
+
+fn functions_with_control_flow(program: &Program) -> BTreeSet<String> {
+    program
+        .functions
+        .iter()
+        .filter(|(_, function)| function.body.iter().any(instr_is_control_flow))
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+fn instr_is_control_flow(instr: &Instr) -> bool {
+    matches!(instr, Instr::Branch { .. } | Instr::Jump { .. })
+}
+
+fn reject_insert_that_shifts_control_flow_target(
+    function: &str,
+    insert_pc: usize,
+    body: &[Instr],
+) -> Result<()> {
+    for instr in body {
+        match instr {
+            Instr::Branch {
+                then_pc, else_pc, ..
+            } => {
+                if let Some((label, target_pc)) =
+                    [("branch then_pc", *then_pc), ("branch else_pc", *else_pc)]
+                        .into_iter()
+                        .filter(|(_, target_pc)| *target_pc >= insert_pc)
+                        .min_by_key(|(_, target_pc)| *target_pc)
+                {
+                    return Err(anyhow!(
+                        "insert pc {insert_pc} would shift existing {label} target {target_pc} in function {function}"
+                    ));
+                }
+            }
+            Instr::Jump { pc: target_pc } if *target_pc >= insert_pc => {
+                return Err(anyhow!(
+                    "insert pc {insert_pc} would shift existing jump pc target {target_pc} in function {function}"
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }

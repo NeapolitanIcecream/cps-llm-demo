@@ -1141,6 +1141,151 @@ fn jump_target_rejects_variable_defined_only_on_skipped_path() {
 }
 
 #[test]
+fn validate_patch_rejects_insert_at_existing_branch_target() {
+    let base = branch_program();
+    let patch = ProgramPatch {
+        target_program_id: base.program_id.clone(),
+        patch_id: "insert_at_branch_target".to_owned(),
+        rationale: "inserting at an existing target would retarget the branch".to_owned(),
+        operations: vec![PatchOp::InsertInstruction {
+            function: "main".to_owned(),
+            pc: 2,
+            instr: Instr::Return {
+                value: JsonExpr::Literal {
+                    value: json!("shifted branch target"),
+                },
+            },
+        }],
+    };
+
+    let err = validate_patch(&base, &patch).unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("insert pc 2 would shift existing branch else_pc target 2"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn validate_patch_rejects_insert_at_existing_jump_target() {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({ "type": "string" }),
+            body: vec![
+                Instr::Jump { pc: 2 },
+                Instr::Return {
+                    value: JsonExpr::Literal {
+                        value: json!("miss"),
+                    },
+                },
+                Instr::Return {
+                    value: JsonExpr::Literal {
+                        value: json!("hit"),
+                    },
+                },
+            ],
+        },
+    );
+    let base = Program {
+        program_id: "jump_fixture".to_owned(),
+        version: "v0001".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({ "type": "string" }),
+        functions,
+        allowed_effects: Vec::new(),
+    };
+    let patch = ProgramPatch {
+        target_program_id: base.program_id.clone(),
+        patch_id: "insert_at_jump_target".to_owned(),
+        rationale: "inserting at an existing target would retarget the jump".to_owned(),
+        operations: vec![PatchOp::InsertInstruction {
+            function: "main".to_owned(),
+            pc: 2,
+            instr: Instr::Return {
+                value: JsonExpr::Literal {
+                    value: json!("shifted jump target"),
+                },
+            },
+        }],
+    };
+
+    let err = validate_patch(&base, &patch).unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("insert pc 2 would shift existing jump pc target 2"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn validate_patch_allows_insert_after_existing_branch_targets() {
+    let base = branch_program();
+    let patch = ProgramPatch {
+        target_program_id: base.program_id.clone(),
+        patch_id: "insert_after_branch_targets".to_owned(),
+        rationale: "appending after existing targets preserves branch meaning".to_owned(),
+        operations: vec![PatchOp::InsertInstruction {
+            function: "main".to_owned(),
+            pc: 4,
+            instr: Instr::Return {
+                value: JsonExpr::Literal {
+                    value: json!("tail"),
+                },
+            },
+        }],
+    };
+
+    let patched = validate_patch(&base, &patch).unwrap();
+    let body = &patched.functions["main"].body;
+
+    assert_eq!(body[1], base.functions["main"].body[1]);
+}
+
+#[test]
+fn validate_patch_rejects_later_insert_that_shifts_existing_branch_target() {
+    let base = branch_program();
+    let patch = ProgramPatch {
+        target_program_id: base.program_id.clone(),
+        patch_id: "later_insert_at_branch_target".to_owned(),
+        rationale: "every insert in a multi-operation patch must preserve old targets".to_owned(),
+        operations: vec![
+            PatchOp::InsertInstruction {
+                function: "main".to_owned(),
+                pc: 4,
+                instr: Instr::Return {
+                    value: JsonExpr::Literal {
+                        value: json!("tail"),
+                    },
+                },
+            },
+            PatchOp::InsertInstruction {
+                function: "main".to_owned(),
+                pc: 2,
+                instr: Instr::Return {
+                    value: JsonExpr::Literal {
+                        value: json!("shifted branch target"),
+                    },
+                },
+            },
+        ],
+    };
+
+    let err = validate_patch(&base, &patch).unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("insert pc 2 would shift existing branch else_pc target 2"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn cli_fixture_value_loop_proves_kpis() {
     let state = temp_state_dir();
     assert_eq!(
