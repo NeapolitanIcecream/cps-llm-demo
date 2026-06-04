@@ -3,10 +3,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Result, anyhow};
 use serde_json::Value;
 
+use crate::local_tools::{builtin_local_tool_names, is_implemented_local_tool};
 use crate::program::{
-    EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardFail, Instr, JsonExpr,
-    ModelStrength, PatchOp, Program, ProgramFragment, ProgramPatch,
+    EffectCall, EffectPermission, FailureHandler, FunctionDef, GuardExpr, GuardFail, Instr,
+    JsonExpr, ModelStrength, PatchOp, Program, ProgramFragment, ProgramPatch,
 };
+use crate::store::state_dir::validate_path_component;
 
 const MAX_INSTRUCTIONS_PER_FUNCTION: usize = 1024;
 const INPUT_VAR: &str = "$input";
@@ -59,6 +61,7 @@ pub fn validate_fragment(fragment: &ProgramFragment) -> Result<()> {
 }
 
 pub fn validate_patch(program: &Program, patch: &ProgramPatch) -> Result<Program> {
+    validate_patch_id(&patch.patch_id)?;
     if patch.target_program_id != program.program_id {
         return Err(anyhow!(
             "patch target_program_id {} does not match program {}",
@@ -68,12 +71,17 @@ pub fn validate_patch(program: &Program, patch: &ProgramPatch) -> Result<Program
     }
 
     let mut patched = program.clone();
+    let original_control_flow_functions = functions_with_control_flow(program);
     for operation in &patch.operations {
-        apply_patch_op(&mut patched, operation)?;
+        apply_patch_op(&mut patched, operation, &original_control_flow_functions)?;
     }
     patched.version = format!("{}+{}", program.version, patch.patch_id);
     validate_program(&patched)?;
     Ok(patched)
+}
+
+pub fn validate_patch_id(patch_id: &str) -> Result<()> {
+    validate_path_component("patch_id", patch_id)
 }
 
 pub fn effect_allowed(allowed: &[EffectPermission], effect: &EffectCall) -> bool {
@@ -121,29 +129,193 @@ fn validate_function(
         return Err(anyhow!("function {name} must end with return"));
     }
 
-    let mut defined = BTreeSet::new();
+    let mut initial_defined = BTreeSet::new();
     for param in &function.params {
         ensure_not_reserved_input_binding(param, &format!("function {name} parameter"), None)?;
-        if !defined.insert(param.clone()) {
+        if !initial_defined.insert(param.clone()) {
             return Err(anyhow!("function {name} has duplicate parameter {param}"));
         }
     }
     if input_is_bound {
-        defined.insert(INPUT_VAR.to_owned());
+        initial_defined.insert(INPUT_VAR.to_owned());
     }
 
     for (pc, instr) in function.body.iter().enumerate() {
-        validate_instr(program, name, pc, instr, &defined)?;
-        if let Some(out) = instr.output_var() {
-            ensure_not_reserved_input_binding(out, "instruction output", Some(name))?;
-            defined.insert(out.to_owned());
-        }
-        if let Some(repair_target) = guard_think_repair_target(instr) {
-            defined.insert(repair_target.to_owned());
+        validate_instr_shape(program, name, pc, instr)?;
+    }
+
+    validate_definite_assignments(program, name, function, initial_defined)?;
+
+    Ok(())
+}
+
+fn validate_definite_assignments(
+    program: &Program,
+    function_name: &str,
+    function: &FunctionDef,
+    initial_defined: BTreeSet<String>,
+) -> Result<()> {
+    let mut reachable_defined = vec![None; function.body.len()];
+    if !function.body.is_empty() {
+        reachable_defined[0] = Some(initial_defined);
+    }
+
+    for (pc, instr) in function.body.iter().enumerate() {
+        let Some(defined) = reachable_defined[pc].clone() else {
+            continue;
+        };
+
+        validate_instr(program, function_name, pc, instr, &defined)?;
+
+        let mut after = defined;
+        apply_instr_definitions(instr, &mut after);
+        for successor in instr_successors(function, pc, instr) {
+            merge_successor_defined(&mut reachable_defined[successor], &after);
         }
     }
 
     Ok(())
+}
+
+fn apply_instr_definitions(instr: &Instr, defined: &mut BTreeSet<String>) {
+    if let Some(out) = instr.output_var() {
+        defined.insert(out.to_owned());
+    }
+    if let Some(repair_target) = guard_think_repair_target(instr) {
+        defined.insert(repair_target.to_owned());
+    }
+}
+
+fn instr_successors(function: &FunctionDef, pc: usize, instr: &Instr) -> Vec<usize> {
+    match instr {
+        Instr::Branch {
+            then_pc, else_pc, ..
+        } if then_pc == else_pc => vec![*then_pc],
+        Instr::Branch {
+            then_pc, else_pc, ..
+        } => vec![*then_pc, *else_pc],
+        Instr::Jump { pc: target_pc } => vec![*target_pc],
+        Instr::Return { .. } => Vec::new(),
+        Instr::Let { .. }
+        | Instr::Project { .. }
+        | Instr::Perform { .. }
+        | Instr::Guard { .. }
+        | Instr::Call { .. }
+        | Instr::Map { .. }
+        | Instr::CallDynamic { .. } => {
+            let next_pc = pc + 1;
+            if next_pc < function.body.len() {
+                vec![next_pc]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+}
+
+fn merge_successor_defined(current: &mut Option<BTreeSet<String>>, incoming: &BTreeSet<String>) {
+    match current {
+        Some(existing) => existing.retain(|name| incoming.contains(name)),
+        None => *current = Some(incoming.clone()),
+    }
+}
+
+fn validate_instr_shape(
+    program: &Program,
+    function_name: &str,
+    pc: usize,
+    instr: &Instr,
+) -> Result<()> {
+    if let Some(out) = instr.output_var() {
+        ensure_not_reserved_input_binding(out, "instruction output", Some(function_name))?;
+    }
+
+    match instr {
+        Instr::Let { .. }
+        | Instr::Project { .. }
+        | Instr::CallDynamic { .. }
+        | Instr::Return { .. } => Ok(()),
+        Instr::Perform {
+            effect,
+            expected_schema,
+            acceptance,
+            ..
+        } => {
+            validate_json_schema(expected_schema).map_err(|err| {
+                anyhow!("perform expected_schema is invalid at {function_name}:{pc}: {err}")
+            })?;
+            validate_supported_effect_call(effect, function_name, pc)?;
+            if !effect_allowed(&program.allowed_effects, effect) {
+                return Err(anyhow!(
+                    "effect {} is not allowed at {function_name}:{pc}",
+                    effect.kind_name()
+                ));
+            }
+            if matches!(
+                &acceptance.on_failure,
+                FailureHandler::CaptureToThink { .. }
+            ) {
+                ensure_think_permission(
+                    program,
+                    function_name,
+                    pc,
+                    "capture_to_think failure handler",
+                )?;
+            }
+            Ok(())
+        }
+        Instr::Guard { condition, on_fail } => {
+            validate_guard_shape(condition, function_name, pc)?;
+            if matches!(on_fail, GuardFail::Think { .. }) {
+                ensure_think_permission(program, function_name, pc, "guard think repair")?;
+                ensure_not_reserved_input_binding(
+                    guard_repair_target(condition),
+                    "guard think repair target",
+                    Some(function_name),
+                )?;
+            }
+            Ok(())
+        }
+        Instr::Branch {
+            condition,
+            then_pc,
+            else_pc,
+        } => {
+            validate_guard_shape(condition, function_name, pc)?;
+            validate_forward_target(program, function_name, pc, *then_pc, "branch then_pc")?;
+            validate_forward_target(program, function_name, pc, *else_pc, "branch else_pc")
+        }
+        Instr::Jump { pc: target_pc } => {
+            validate_forward_target(program, function_name, pc, *target_pc, "jump pc")
+        }
+        Instr::Call { function, args, .. } => {
+            let target = program.functions.get(function).ok_or_else(|| {
+                anyhow!("call target function {function} does not exist at {function_name}:{pc}")
+            })?;
+            if target.params.len() != args.len() {
+                return Err(anyhow!(
+                    "call target {function} expects {} args but got {} at {function_name}:{pc}",
+                    target.params.len(),
+                    args.len()
+                ));
+            }
+            Ok(())
+        }
+        Instr::Map {
+            function, item_var, ..
+        } => {
+            ensure_not_reserved_input_binding(item_var, "map item_var", Some(function_name))?;
+            let target = program.functions.get(function).ok_or_else(|| {
+                anyhow!("map target function {function} does not exist at {function_name}:{pc}")
+            })?;
+            if target.params.len() != 1 {
+                return Err(anyhow!(
+                    "map target {function} must have exactly one parameter at {function_name}:{pc}"
+                ));
+            }
+            Ok(())
+        }
+    }
 }
 
 fn validate_instr(
@@ -188,19 +360,13 @@ fn validate_instr(
             Ok(())
         }
         Instr::Guard { condition, on_fail } => {
-            match condition {
-                crate::program::GuardExpr::VarExists { name } => {
-                    if !matches!(on_fail, GuardFail::Think { .. }) {
-                        ensure_defined(name, defined)?;
-                    }
-                }
-                crate::program::GuardExpr::JsonSchemaValid { var, schema } => {
-                    ensure_defined(var, defined)?;
-                    validate_json_schema(schema).map_err(|err| {
-                        anyhow!("guard schema is invalid at {function_name}:{pc}: {err}")
-                    })?;
-                }
-            }
+            validate_guard_condition(
+                condition,
+                defined,
+                matches!(on_fail, GuardFail::Think { .. }),
+                function_name,
+                pc,
+            )?;
             if matches!(on_fail, GuardFail::Think { .. }) {
                 ensure_think_permission(program, function_name, pc, "guard think repair")?;
                 ensure_not_reserved_input_binding(
@@ -210,6 +376,18 @@ fn validate_instr(
                 )?;
             }
             Ok(())
+        }
+        Instr::Branch {
+            condition,
+            then_pc,
+            else_pc,
+        } => {
+            validate_guard_condition(condition, defined, false, function_name, pc)?;
+            validate_forward_target(program, function_name, pc, *then_pc, "branch then_pc")?;
+            validate_forward_target(program, function_name, pc, *else_pc, "branch else_pc")
+        }
+        Instr::Jump { pc: target_pc } => {
+            validate_forward_target(program, function_name, pc, *target_pc, "jump pc")
         }
         Instr::Call { function, args, .. } => {
             let target = program.functions.get(function).ok_or_else(|| {
@@ -285,10 +463,70 @@ fn ensure_not_reserved_input_binding(name: &str, context: &str, owner: Option<&s
     }
 }
 
-fn guard_repair_target(condition: &crate::program::GuardExpr) -> &str {
+fn validate_guard_shape(condition: &GuardExpr, function_name: &str, pc: usize) -> Result<()> {
+    if let GuardExpr::JsonSchemaValid { schema, .. } = condition {
+        validate_json_schema(schema)
+            .map_err(|err| anyhow!("guard schema is invalid at {function_name}:{pc}: {err}"))?;
+    }
+    Ok(())
+}
+
+fn validate_guard_condition(
+    condition: &GuardExpr,
+    defined: &BTreeSet<String>,
+    allow_missing_var_exists: bool,
+    function_name: &str,
+    pc: usize,
+) -> Result<()> {
     match condition {
-        crate::program::GuardExpr::VarExists { name } => name,
-        crate::program::GuardExpr::JsonSchemaValid { var, .. } => var,
+        GuardExpr::VarExists { name } => {
+            if !allow_missing_var_exists {
+                ensure_defined(name, defined)?;
+            }
+            Ok(())
+        }
+        GuardExpr::JsonSchemaValid { var, schema } => {
+            ensure_defined(var, defined)?;
+            validate_json_schema(schema)
+                .map_err(|err| anyhow!("guard schema is invalid at {function_name}:{pc}: {err}"))
+        }
+        GuardExpr::FieldEquals { var, .. } | GuardExpr::FieldIsTruthy { var, .. } => {
+            ensure_defined(var, defined)
+        }
+    }
+}
+
+fn validate_forward_target(
+    program: &Program,
+    function_name: &str,
+    pc: usize,
+    target_pc: usize,
+    label: &str,
+) -> Result<()> {
+    let body_len = program
+        .functions
+        .get(function_name)
+        .map(|function| function.body.len())
+        .ok_or_else(|| anyhow!("function {function_name} does not exist"))?;
+    if target_pc >= body_len {
+        return Err(anyhow!(
+            "{label} {target_pc} is outside function {function_name} body"
+        ));
+    }
+    if target_pc <= pc {
+        return Err(anyhow!(
+            "{label} {target_pc} must be forward-only from {function_name}:{pc}"
+        ));
+    }
+    Ok(())
+}
+
+fn guard_repair_target(condition: &GuardExpr) -> &str {
+    match condition {
+        GuardExpr::VarExists { name } => name,
+        GuardExpr::JsonSchemaValid { var, .. }
+        | GuardExpr::FieldEquals { var, .. }
+        | GuardExpr::FieldIsTruthy { var, .. } => var,
     }
 }
 
@@ -306,9 +544,10 @@ fn validate_supported_effect_permissions(program: &Program) -> Result<()> {
     for permission in &program.allowed_effects {
         match permission {
             EffectPermission::LocalTool { tool_name } => {
-                return Err(anyhow!(
-                    "local_tool effects are not supported until local tool handlers are implemented (permission {tool_name})"
-                ));
+                if tool_name.trim().is_empty() {
+                    return Err(anyhow!("local_tool permission has empty tool_name"));
+                }
+                ensure_implemented_local_tool(tool_name, "local_tool permission")?;
             }
             EffectPermission::CompileProgram {
                 strength: ModelStrength::Weak,
@@ -333,10 +572,22 @@ fn validate_supported_effect_call(
     pc: usize,
 ) -> Result<()> {
     match effect {
-        EffectCall::LocalTool { tool_name, .. } => {
-            return Err(anyhow!(
-                "local_tool effects are not supported until local tool handlers are implemented at {function_name}:{pc} (tool {tool_name})"
-            ));
+        EffectCall::LocalTool {
+            tool_name,
+            args_schema,
+        } => {
+            if tool_name.trim().is_empty() {
+                return Err(anyhow!(
+                    "local_tool effect has empty tool_name at {function_name}:{pc}"
+                ));
+            }
+            ensure_implemented_local_tool(
+                tool_name,
+                &format!("local_tool effect at {function_name}:{pc}"),
+            )?;
+            validate_json_schema(args_schema).map_err(|err| {
+                anyhow!("local_tool args_schema is invalid at {function_name}:{pc}: {err}")
+            })?;
         }
         EffectCall::CompileProgram {
             strength: ModelStrength::Weak,
@@ -362,6 +613,17 @@ fn validate_supported_effect_call(
         EffectCall::ModelTask { .. } | EffectCall::Think { .. } => {}
     }
     Ok(())
+}
+
+fn ensure_implemented_local_tool(tool_name: &str, context: &str) -> Result<()> {
+    if is_implemented_local_tool(tool_name) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "{context} references unimplemented tool {tool_name}; available local tools: {}",
+            builtin_local_tool_names().join(", ")
+        ))
+    }
 }
 
 fn ensure_think_permission(
@@ -447,7 +709,11 @@ fn dfs_no_cycle(
     Ok(())
 }
 
-fn apply_patch_op(program: &mut Program, operation: &PatchOp) -> Result<()> {
+fn apply_patch_op(
+    program: &mut Program,
+    operation: &PatchOp,
+    original_control_flow_functions: &BTreeSet<String>,
+) -> Result<()> {
     match operation {
         PatchOp::ReplaceInstruction {
             function,
@@ -469,6 +735,9 @@ fn apply_patch_op(program: &mut Program, operation: &PatchOp) -> Result<()> {
             let body = function_body_mut(program, function)?;
             if *pc > body.len() {
                 return Err(anyhow!("insert pc {pc} is outside function {function}"));
+            }
+            if original_control_flow_functions.contains(function) {
+                reject_insert_that_shifts_control_flow_target(function, *pc, body)?;
             }
             body.insert(*pc, instr.clone());
             Ok(())
@@ -511,4 +780,49 @@ fn function_body_mut<'a>(program: &'a mut Program, function: &str) -> Result<&'a
         .get_mut(function)
         .map(|function| &mut function.body)
         .ok_or_else(|| anyhow!("function {function} does not exist"))
+}
+
+fn functions_with_control_flow(program: &Program) -> BTreeSet<String> {
+    program
+        .functions
+        .iter()
+        .filter(|(_, function)| function.body.iter().any(instr_is_control_flow))
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+fn instr_is_control_flow(instr: &Instr) -> bool {
+    matches!(instr, Instr::Branch { .. } | Instr::Jump { .. })
+}
+
+fn reject_insert_that_shifts_control_flow_target(
+    function: &str,
+    insert_pc: usize,
+    body: &[Instr],
+) -> Result<()> {
+    for instr in body {
+        match instr {
+            Instr::Branch {
+                then_pc, else_pc, ..
+            } => {
+                if let Some((label, target_pc)) =
+                    [("branch then_pc", *then_pc), ("branch else_pc", *else_pc)]
+                        .into_iter()
+                        .filter(|(_, target_pc)| *target_pc >= insert_pc)
+                        .min_by_key(|(_, target_pc)| *target_pc)
+                {
+                    return Err(anyhow!(
+                        "insert pc {insert_pc} would shift existing {label} target {target_pc} in function {function}"
+                    ));
+                }
+            }
+            Instr::Jump { pc: target_pc } if *target_pc >= insert_pc => {
+                return Err(anyhow!(
+                    "insert pc {insert_pc} would shift existing jump pc target {target_pc} in function {function}"
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }

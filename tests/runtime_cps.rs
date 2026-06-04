@@ -632,7 +632,19 @@ async fn var_exists_guard_can_introduce_missing_binding_with_think() {
     assert_eq!(output, action_value("m1"));
     assert!(weak.calls().is_empty());
     assert_eq!(strong.calls().len(), 1);
-    replay_trace_events(&trace.events()).unwrap();
+    let events = trace.events();
+    let capture = events
+        .iter()
+        .find(|event| event.event == "capture_continuation")
+        .expect("guard repair captures continuation");
+    assert_eq!(capture.detail["failed_instruction_op"], "guard");
+    assert_eq!(capture.detail["failed_effect_kind"], "think");
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event == "effect_accepted" && event.detail["captured"] == true)
+    );
+    replay_trace_events(&events).unwrap();
 }
 
 #[test]
@@ -682,53 +694,88 @@ fn functions_must_end_with_return_during_validation() {
 }
 
 #[test]
-fn local_tool_perform_is_rejected_during_validation() {
-    let mut functions = BTreeMap::new();
-    functions.insert(
-        "main".to_owned(),
-        FunctionDef {
-            params: vec!["request".to_owned()],
-            output_schema: json!({ "type": "string" }),
-            body: vec![
-                Instr::Perform {
-                    out: "tool_output".to_owned(),
-                    effect: EffectCall::LocalTool {
-                        tool_name: "calendar.create".to_owned(),
-                        args_schema: json!({ "type": "object" }),
-                    },
-                    input: JsonExpr::Literal {
-                        value: json!({ "title": "review" }),
-                    },
-                    expected_schema: json!({ "type": "string" }),
-                    acceptance: accept(0.0),
-                },
-                Instr::Return {
-                    value: JsonExpr::Var {
-                        name: "tool_output".to_owned(),
-                    },
-                },
-            ],
-        },
-    );
-    let program = Program {
-        program_id: "local_tool_unsupported".to_owned(),
-        version: "1.0.0".to_owned(),
-        entry: "main".to_owned(),
-        input_schema: json!({ "type": "object" }),
-        output_schema: json!({ "type": "string" }),
-        functions,
-        allowed_effects: vec![EffectPermission::LocalTool {
-            tool_name: "calendar.create".to_owned(),
-        }],
-    };
+fn unimplemented_local_tool_permission_is_rejected_during_validation() {
+    let mut program = single_weak_program();
+    program.allowed_effects.push(EffectPermission::LocalTool {
+        tool_name: "unregistered_tool".to_owned(),
+    });
 
     let error = validate_program(&program).unwrap_err();
 
     assert!(
         error
             .to_string()
-            .contains("local_tool effects are not supported")
+            .contains("local_tool permission references unimplemented tool unregistered_tool")
     );
+}
+
+#[test]
+fn direct_unimplemented_local_tool_call_is_rejected_during_validation() {
+    let mut program =
+        local_validator_program(json!({ "type": "object" }), valid_validator_apply_input());
+    let main = program.functions.get_mut("main").unwrap();
+    let Instr::Perform { effect, .. } = &mut main.body[0] else {
+        panic!("expected local tool perform instruction");
+    };
+    *effect = EffectCall::LocalTool {
+        tool_name: "unimplemented_tool".to_owned(),
+        args_schema: json!({ "type": "object" }),
+    };
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "local_tool effect at main:0 references unimplemented tool unimplemented_tool"
+        )
+    );
+}
+
+#[test]
+fn local_tool_invalid_args_schema_is_rejected_during_validation() {
+    let program = local_validator_program(
+        json!({ "type": "not-a-json-schema-type" }),
+        valid_validator_apply_input(),
+    );
+
+    let error = validate_program(&program).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("local_tool args_schema is invalid at main:0")
+    );
+}
+
+#[tokio::test]
+async fn local_tool_input_must_match_declared_args_schema_before_dispatch() {
+    let program = local_validator_program(
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "validators", "missing"],
+            "properties": {
+                "value": {},
+                "validators": { "type": "array" },
+                "missing": { "type": "string" }
+            }
+        }),
+        valid_validator_apply_input(),
+    );
+
+    validate_program(&program).unwrap();
+    let runtime = Runtime::new(
+        SequenceHandler::empty(),
+        SequenceHandler::empty(),
+        TraceCollector::default(),
+    );
+    let error = runtime.run_program(program, json!({})).await.unwrap_err();
+
+    assert!(error.chain().any(|cause| {
+        cause
+            .to_string()
+            .contains("local_tool validator_apply input failed args_schema")
+    }));
 }
 
 #[test]
@@ -1418,6 +1465,14 @@ async fn strong_handler_can_request_weak_probe_and_reenter() {
         event.event == "reenter_handler"
             && event.detail["observation_name"] == "datetime_candidates"
     }));
+    let accepted_effects = trace
+        .events()
+        .into_iter()
+        .filter(|event| event.event == "effect_accepted")
+        .collect::<Vec<_>>();
+    assert_eq!(accepted_effects.len(), 1);
+    assert_eq!(accepted_effects[0].detail["effect"], "model_task");
+    assert_eq!(accepted_effects[0].detail["captured"], true);
 }
 
 #[tokio::test]
@@ -2186,6 +2241,53 @@ fn sourced_union_schema() -> Value {
             }
         ]
     })
+}
+
+fn valid_validator_apply_input() -> Value {
+    json!({
+        "value": { "present": true },
+        "validators": []
+    })
+}
+
+fn local_validator_program(args_schema: Value, input: Value) -> Program {
+    let mut functions = BTreeMap::new();
+    functions.insert(
+        "main".to_owned(),
+        FunctionDef {
+            params: Vec::new(),
+            output_schema: json!({ "type": "object" }),
+            body: vec![
+                Instr::Perform {
+                    out: "validated".to_owned(),
+                    effect: EffectCall::LocalTool {
+                        tool_name: "validator_apply".to_owned(),
+                        args_schema,
+                    },
+                    input: JsonExpr::Literal { value: input },
+                    expected_schema: json!({ "type": "object" }),
+                    acceptance: accept_abort(1.0),
+                },
+                Instr::Return {
+                    value: JsonExpr::Var {
+                        name: "validated".to_owned(),
+                    },
+                },
+            ],
+        },
+    );
+
+    Program {
+        program_id: "local_validator_apply".to_owned(),
+        version: "1.0.0".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({}),
+        output_schema: json!({ "type": "object" }),
+        functions,
+        allowed_effects: vec![EffectPermission::LocalTool {
+            tool_name: "validator_apply".to_owned(),
+        }],
+    }
 }
 
 fn user_source_required_schema() -> Value {

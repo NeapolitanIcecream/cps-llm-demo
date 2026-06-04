@@ -337,6 +337,93 @@ fn cli_compile_run_enforces_requested_output_schema_on_compiled_program() {
 }
 
 #[test]
+fn cli_init_workflow_from_task_records_strong_compile_metric() {
+    let server = MockServer::start();
+    let compile_mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/v1/responses")
+            .json_body_includes(r#"{"model":"fake-strong","text":{"format":{"name":"program"}}}"#);
+        then.status(200).json_body(json!({
+            "output_text": include_str!("../examples/message_action.v2.program.json")
+        }));
+    });
+    let state_dir = make_temp_workdir();
+
+    let mut init_cmd = Command::cargo_bin("cps-llm-demo").unwrap();
+    init_cmd
+        .arg("init-workflow")
+        .arg("--workflow")
+        .arg("compiled_fixture")
+        .arg("--task")
+        .arg("examples/message_action.task.md")
+        .arg("--state-dir")
+        .arg(&state_dir)
+        .arg("--base-url")
+        .arg(server.url("/v1"))
+        .arg("--api-key")
+        .arg("test-key")
+        .arg("--weak-model")
+        .arg("fake-weak")
+        .arg("--strong-model")
+        .arg("fake-strong")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "\"latest_program_version\": \"v0001\"",
+        ));
+
+    let mut report_cmd = Command::cargo_bin("cps-llm-demo").unwrap();
+    let report = report_cmd
+        .arg("metrics-report")
+        .arg("--workflow")
+        .arg("compiled_fixture")
+        .arg("--state-dir")
+        .arg(&state_dir)
+        .output()
+        .unwrap();
+    assert!(report.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&report.stdout).unwrap();
+    assert_eq!(report["summary"]["cps_strong_compile_calls"], 1);
+    assert_eq!(report["latest_program_version"], "v0001");
+
+    compile_mock.assert();
+    let _ = fs::remove_dir_all(state_dir);
+}
+
+#[test]
+fn cli_init_workflow_rejects_existing_workflow() {
+    let state_dir = make_temp_workdir();
+
+    let mut first = Command::cargo_bin("cps-llm-demo").unwrap();
+    first
+        .arg("init-workflow")
+        .arg("--workflow")
+        .arg("existing_fixture")
+        .arg("--program")
+        .arg("examples/message_action.v2.program.json")
+        .arg("--state-dir")
+        .arg(&state_dir)
+        .assert()
+        .success();
+
+    let mut second = Command::cargo_bin("cps-llm-demo").unwrap();
+    second
+        .arg("init-workflow")
+        .arg("--workflow")
+        .arg("existing_fixture")
+        .arg("--program")
+        .arg("examples/message_action.v2.program.json")
+        .arg("--state-dir")
+        .arg(&state_dir)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"))
+        .stdout(predicate::str::is_empty());
+
+    let _ = fs::remove_dir_all(state_dir);
+}
+
+#[test]
 fn cli_run_program_without_api_key_has_clear_error() {
     let input = write_temp_messages();
     let program = write_temp_program();

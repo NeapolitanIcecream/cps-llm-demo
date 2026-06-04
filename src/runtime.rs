@@ -1,15 +1,17 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Map, Value, json};
 
 use crate::effects::{
-    AllowedDecision, Continuation, ContinuationSummary, EffectFrame, EffectReturnMode,
-    HandlerBudget, HandlerDecision, HandlerRequest, Observation, ObservationSource, ReturnSlot,
-    RuntimeBudget, RuntimeFrame,
+    AllowedDecision, Continuation, ContinuationSummary, EffectFrame, EffectFrameEncoder,
+    EffectReturnMode, HandlerBudget, HandlerDecision, HandlerRequest, Observation,
+    ObservationSource, ReturnSlot, RuntimeBudget, RuntimeFrame,
 };
+use crate::local_tools::{FAST_PATH_APPLY_TOOL_NAME, LocalToolRegistry};
 use crate::models::EffectHandler;
 use crate::program::{
     AcceptancePolicy, EffectCall, FailureHandler, FunctionDef, GuardExpr, GuardFail, Instr,
@@ -25,6 +27,12 @@ const INPUT_VAR: &str = "$input";
 pub enum StepOutcome {
     Continue,
     Finished(Value),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProgramRunResult {
+    pub output: Value,
+    pub pending_patches: Vec<ProgramPatch>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,15 +51,22 @@ struct ProgramState {
 }
 
 impl ProgramState {
-    fn new(program: Program, input: Value, budget: RuntimeBudget) -> Result<Self> {
+    fn new(
+        program: Program,
+        input: Value,
+        budget: RuntimeBudget,
+        trace_id_override: Option<String>,
+    ) -> Result<Self> {
         validate_program(&program).context("program validation failed")?;
         validate_value(&program.input_schema, &input).context("program input failed schema")?;
 
-        let trace_id = input
-            .get("event_id")
-            .and_then(Value::as_str)
-            .unwrap_or(&program.program_id)
-            .to_owned();
+        let trace_id = trace_id_override.unwrap_or_else(|| {
+            input
+                .get("event_id")
+                .and_then(Value::as_str)
+                .unwrap_or(&program.program_id)
+                .to_owned()
+        });
         let entry = program
             .functions
             .get(&program.entry)
@@ -200,6 +215,8 @@ struct EffectWork {
 pub struct Runtime<W, S> {
     pub weak: W,
     pub strong: S,
+    pub local_tools: LocalToolRegistry,
+    pub frame_encoder: Option<Arc<dyn EffectFrameEncoder>>,
     pub trace: TraceCollector,
     pub budget: RuntimeBudget,
 }
@@ -213,6 +230,8 @@ where
         Self {
             weak,
             strong,
+            local_tools: LocalToolRegistry::default(),
+            frame_encoder: None,
             trace,
             budget: RuntimeBudget::default(),
         }
@@ -222,13 +241,78 @@ where
         Self {
             weak,
             strong,
+            local_tools: LocalToolRegistry::default(),
+            frame_encoder: None,
+            trace,
+            budget,
+        }
+    }
+
+    pub fn with_local_tools(
+        weak: W,
+        strong: S,
+        local_tools: LocalToolRegistry,
+        trace: TraceCollector,
+        budget: RuntimeBudget,
+    ) -> Self {
+        Self {
+            weak,
+            strong,
+            local_tools,
+            frame_encoder: None,
+            trace,
+            budget,
+        }
+    }
+
+    pub fn with_frame_encoder(
+        weak: W,
+        strong: S,
+        local_tools: LocalToolRegistry,
+        frame_encoder: Arc<dyn EffectFrameEncoder>,
+        trace: TraceCollector,
+        budget: RuntimeBudget,
+    ) -> Self {
+        Self {
+            weak,
+            strong,
+            local_tools,
+            frame_encoder: Some(frame_encoder),
             trace,
             budget,
         }
     }
 
     pub async fn run_program(&self, program: Program, input: Value) -> Result<Value> {
-        let mut state = ProgramState::new(program, input, self.budget.clone())?;
+        Ok(self.run_program_with_result(program, input).await?.output)
+    }
+
+    pub async fn run_program_with_result(
+        &self,
+        program: Program,
+        input: Value,
+    ) -> Result<ProgramRunResult> {
+        self.run_program_with_result_inner(program, input, None)
+            .await
+    }
+
+    pub async fn run_program_with_result_and_trace_id(
+        &self,
+        program: Program,
+        input: Value,
+        trace_id: String,
+    ) -> Result<ProgramRunResult> {
+        self.run_program_with_result_inner(program, input, Some(trace_id))
+            .await
+    }
+
+    async fn run_program_with_result_inner(
+        &self,
+        program: Program,
+        input: Value,
+        trace_id_override: Option<String>,
+    ) -> Result<ProgramRunResult> {
+        let mut state = ProgramState::new(program, input, self.budget.clone(), trace_id_override)?;
         self.trace.emit(
             "program_validated",
             &state.trace_id,
@@ -255,7 +339,12 @@ where
         loop {
             match self.step(&mut state).await {
                 Ok(StepOutcome::Continue) => continue,
-                Ok(StepOutcome::Finished(value)) => return Ok(value),
+                Ok(StepOutcome::Finished(output)) => {
+                    return Ok(ProgramRunResult {
+                        output,
+                        pending_patches: state.pending_patches.clone(),
+                    });
+                }
                 Err(err) => {
                     self.trace.emit(
                         "program_aborted",
@@ -332,6 +421,41 @@ where
                         Ok(StepOutcome::Continue)
                     }
                 }
+            }
+            Instr::Branch {
+                condition,
+                then_pc,
+                else_pc,
+            } => {
+                let target = if guard_passes(&state.top_frame()?.env, &condition)? {
+                    then_pc
+                } else {
+                    else_pc
+                };
+                self.trace.emit(
+                    "branch_decision",
+                    &state.trace_id,
+                    json!({
+                        "function": &function,
+                        "pc": pc,
+                        "target_pc": target,
+                    }),
+                );
+                state.top_frame_mut()?.pc = target;
+                Ok(StepOutcome::Continue)
+            }
+            Instr::Jump { pc: target_pc } => {
+                self.trace.emit(
+                    "jump",
+                    &state.trace_id,
+                    json!({
+                        "function": &function,
+                        "pc": pc,
+                        "target_pc": target_pc,
+                    }),
+                );
+                state.top_frame_mut()?.pc = target_pc;
+                Ok(StepOutcome::Continue)
             }
             Instr::Perform {
                 out,
@@ -429,6 +553,23 @@ where
                     &resolution.value,
                     resolution.confidence,
                 ) {
+                    self.trace.emit(
+                        "effect_accepted",
+                        &state.trace_id,
+                        json!({
+                            "function": &function,
+                            "pc": pc,
+                            "out": &out,
+                            "effect": effect.kind_name(),
+                            "strength": effect.strength().map(|strength| match strength {
+                                ModelStrength::Weak => "weak",
+                                ModelStrength::Strong => "strong",
+                            }),
+                            "task": effect.model_task_name(),
+                            "source": resolution.source.as_str(),
+                            "captured": false,
+                        }),
+                    );
                     let frame = state.top_frame_mut()?;
                     frame.env.insert(out, resolution.value);
                     frame.pc += 1;
@@ -594,6 +735,8 @@ where
             }
             state.consume_effect_budget()?;
 
+            validate_effect_input_contract(&effect, &input)?;
+
             let handler_name = effect.handler_name();
             self.trace.emit(
                 "handler_request",
@@ -640,11 +783,11 @@ where
                         .handle(request.clone())
                         .await
                         .with_context(|| format!("{handler_name} handler failed"))?,
-                    "local_tool" => {
-                        return Err(anyhow!(
-                            "local tool handlers are not registered in this demo"
-                        ));
-                    }
+                    "local_tool" => self
+                        .local_tools
+                        .handle(request.clone())
+                        .await
+                        .with_context(|| format!("{handler_name} handler failed"))?,
                     _ => return Err(anyhow!("unknown handler {handler_name}")),
                 };
 
@@ -695,6 +838,7 @@ where
                         value, confidence, ..
                     } => {
                         ensure_probability(confidence, "handler return_value confidence")?;
+                        self.emit_local_tool_result_trace(state, &effect, &value);
                         let source = source_for_effect(&effect);
                         return Ok(EffectResolution {
                             value,
@@ -895,7 +1039,26 @@ where
     ) -> Result<()> {
         let expected_schema = frame.continuation.expected_schema.clone();
         let continuation = frame.continuation.clone();
-        let reason = frame.reason.clone();
+        let mut model_visible_frame = frame;
+        if let Some(encoder) = &self.frame_encoder {
+            let encoded = encoder.encode(&model_visible_frame)?;
+            self.trace.emit(
+                "continuation_frame_encoded",
+                &state.trace_id,
+                json!({
+                    "continuation_id": &continuation.continuation_id,
+                    "original_continuation_ref": encoded.original_continuation_ref,
+                    "original_bytes": encoded.original_bytes,
+                    "encoded_bytes": encoded.encoded_bytes,
+                }),
+            );
+            model_visible_frame = encoded.model_visible_frame;
+        }
+        let reason = model_visible_frame.reason.clone();
+        let repaired_effect = match &model_visible_frame.failed_instruction {
+            Some(Instr::Perform { effect, .. }) => Some(effect.clone()),
+            _ => None,
+        };
         let effect = EffectCall::Think { reason };
         if !effect_allowed(&state.program.allowed_effects, &effect) {
             return Err(anyhow!(
@@ -909,9 +1072,9 @@ where
                 state,
                 EffectWork {
                     effect,
-                    input: serde_json::to_value(&frame)?,
+                    input: serde_json::to_value(&model_visible_frame)?,
                     expected_schema: expected_schema.clone(),
-                    effect_frame: Some(frame),
+                    effect_frame: Some(model_visible_frame),
                     observations: Vec::new(),
                     depth: continuation.effect_depth + 1,
                 },
@@ -919,6 +1082,28 @@ where
             .await?;
         validate_value(&expected_schema, &resolution.value)
             .context("strong Think return_value failed expected schema")?;
+
+        if let Some(failed_effect) = repaired_effect.as_ref() {
+            self.trace.emit(
+                "effect_accepted",
+                &state.trace_id,
+                json!({
+                    "effect": failed_effect.kind_name(),
+                    "strength": failed_effect.strength().map(|strength| match strength {
+                        ModelStrength::Weak => "weak",
+                        ModelStrength::Strong => "strong",
+                    }),
+                    "task": failed_effect.model_task_name(),
+                    "source": resolution.source.as_str(),
+                    "captured": true,
+                    "continuation_id": &continuation.continuation_id,
+                    "function": continuation.stack.last().map(|frame| frame.function.as_str()),
+                    "resume_pc": continuation.resume_pc,
+                    "resume_var": continuation.resume_var.as_ref(),
+                    "depth": continuation.effect_depth,
+                }),
+            );
+        }
 
         self.trace.emit(
             "resume_continuation",
@@ -950,6 +1135,7 @@ where
                 Some(ReturnSlot::MapElement { map_index, .. }) => Some(*map_index),
                 _ => None,
             });
+        let failed_instruction_op = capture.failed_instruction.as_ref().map(Instr::op_name);
         self.trace.emit(
             "capture_continuation",
             &state.trace_id,
@@ -958,6 +1144,7 @@ where
                 "continuation_id": &continuation_id,
                 "boundary_id": &state.boundary_id,
                 "program_id": &state.program.program_id,
+                "program_version": &state.program.version,
                 "function": &top.function,
                 "pc": top.pc,
                 "resume_pc": capture.resume_pc,
@@ -965,6 +1152,11 @@ where
                 "reason": &capture.reason,
                 "stack_depth": state.stack.len(),
                 "map_index": map_index,
+                "failed_instruction_op": failed_instruction_op,
+                "failed_effect_kind": capture.failed_effect.as_ref().map(EffectCall::kind_name),
+                "failed_task_name": capture.failed_effect.as_ref().and_then(EffectCall::model_task_name),
+                "expected_schema": &capture.expected_schema,
+                "observations": &capture.observations,
             }),
         );
 
@@ -1296,9 +1488,40 @@ fn prefix_function_refs(function: &mut FunctionDef, prefix: &str) {
             | Instr::Project { .. }
             | Instr::Perform { .. }
             | Instr::Guard { .. }
+            | Instr::Branch { .. }
+            | Instr::Jump { .. }
             | Instr::CallDynamic { .. }
             | Instr::Return { .. } => {}
         }
+    }
+}
+
+impl<W, S> Runtime<W, S> {
+    fn emit_local_tool_result_trace(
+        &self,
+        state: &ProgramState,
+        effect: &EffectCall,
+        value: &Value,
+    ) {
+        let EffectCall::LocalTool { tool_name, .. } = effect else {
+            return;
+        };
+        if tool_name != FAST_PATH_APPLY_TOOL_NAME {
+            return;
+        }
+        let hit = value.get("hit").and_then(Value::as_bool).unwrap_or(false);
+        self.trace.emit(
+            if hit {
+                "fast_path_hit"
+            } else {
+                "fast_path_miss"
+            },
+            &state.trace_id,
+            json!({
+                "tool": tool_name,
+                "rule_id": value.get("rule_id").and_then(Value::as_str),
+            }),
+        );
     }
 }
 
@@ -1344,6 +1567,18 @@ fn guard_passes(env: &Map<String, Value>, condition: &GuardExpr) -> Result<bool>
             };
             Ok(validate_value(schema, value).is_ok())
         }
+        GuardExpr::FieldEquals { var, path, value } => {
+            let Some(root) = env.get(var) else {
+                return Ok(false);
+            };
+            Ok(value_at_path(root, path).is_some_and(|actual| actual == value))
+        }
+        GuardExpr::FieldIsTruthy { var, path } => {
+            let Some(root) = env.get(var) else {
+                return Ok(false);
+            };
+            Ok(value_at_path(root, path).is_some_and(value_is_truthy))
+        }
     }
 }
 
@@ -1351,6 +1586,28 @@ fn guard_resume_contract(condition: &GuardExpr) -> (Option<String>, Value) {
     match condition {
         GuardExpr::VarExists { name } => (Some(name.clone()), json!({})),
         GuardExpr::JsonSchemaValid { var, schema } => (Some(var.clone()), schema.clone()),
+        GuardExpr::FieldEquals { var, .. } | GuardExpr::FieldIsTruthy { var, .. } => {
+            (Some(var.clone()), json!({}))
+        }
+    }
+}
+
+fn value_at_path<'a>(root: &'a Value, path: &[String]) -> Option<&'a Value> {
+    let mut cursor = root;
+    for segment in path {
+        cursor = cursor.as_object()?.get(segment)?;
+    }
+    Some(cursor)
+}
+
+fn value_is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Bool(value) => *value,
+        Value::Null => false,
+        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
+        Value::String(value) => !value.is_empty(),
+        Value::Array(values) => !values.is_empty(),
+        Value::Object(values) => !values.is_empty(),
     }
 }
 
@@ -1374,11 +1631,25 @@ fn trace_return_value_schema_valid(expected_schema: &Value, value: &Value) -> bo
     validate_value(expected_schema, value).is_ok()
 }
 
+fn validate_effect_input_contract(effect: &EffectCall, input: &Value) -> Result<()> {
+    let EffectCall::LocalTool {
+        tool_name,
+        args_schema,
+    } = effect
+    else {
+        return Ok(());
+    };
+    validate_value(args_schema, input)
+        .with_context(|| format!("local_tool {tool_name} input failed args_schema"))
+}
+
 fn is_handler_failure(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
         matches!(
             cause.to_string().as_str(),
-            "weak_model handler failed" | "strong_model handler failed"
+            "weak_model handler failed"
+                | "strong_model handler failed"
+                | "local_tool handler failed"
         )
     })
 }

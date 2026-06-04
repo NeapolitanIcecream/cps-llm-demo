@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
@@ -6,10 +7,22 @@ use serde_json::{Value, json};
 
 use crate::config::{DEFAULT_BASE_URL, DEFAULT_STRONG_MODEL, DEFAULT_WEAK_MODEL, ModelConfig};
 use crate::effects::{HandlerBudget, HandlerDecision, HandlerRequest, RuntimeBudget};
-use crate::models::{EffectHandler, ResponsesStrongModel, ResponsesWeakModel};
-use crate::program::{EffectCall, ModelStrength, ModelTaskSpec, Program};
+use crate::engine::event_source::JsonlEventSource;
+use crate::engine::run_coordinator::run_stream;
+use crate::evaluation::compare_runs::compare_runs;
+use crate::evaluation::strong_direct_baseline::baseline_strong_direct;
+use crate::models::{EffectHandler, FixtureModelHandler, ResponsesStrongModel, ResponsesWeakModel};
+use crate::observability::report::build_metrics_report;
+use crate::optimizer::patch_installer::install_fixture_patch;
+use crate::optimizer::patch_optimizer::{OptimizerContext, optimize_from_profile};
+use crate::program::{EffectCall, ModelStrength, ModelTaskSpec, Program, ProgramPatch};
 use crate::runtime::Runtime;
 use crate::schema::{action_drafts_schema, message_events_schema, program_schema, schema_bundle};
+use crate::store::metrics_store::{FileMetricsStore, RunMetrics};
+use crate::store::program_registry::{
+    FileProgramRegistry, ProgramMetadata, ProgramSource, fixture_program_metadata,
+};
+use crate::store::state_dir::{StateDir, now_string, stable_hash_bytes};
 use crate::trace::{TraceCollector, parse_trace_jsonl, replay_trace_events};
 use crate::validator::validate_program;
 
@@ -69,6 +82,123 @@ pub enum Command {
     ValidateProgram {
         #[arg(long)]
         program: PathBuf,
+    },
+    InitWorkflow {
+        #[arg(long)]
+        workflow: String,
+
+        #[arg(long)]
+        task: Option<PathBuf>,
+
+        #[arg(long)]
+        program: Option<PathBuf>,
+
+        #[arg(long, default_value = ".cps-llm-demo")]
+        state_dir: PathBuf,
+
+        #[arg(long, env = "OPENAI_BASE_URL", default_value = DEFAULT_BASE_URL)]
+        base_url: String,
+
+        #[arg(long, env = "OPENAI_API_KEY")]
+        api_key: Option<String>,
+
+        #[arg(long, env = "CPS_WEAK_MODEL", default_value = DEFAULT_WEAK_MODEL)]
+        weak_model: String,
+
+        #[arg(long, env = "CPS_STRONG_MODEL", default_value = DEFAULT_STRONG_MODEL)]
+        strong_model: String,
+    },
+    RunStream {
+        #[arg(long)]
+        workflow: String,
+
+        #[arg(long)]
+        events: PathBuf,
+
+        #[arg(long, default_value = ".cps-llm-demo")]
+        state_dir: PathBuf,
+
+        #[arg(long, env = "OPENAI_BASE_URL", default_value = DEFAULT_BASE_URL)]
+        base_url: String,
+
+        #[arg(long, env = "OPENAI_API_KEY")]
+        api_key: Option<String>,
+
+        #[arg(long, env = "CPS_WEAK_MODEL", default_value = DEFAULT_WEAK_MODEL)]
+        weak_model: String,
+
+        #[arg(long, env = "CPS_STRONG_MODEL", default_value = DEFAULT_STRONG_MODEL)]
+        strong_model: String,
+
+        #[arg(long)]
+        trace_json: bool,
+    },
+    Optimize {
+        #[arg(long)]
+        workflow: String,
+
+        #[arg(long, default_value = ".cps-llm-demo")]
+        state_dir: PathBuf,
+
+        #[arg(long)]
+        patch: Option<PathBuf>,
+
+        #[arg(long, default_value_t = 3)]
+        max_patches: usize,
+
+        #[arg(long, env = "OPENAI_BASE_URL", default_value = DEFAULT_BASE_URL)]
+        base_url: String,
+
+        #[arg(long, env = "OPENAI_API_KEY")]
+        api_key: Option<String>,
+
+        #[arg(long, env = "CPS_WEAK_MODEL", default_value = DEFAULT_WEAK_MODEL)]
+        weak_model: String,
+
+        #[arg(long, env = "CPS_STRONG_MODEL", default_value = DEFAULT_STRONG_MODEL)]
+        strong_model: String,
+    },
+    BaselineStrongDirect {
+        #[arg(long)]
+        workflow: String,
+
+        #[arg(long)]
+        task: PathBuf,
+
+        #[arg(long)]
+        events: PathBuf,
+
+        #[arg(long, default_value = ".cps-llm-demo")]
+        state_dir: PathBuf,
+
+        #[arg(long, env = "OPENAI_BASE_URL", default_value = DEFAULT_BASE_URL)]
+        base_url: String,
+
+        #[arg(long, env = "OPENAI_API_KEY")]
+        api_key: Option<String>,
+
+        #[arg(long, env = "CPS_STRONG_MODEL", default_value = DEFAULT_STRONG_MODEL)]
+        strong_model: String,
+    },
+    MetricsReport {
+        #[arg(long)]
+        workflow: String,
+
+        #[arg(long, default_value = ".cps-llm-demo")]
+        state_dir: PathBuf,
+    },
+    CompareRuns {
+        #[arg(long)]
+        baseline_run: String,
+
+        #[arg(long)]
+        before_run: String,
+
+        #[arg(long)]
+        after_run: String,
+
+        #[arg(long, default_value = ".cps-llm-demo")]
+        state_dir: PathBuf,
     },
     Replay {
         #[arg(long)]
@@ -148,6 +278,182 @@ pub async fn run() -> Result<()> {
             validate_program(&program).context("program validation failed")?;
             println!("{}", json!({ "ok": true, "status": "OK" }));
         }
+        Command::InitWorkflow {
+            workflow,
+            task,
+            program,
+            state_dir,
+            base_url,
+            api_key,
+            weak_model,
+            strong_model,
+        } => {
+            let state = StateDir::new(state_dir);
+            let registry = FileProgramRegistry::new(state.clone());
+            let (program, metadata) = match (task, program) {
+                (Some(task), None) => {
+                    let config = ModelConfig::new(base_url, api_key, weak_model, strong_model)?;
+                    let task_spec = read_task(&task)?;
+                    let client = config.responses_client();
+                    let strong = ResponsesStrongModel::new(client, config.strong_model);
+                    let program =
+                        compile_program(&strong, &task_spec, json!({}), json!({})).await?;
+                    let metadata = ProgramMetadata {
+                        workflow_id: workflow.clone(),
+                        program_id: program.program_id.clone(),
+                        version: program.version.clone(),
+                        created_at: now_string(),
+                        source: ProgramSource::StrongCompile,
+                        parent_version: None,
+                        patch_id: None,
+                        task_hash: stable_hash_bytes(task_spec.as_bytes()),
+                    };
+                    (program, metadata)
+                }
+                (None, Some(program_path)) => {
+                    let program = read_program(&program_path)?;
+                    validate_program(&program).context("program validation failed")?;
+                    let metadata = fixture_program_metadata(&workflow, &program);
+                    (program, metadata)
+                }
+                (Some(_), Some(_)) => {
+                    return Err(anyhow!(
+                        "init-workflow accepts either --task or --program, not both"
+                    ));
+                }
+                (None, None) => {
+                    return Err(anyhow!("init-workflow requires --task or --program"));
+                }
+            };
+            let compiled_by_strong = matches!(metadata.source, ProgramSource::StrongCompile);
+            let compiled_program_id = program.program_id.clone();
+            registry.init_workflow(&workflow, program, metadata)?;
+            if compiled_by_strong {
+                let mut metrics = RunMetrics::new(
+                    uuid::Uuid::new_v4().to_string(),
+                    workflow.clone(),
+                    "compile".to_owned(),
+                    compiled_program_id,
+                    "v0001".to_owned(),
+                    now_string(),
+                );
+                metrics.program_compile_calls = 1;
+                metrics.estimated_model_calls = 1;
+                metrics.finished_at = now_string();
+                FileMetricsStore::new(state).write(&metrics)?;
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "workflow_id": workflow,
+                    "latest_program_version": "v0001"
+                }))?
+            );
+        }
+        Command::RunStream {
+            workflow,
+            events,
+            state_dir,
+            base_url,
+            api_key,
+            weak_model,
+            strong_model,
+            trace_json,
+        } => {
+            let state = StateDir::new(state_dir);
+            let event_source = JsonlEventSource::from_path(&events)?;
+            let (weak, strong) = handler_pair(base_url, api_key, weak_model, strong_model)?;
+            let summary =
+                run_stream(state, &workflow, event_source, weak, strong, trace_json).await?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        }
+        Command::Optimize {
+            workflow,
+            state_dir,
+            patch,
+            max_patches,
+            base_url,
+            api_key,
+            weak_model,
+            strong_model,
+        } => {
+            let state = StateDir::new(state_dir);
+            let programs = FileProgramRegistry::new(state.clone());
+            let patches = crate::store::patch_registry::FilePatchRegistry::new(state.clone());
+            let traces = crate::store::trace_store::FileTraceStore::new(state.clone());
+            let profiles = crate::store::profile_store::FileProfileStore::new(state);
+            let (weak, strong) = handler_pair(base_url, api_key, weak_model, strong_model)?;
+            let installed_version = if let Some(patch_path) = patch {
+                let patch = read_patch(&patch_path)?;
+                install_fixture_patch(&programs, &patches, &traces, &workflow, patch, weak, strong)
+                    .await?
+            } else {
+                optimize_from_profile(
+                    OptimizerContext {
+                        programs: &programs,
+                        patches: &patches,
+                        traces: &traces,
+                        profiles: &profiles,
+                        weak,
+                        strong,
+                    },
+                    &workflow,
+                    max_patches,
+                )
+                .await?
+            };
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "workflow_id": workflow,
+                    "installed_program_version": installed_version
+                }))?
+            );
+        }
+        Command::BaselineStrongDirect {
+            workflow,
+            task,
+            events,
+            state_dir,
+            base_url,
+            api_key,
+            strong_model,
+        } => {
+            let state = StateDir::new(state_dir);
+            let event_source = JsonlEventSource::from_path(&events)?;
+            let task_spec = read_task(&task)?;
+            let strong = strong_handler(base_url, api_key, strong_model)?;
+            let summary =
+                baseline_strong_direct(state, &workflow, task_spec, event_source, strong).await?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        }
+        Command::MetricsReport {
+            workflow,
+            state_dir,
+        } => {
+            let state = StateDir::new(state_dir);
+            let metrics = FileMetricsStore::new(state.clone()).list(&workflow)?;
+            let programs = FileProgramRegistry::new(state);
+            let latest = programs.latest_version(&workflow).ok();
+            let versions = programs.list_versions(&workflow).unwrap_or_default();
+            let report = build_metrics_report(&workflow, latest, metrics, &versions);
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::CompareRuns {
+            baseline_run,
+            before_run,
+            after_run,
+            state_dir,
+        } => {
+            let metrics = FileMetricsStore::new(StateDir::new(state_dir));
+            let baseline = metrics.find_run(&baseline_run)?;
+            let before = metrics.find_run(&before_run)?;
+            let after = metrics.find_run(&after_run)?;
+            let comparison = compare_runs(&baseline, &before, &after, 16_384);
+            println!("{}", serde_json::to_string_pretty(&comparison)?);
+        }
         Command::Replay { trace } => {
             let raw = std::fs::read_to_string(&trace)
                 .with_context(|| format!("failed to read trace file {}", trace.display()))?;
@@ -178,12 +484,12 @@ pub async fn run() -> Result<()> {
             let strong = ResponsesStrongModel::new(client, config.strong_model);
 
             let task = ModelTaskSpec {
-                name: "classify_and_extract_action_draft".to_owned(),
-                instructions: "Given one message event, return one action draft.".to_owned(),
+                name: "probe_json_transform".to_owned(),
+                instructions: "Given one JSON object, return one JSON object.".to_owned(),
             };
             let input = json!({
-                "event_id": "probe-calendar",
-                "text": "Friday 3pm product review meeting"
+                "event_id": "probe-1",
+                "text": "sample input"
             });
             let request = HandlerRequest {
                 effect: EffectCall::ModelTask {
@@ -191,7 +497,7 @@ pub async fn run() -> Result<()> {
                     task,
                 },
                 input,
-                expected_schema: crate::schema::action_draft_schema(),
+                expected_schema: json!({ "type": "object" }),
                 continuation_summary: None,
                 effect_frame: None,
                 observations: Vec::new(),
@@ -207,7 +513,7 @@ pub async fn run() -> Result<()> {
                     reason: "probe".to_owned(),
                 },
                 input: serde_json::to_value(&weak_decision)?,
-                expected_schema: crate::schema::action_draft_schema(),
+                expected_schema: json!({ "type": "object" }),
                 continuation_summary: None,
                 effect_frame: None,
                 observations: Vec::new(),
@@ -297,6 +603,13 @@ fn read_program(path: &PathBuf) -> Result<Program> {
         .with_context(|| format!("invalid Program JSON in {}", path.display()))
 }
 
+fn read_patch(path: &PathBuf) -> Result<ProgramPatch> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read patch file {}", path.display()))?;
+    serde_json::from_str(&raw)
+        .with_context(|| format!("invalid ProgramPatch JSON in {}", path.display()))
+}
+
 fn read_json(path: &PathBuf) -> Result<Value> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read input file {}", path.display()))?;
@@ -310,4 +623,53 @@ fn emit_trace(trace: TraceCollector, trace_json: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn handler_pair(
+    base_url: String,
+    api_key: Option<String>,
+    weak_model: String,
+    strong_model: String,
+) -> Result<(Arc<dyn EffectHandler>, Arc<dyn EffectHandler>)> {
+    if api_key
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        let config = ModelConfig::new(base_url, api_key, weak_model, strong_model)?;
+        let client = config.responses_client();
+        Ok((
+            Arc::new(ResponsesWeakModel::new(client.clone(), config.weak_model)),
+            Arc::new(ResponsesStrongModel::new(client, config.strong_model)),
+        ))
+    } else {
+        Ok((
+            Arc::new(FixtureModelHandler::weak()),
+            Arc::new(FixtureModelHandler::strong()),
+        ))
+    }
+}
+
+fn strong_handler(
+    base_url: String,
+    api_key: Option<String>,
+    strong_model: String,
+) -> Result<Arc<dyn EffectHandler>> {
+    if api_key
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        let config = ModelConfig::new(
+            base_url,
+            api_key,
+            DEFAULT_WEAK_MODEL.to_owned(),
+            strong_model,
+        )?;
+        let client = config.responses_client();
+        Ok(Arc::new(ResponsesStrongModel::new(
+            client,
+            config.strong_model,
+        )))
+    } else {
+        Ok(Arc::new(FixtureModelHandler::strong()))
+    }
 }

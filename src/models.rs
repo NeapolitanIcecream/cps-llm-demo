@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 use crate::effects::{HandlerDecision, HandlerRequest};
 use crate::program::{EffectCall, ModelStrength, Program};
@@ -55,6 +56,95 @@ pub const WEAK_TASK_INSTRUCTIONS: &str = WEAK_HANDLER_INSTRUCTIONS;
 #[async_trait]
 pub trait EffectHandler: Send + Sync {
     async fn handle(&self, request: HandlerRequest) -> Result<HandlerDecision>;
+}
+
+#[async_trait]
+impl<T> EffectHandler for Arc<T>
+where
+    T: EffectHandler + ?Sized,
+{
+    async fn handle(&self, request: HandlerRequest) -> Result<HandlerDecision> {
+        (**self).handle(request).await
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FixtureModelKind {
+    Weak,
+    Strong,
+}
+
+#[derive(Debug, Clone)]
+pub struct FixtureModelHandler {
+    kind: FixtureModelKind,
+}
+
+impl FixtureModelHandler {
+    pub fn weak() -> Self {
+        Self {
+            kind: FixtureModelKind::Weak,
+        }
+    }
+
+    pub fn strong() -> Self {
+        Self {
+            kind: FixtureModelKind::Strong,
+        }
+    }
+}
+
+#[async_trait]
+impl EffectHandler for FixtureModelHandler {
+    async fn handle(&self, request: HandlerRequest) -> Result<HandlerDecision> {
+        let key = match self.kind {
+            FixtureModelKind::Weak => "weak",
+            FixtureModelKind::Strong => "strong",
+        };
+        let fixture = fixture_model_value(&request.input, key)
+            .cloned()
+            .or_else(|| {
+                let frame = request.effect_frame.as_ref()?;
+                let frame = serde_json::to_value(frame).ok()?;
+                fixture_model_value(&frame, key).cloned()
+            })
+            .ok_or_else(|| anyhow!("fixture model input is missing _fixture_model.{key}"))?;
+        if let Some(reason) = fixture.get("abort").and_then(Value::as_str) {
+            return Ok(HandlerDecision::Abort {
+                reason: reason.to_owned(),
+            });
+        }
+        let value = fixture.get("value").cloned().unwrap_or(Value::Null);
+        let confidence = fixture
+            .get("confidence")
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0) as f32;
+        Ok(HandlerDecision::ReturnValue {
+            value,
+            confidence,
+            rationale: format!("fixture {key} value"),
+        })
+    }
+}
+
+fn fixture_model_value<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    if let Some(fixture) = value
+        .get("_fixture_model")
+        .and_then(Value::as_object)
+        .and_then(|model| model.get(key))
+        .or_else(|| value.get("_fixture_model_default"))
+    {
+        return Some(fixture);
+    }
+
+    match value {
+        Value::Object(object) => object
+            .values()
+            .find_map(|value| fixture_model_value(value, key)),
+        Value::Array(values) => values
+            .iter()
+            .find_map(|value| fixture_model_value(value, key)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
