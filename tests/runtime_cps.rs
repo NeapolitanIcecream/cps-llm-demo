@@ -1108,6 +1108,33 @@ async fn continuation_captures_second_effect_inside_map_and_resumes_ordered_outp
 }
 
 #[tokio::test]
+async fn captured_repair_receives_rejected_perform_value() {
+    let rejected = action_value("m1");
+    let weak = SequenceHandler::new(vec![Ok(return_value(rejected.clone(), 0.20))]);
+    let strong = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.92))]);
+    let runtime = Runtime::new(weak.clone(), strong.clone(), TraceCollector::default());
+
+    runtime
+        .run_program(single_weak_program(), message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    let strong_calls = strong.calls();
+    assert_eq!(strong_calls.len(), 1);
+    let frame = strong_calls[0].effect_frame.as_ref().unwrap();
+    let perform_result = frame
+        .observations
+        .iter()
+        .find(|observation| observation.name == "perform_result")
+        .expect("captured repair should include rejected perform result");
+    assert_eq!(perform_result.value["value"], rejected);
+    let confidence = perform_result.value["confidence"].as_f64().unwrap();
+    assert!((confidence - 0.20).abs() < 1e-6);
+    assert_eq!(perform_result.value["schema_valid"], true);
+    assert_eq!(perform_result.value["source"], "weak_model");
+}
+
+#[tokio::test]
 async fn weak_handler_can_request_think_via_runtime() {
     let weak = SequenceHandler::new(vec![Ok(HandlerDecision::RequestEffect {
         effect: EffectCall::Think {

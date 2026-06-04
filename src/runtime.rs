@@ -401,6 +401,7 @@ where
                     let observation = Observation {
                         name: "perform_result".to_owned(),
                         value: json!({
+                            "value": resolution.value,
                             "confidence": resolution.confidence,
                             "schema_valid": schema_valid,
                             "source": resolution.source.as_str(),
