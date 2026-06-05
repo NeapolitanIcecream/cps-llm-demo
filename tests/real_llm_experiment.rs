@@ -29,7 +29,8 @@ use cps_llm_demo::experiment::shadow::{
     shadow_execution_does_not_change_output as run_shadow_execution, summarize_shadow_audit,
 };
 use cps_llm_demo::experiment::split::{
-    EventSplits, SplitCounts, SplitStrategy, char_ngram_jaccard, leakage_report, split_events_files,
+    EventSplits, SplitCounts, SplitStrategy, char_ngram_jaccard, leakage_report, split_events,
+    split_events_files,
 };
 use cps_llm_demo::experiment::variants::{
     ExperimentVariant, variant_runner_runs_all_required_variants as variants_include_all,
@@ -768,6 +769,42 @@ fn exact_duplicates_are_not_cross_split() {
     )
     .unwrap();
     assert_eq!(result.leakage_report.exact_duplicate_cross_split, 0);
+}
+
+#[test]
+fn time_cluster_split_preserves_first_seen_duplicate_group_order() {
+    let events = vec![
+        event("early-1", "zeta duplicate", "2026-06-05T09:00:00+08:00"),
+        event("early-2", "zeta duplicate", "2026-06-05T09:01:00+08:00"),
+        event("late-1", "alpha later", "2026-06-05T09:02:00+08:00"),
+    ];
+    let gold = labels_for(&events, false);
+    let split = split_events(
+        &events,
+        &gold,
+        &SplitCounts {
+            profile_train: 2,
+            patch_validation: 1,
+            heldout_test: 2,
+            adversarial_test: 0,
+        },
+    )
+    .unwrap();
+
+    let profile_ids = split
+        .profile_train
+        .iter()
+        .map(|event| event["event_id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    let validation_ids = split
+        .patch_validation
+        .iter()
+        .map(|event| event["event_id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+
+    assert_eq!(profile_ids, vec!["early-1", "early-2"]);
+    assert_eq!(validation_ids, vec!["late-1"]);
+    assert!(split.heldout_test.is_empty());
 }
 
 #[test]

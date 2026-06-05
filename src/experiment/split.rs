@@ -247,14 +247,18 @@ fn char_ngrams(value: &str, n: usize) -> BTreeSet<String> {
 }
 
 fn exact_duplicate_groups(events: Vec<Value>) -> Vec<Vec<Value>> {
-    let mut grouped: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut group_index_by_text: BTreeMap<String, usize> = BTreeMap::new();
+    let mut groups: Vec<Vec<Value>> = Vec::new();
     for event in events {
-        grouped
-            .entry(normalized_text(&event))
-            .or_default()
-            .push(event);
+        let normalized = normalized_text(&event);
+        if let Some(index) = group_index_by_text.get(&normalized).copied() {
+            groups[index].push(event);
+        } else {
+            group_index_by_text.insert(normalized, groups.len());
+            groups.push(vec![event]);
+        }
     }
-    grouped.into_values().collect()
+    groups
 }
 
 fn take_exact(values: &mut Vec<Value>, count: usize) -> Vec<Value> {
