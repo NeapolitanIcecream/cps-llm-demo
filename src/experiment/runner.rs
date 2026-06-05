@@ -136,6 +136,17 @@ pub async fn run_experiment(
     let experiment_dir = experiment_dir(&state_dir, &config.experiment_id)?;
     std::fs::create_dir_all(&experiment_dir)
         .with_context(|| format!("failed to create {}", experiment_dir.display()))?;
+    let manifest_path = experiment_dir.join("run_manifest.json");
+    let manifest_exists = manifest_path.exists();
+    let existing_manifest = if manifest_exists {
+        Some(validate_experiment_resume(
+            &config,
+            &manifest_path,
+            &experiment_dir.join("config.lock.yaml"),
+        )?)
+    } else {
+        None
+    };
     write_locked_config(&config, &experiment_dir.join("config.lock.yaml"))?;
     let catalog = PriceCatalog::load(&config.budget.price_catalog)
         .unwrap_or_else(|_| PriceCatalog::default_openai());
@@ -158,10 +169,8 @@ pub async fn run_experiment(
         ));
     }
 
-    let manifest_path = experiment_dir.join("run_manifest.json");
-    let manifest_exists = manifest_path.exists();
-    let mut manifest = if manifest_exists {
-        read_json::<RunManifest>(&manifest_path)?
+    let mut manifest = if let Some(manifest) = existing_manifest {
+        manifest
     } else {
         RunManifest {
             experiment_id: config.experiment_id.clone(),
@@ -231,6 +240,55 @@ pub async fn run_experiment(
         "completed_phases": manifest.completed_phases,
         "skipped_phases": manifest.skipped_phases,
     }))
+}
+
+fn validate_experiment_resume(
+    config: &ExperimentConfig,
+    manifest_path: &Path,
+    lock_path: &Path,
+) -> Result<RunManifest> {
+    let manifest: RunManifest = read_json(manifest_path).with_context(|| {
+        format!(
+            "failed to read existing manifest {}",
+            manifest_path.display()
+        )
+    })?;
+    if manifest.experiment_id != config.experiment_id {
+        return Err(anyhow!(
+            "cannot resume experiment {:?}: manifest experiment_id is {:?}",
+            config.experiment_id,
+            manifest.experiment_id
+        ));
+    }
+    if manifest.workflow_id != config.workflow_id {
+        return Err(anyhow!(
+            "cannot resume experiment {:?}: manifest workflow_id {:?} does not match incoming workflow_id {:?}",
+            config.experiment_id,
+            manifest.workflow_id,
+            config.workflow_id
+        ));
+    }
+    if !lock_path.exists() {
+        return Err(anyhow!(
+            "cannot resume experiment {:?}: missing locked config {}",
+            config.experiment_id,
+            lock_path.display()
+        ));
+    }
+    let locked_config = load_experiment_config(lock_path).with_context(|| {
+        format!(
+            "cannot resume experiment {:?}: failed to read locked config {}",
+            config.experiment_id,
+            lock_path.display()
+        )
+    })?;
+    if locked_config != config.clone() {
+        return Err(anyhow!(
+            "cannot resume experiment {:?}: incoming config differs from existing config.lock.yaml; use a new experiment_id or clear the old experiment state",
+            config.experiment_id
+        ));
+    }
+    Ok(manifest)
 }
 
 enum PhaseOutcome {
@@ -2605,28 +2663,34 @@ fn install_semantic_patch_if_gate_accepted(
     let patches = FilePatchRegistry::new(state_dir.clone());
     let latest = programs.latest_version(&config.workflow_id)?;
     let versions = programs.list_versions(&config.workflow_id)?;
-    if let Some(existing) = versions.iter().find(|version| {
-        version.patch_id.as_deref() == Some(patch.patch_id.as_str())
-            && (version.version == latest
-                || version.parent_version.as_deref() == Some(latest.as_str()))
-    }) {
-        programs.set_latest_version(&config.workflow_id, &existing.version)?;
-        return Ok(Some(json!({
-            "patch_id": patch.patch_id,
-            "installed": true,
-            "installed_program_version": existing.version,
-            "source": "optimizer_strong_model",
-            "optimizer_source": plan.optimizer_source,
-            "raw_optimizer_response_is_final_plan": true,
-            "negative_guards": plan.negative_guards.len(),
-            "positive_clusters": positive_clusters,
-        })));
-    }
-    let base = programs.load_version(&config.workflow_id, &latest)?;
+    let latest_metadata = versions.iter().find(|version| version.version == latest);
+    let (base_version, base, reusable_installed_version) = if latest_metadata
+        .and_then(|version| version.patch_id.as_deref())
+        == Some(patch.patch_id.as_str())
+    {
+        let parent_version = latest_metadata
+            .and_then(|version| version.parent_version.clone())
+            .ok_or_else(|| {
+                anyhow!(
+                    "latest semantic patch version {latest:?} is missing parent version metadata"
+                )
+            })?;
+        (
+            parent_version.clone(),
+            programs.load_version(&config.workflow_id, &parent_version)?,
+            Some(latest.clone()),
+        )
+    } else {
+        (
+            latest.clone(),
+            programs.load_version(&config.workflow_id, &latest)?,
+            None,
+        )
+    };
     let metadata = PatchMetadata {
         patch_id: patch.patch_id.clone(),
         workflow_id: config.workflow_id.clone(),
-        target_program_version: latest.clone(),
+        target_program_version: base_version.clone(),
         status: PatchStatus::Proposed,
         source: PatchSource::OptimizerStrongModel,
         created_at: now_string(),
@@ -2649,6 +2713,27 @@ fn install_semantic_patch_if_gate_accepted(
         }
     };
     patches.mark_validated(&config.workflow_id, patch.clone(), metadata.clone())?;
+    if let Some(installed_version) = reusable_installed_version {
+        let stored = programs.load_version(&config.workflow_id, &installed_version)?;
+        if program_matches_patch_output(&stored, &patched) {
+            patches.mark_installed(
+                &config.workflow_id,
+                patch.clone(),
+                metadata,
+                &installed_version,
+            )?;
+            return Ok(Some(json!({
+                "patch_id": patch.patch_id,
+                "installed": true,
+                "installed_program_version": installed_version,
+                "source": "optimizer_strong_model",
+                "optimizer_source": plan.optimizer_source,
+                "raw_optimizer_response_is_final_plan": true,
+                "negative_guards": plan.negative_guards.len(),
+                "positive_clusters": positive_clusters,
+            })));
+        }
+    }
     let installed_version = programs.install_version(
         &config.workflow_id,
         patched,
@@ -2658,9 +2743,9 @@ fn install_semantic_patch_if_gate_accepted(
             version: String::new(),
             created_at: now_string(),
             source: ProgramSource::PatchInstall,
-            parent_version: Some(latest),
+            parent_version: Some(base_version),
             patch_id: Some(patch.patch_id.clone()),
-            task_hash: patch.patch_id.clone(),
+            task_hash: stable_hash_bytes(&serde_json::to_vec(&patch)?),
         },
     )?;
     patches.mark_installed(
@@ -2679,6 +2764,12 @@ fn install_semantic_patch_if_gate_accepted(
         "negative_guards": plan.negative_guards.len(),
         "positive_clusters": positive_clusters,
     })))
+}
+
+fn program_matches_patch_output(stored: &Program, patched: &Program) -> bool {
+    let mut expected = patched.clone();
+    expected.version = stored.version.clone();
+    stored == &expected
 }
 
 fn semantic_patch_validators_value(

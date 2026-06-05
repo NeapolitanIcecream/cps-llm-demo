@@ -444,6 +444,34 @@ async fn run_experiment_resumes_from_completed_phase() {
 }
 
 #[tokio::test]
+async fn run_experiment_rejects_resume_with_changed_locked_config() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_events_and_gold(&dir, 4, 1);
+    let config = experiment_config(&dir, &price, 100.0);
+    let state = StateDir::new(dir.join("state"));
+    run_experiment(config.clone(), state.clone(), false)
+        .await
+        .unwrap();
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    let lock_path = experiment_dir.join("config.lock.yaml");
+    let original_lock = fs::read_to_string(&lock_path).unwrap();
+    let mut changed = config;
+    changed.budget.hard_cap_usd = 200.0;
+
+    let error = run_experiment(changed, state.clone(), false)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("cannot resume experiment"));
+    assert_eq!(fs::read_to_string(lock_path).unwrap(), original_lock);
+}
+
+#[tokio::test]
 async fn run_experiment_respects_budget_hard_cap() {
     let dir = temp_dir();
     let price = dir.join("prices.yaml");
@@ -958,6 +986,154 @@ async fn patch_validation_measures_candidate_frames_before_gate() {
 }
 
 #[tokio::test]
+async fn patch_validation_rebuilds_current_plan_instead_of_reusing_same_id_child() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_experiment_schemas(&dir);
+    write_fixture_program_and_task(&dir);
+
+    let splits_dir = dir.join("splits");
+    fs::create_dir_all(&splits_dir).unwrap();
+    let profile = frame_validation_event("profile", true);
+    let validation = frame_validation_event("pv0", true);
+    write_jsonl(
+        &dir.join("all_events.jsonl"),
+        &[profile.clone(), validation.clone()],
+    );
+    write_jsonl(
+        &dir.join("gold_labels.jsonl"),
+        &[
+            gold("profile", "create_task", true, false),
+            gold("pv0", "create_task", true, false),
+        ],
+    );
+    write_jsonl(&splits_dir.join("profile_train.events.jsonl"), &[profile]);
+    write_jsonl(
+        &splits_dir.join("profile_train.gold.jsonl"),
+        &[gold("profile", "create_task", true, false)],
+    );
+    write_jsonl(
+        &splits_dir.join("patch_validation.events.jsonl"),
+        &[validation],
+    );
+    write_jsonl(
+        &splits_dir.join("patch_validation.gold.jsonl"),
+        &[gold("pv0", "create_task", true, false)],
+    );
+
+    let state = StateDir::new(dir.join("state"));
+    let baseline = weak_program();
+    let programs = FileProgramRegistry::new(state.clone());
+    programs
+        .init_workflow(
+            "notification_triage",
+            baseline.clone(),
+            fixture_program_metadata("notification_triage", &baseline),
+        )
+        .unwrap();
+    programs
+        .install_version(
+            "notification_triage",
+            baseline,
+            ProgramMetadata {
+                workflow_id: "notification_triage".to_owned(),
+                program_id: "notification_triage".to_owned(),
+                version: String::new(),
+                created_at: now_string(),
+                source: ProgramSource::PatchInstall,
+                parent_version: Some("v0001".to_owned()),
+                patch_id: Some("semantic_patch_v1".to_owned()),
+                task_hash: "old-semantic-plan".to_owned(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        programs.latest_version("notification_triage").unwrap(),
+        "v0002"
+    );
+
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    let artifacts_dir = experiment_dir.join("artifacts");
+    fs::create_dir_all(&artifacts_dir).unwrap();
+    let semantic_plan = json!({
+        "patch_id": "semantic_patch_v1",
+        "rationale": "current semantic fast path",
+        "rules": [{
+            "rule_id": "cluster_v1",
+            "semantic_cluster": "cluster",
+            "kind": "create_task",
+            "title": "title",
+            "datetime_hint": "tomorrow",
+            "examples": ["profile"],
+            "negative_examples": []
+        }],
+        "negative_guards": [],
+        "optimizer_source": "strong_model_generated_semantic_patch_plan"
+    });
+    fs::write(
+        artifacts_dir.join("semantic_patch_plan.json"),
+        serde_json::to_vec_pretty(&semantic_plan).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        artifacts_dir.join("semantic_rules.json"),
+        serde_json::to_vec_pretty(&semantic_plan["rules"]).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        artifacts_dir.join("exact_memo_table.json"),
+        serde_json::to_vec_pretty(&ExactMemoTable::default()).unwrap(),
+    )
+    .unwrap();
+
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.workflow = Some(ExperimentWorkflow {
+        program: dir.join("program.json"),
+        task: dir.join("task.md"),
+    });
+    config.phases = vec!["patch_validation".to_owned()];
+    config.patch_gate = Some(PatchGateConfigYaml {
+        max_quality_drop: 1.0,
+        max_critical_miss_delta: 1.0,
+        max_false_fast_path_rate: 1.0,
+        min_fast_path_hit_rate_lift: 0.0,
+        min_strong_think_rate_reduction: -1.0,
+        max_continuation_frame_p95_bytes: 1_000_000,
+        require_non_exact_generalization: false,
+    });
+
+    run_experiment(config, state.clone(), false).await.unwrap();
+
+    let latest = programs.latest_version("notification_triage").unwrap();
+    assert_eq!(latest, "v0003");
+    let patch_install: Value = serde_json::from_slice(
+        &fs::read(
+            experiment_dir
+                .join("artifacts")
+                .join("patch_validation")
+                .join("patch_install.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(patch_install["installed_program_version"], json!("v0003"));
+    let installed = programs
+        .load_version("notification_triage", latest.as_str())
+        .unwrap();
+    assert!(
+        installed.functions["main"]
+            .body
+            .iter()
+            .any(|instr| matches!(instr, Instr::Branch { .. })),
+        "accepted semantic plan should be rebuilt into the installed program"
+    );
+}
+
+#[tokio::test]
 async fn new_experiment_resets_reused_workflow_latest_to_configured_baseline() {
     let dir = temp_dir();
     let price = dir.join("prices.yaml");
@@ -1062,6 +1238,7 @@ async fn experiment_report_scopes_spend_and_frame_metrics_to_manifest_runs() {
         .join("experiments")
         .join("notification_triage_real_v1");
     fs::create_dir_all(experiment_dir.join("quality")).unwrap();
+    write_locked_config(&config, &experiment_dir.join("config.lock.yaml")).unwrap();
 
     let prediction = prediction("e0", "create_task", true);
     let predictions = vec![prediction.clone()];
