@@ -47,6 +47,51 @@ fn make_temp_workdir() -> std::path::PathBuf {
     path
 }
 
+fn write_minimal_experiment_config(
+    workdir: &std::path::Path,
+    experiment_id: &str,
+    state_dir: &str,
+) -> std::path::PathBuf {
+    fs::write(workdir.join("all_events.jsonl"), "{}\n").unwrap();
+    let config = json!({
+        "experiment_id": experiment_id,
+        "workflow_id": "notification_triage",
+        "state_dir": state_dir,
+        "models": {
+            "weak_model": "gpt-5.4-mini",
+            "strong_model": "gpt-5.5",
+            "base_url_env": "CPS_TEST_OPENAI_BASE_URL_MISSING",
+            "api_key_env": "CPS_TEST_OPENAI_API_KEY_MISSING",
+            "use_responses_api": true,
+            "structured_outputs": true
+        },
+        "budget": {
+            "price_catalog": "missing-prices.yaml",
+            "soft_cap_usd": 1.0,
+            "hard_cap_usd": 100.0,
+            "projection_multiplier": 1.5
+        },
+        "cache": {
+            "dir": "model-cache",
+            "mode": "read_write"
+        },
+        "schemas": {
+            "event_schema": "event.schema.json",
+            "output_schema": "output.schema.json",
+            "gold_schema": "gold.schema.json"
+        },
+        "data": {
+            "all_events": "all_events.jsonl",
+            "gold_labels": "gold_labels.jsonl",
+            "splits_dir": "splits"
+        },
+        "phases": []
+    });
+    let path = workdir.join(format!("{experiment_id}.yaml"));
+    fs::write(&path, serde_yaml::to_string(&config).unwrap()).unwrap();
+    path
+}
+
 #[test]
 fn cli_schema_outputs_json() {
     let mut cmd = Command::cargo_bin("cps-llm-demo").unwrap();
@@ -334,6 +379,66 @@ fn cli_compile_run_enforces_requested_output_schema_on_compiled_program() {
 
     compile_mock.assert();
     let _ = fs::remove_file(input);
+}
+
+#[test]
+fn cli_run_experiment_uses_config_state_dir_when_flag_omitted() {
+    let workdir = make_temp_workdir();
+    let experiment_id = "config_state_dir_cli_test";
+    let config = write_minimal_experiment_config(&workdir, experiment_id, "config-state");
+
+    let mut cmd = Command::cargo_bin("cps-llm-demo").unwrap();
+    cmd.current_dir(&workdir)
+        .arg("run-experiment")
+        .arg("--config")
+        .arg(&config)
+        .arg("--dry-run-cost")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"fits_budget\": true"));
+
+    assert!(
+        workdir
+            .join("config-state")
+            .join("experiments")
+            .join(experiment_id)
+            .join("config.lock.yaml")
+            .exists()
+    );
+    assert!(!workdir.join(".cps-real-exp").exists());
+
+    let _ = fs::remove_dir_all(workdir);
+}
+
+#[test]
+fn cli_run_experiment_state_dir_flag_overrides_config_state_dir() {
+    let workdir = make_temp_workdir();
+    let experiment_id = "config_state_dir_override_cli_test";
+    let config = write_minimal_experiment_config(&workdir, experiment_id, "config-state");
+
+    let mut cmd = Command::cargo_bin("cps-llm-demo").unwrap();
+    cmd.current_dir(&workdir)
+        .arg("run-experiment")
+        .arg("--config")
+        .arg(&config)
+        .arg("--state-dir")
+        .arg("override-state")
+        .arg("--dry-run-cost")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"fits_budget\": true"));
+
+    assert!(
+        workdir
+            .join("override-state")
+            .join("experiments")
+            .join(experiment_id)
+            .join("config.lock.yaml")
+            .exists()
+    );
+    assert!(!workdir.join("config-state").exists());
+
+    let _ = fs::remove_dir_all(workdir);
 }
 
 #[test]

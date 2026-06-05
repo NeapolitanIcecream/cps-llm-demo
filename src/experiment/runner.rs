@@ -67,6 +67,8 @@ use crate::store::state_dir::{
 use crate::trace::TraceCollector;
 use crate::validator::validate_patch;
 
+pub const DEFAULT_EXPERIMENT_STATE_DIR: &str = ".cps-real-exp";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunManifest {
     pub experiment_id: String,
@@ -98,11 +100,23 @@ pub struct DryRunCostEstimate {
 
 pub async fn run_experiment_from_file(
     config_path: &Path,
-    state_dir: StateDir,
+    state_dir_override: Option<PathBuf>,
     dry_run_cost: bool,
 ) -> Result<serde_json::Value> {
     let config = load_experiment_config(config_path)?;
+    let state_dir = resolve_experiment_state_dir(&config, state_dir_override);
     run_experiment(config, state_dir, dry_run_cost).await
+}
+
+fn resolve_experiment_state_dir(
+    config: &ExperimentConfig,
+    state_dir_override: Option<PathBuf>,
+) -> StateDir {
+    StateDir::new(
+        state_dir_override
+            .or_else(|| config.state_dir.clone())
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_EXPERIMENT_STATE_DIR)),
+    )
 }
 
 pub async fn run_experiment(

@@ -13,7 +13,9 @@ use crate::evaluation::compare_runs::compare_runs;
 use crate::evaluation::strong_direct_baseline::baseline_strong_direct;
 use crate::experiment::exact_memo::write_exact_memo_patch;
 use crate::experiment::quality::evaluate_quality_files;
-use crate::experiment::runner::{experiment_dir, run_experiment_from_file};
+use crate::experiment::runner::{
+    DEFAULT_EXPERIMENT_STATE_DIR, experiment_dir, run_experiment_from_file,
+};
 use crate::experiment::split::{SplitCounts, SplitStrategy, split_events_files};
 use crate::model_cache::{ModelCache, ModelCacheMode};
 use crate::models::{EffectHandler, FixtureModelHandler, ResponsesStrongModel, ResponsesWeakModel};
@@ -259,8 +261,8 @@ pub enum Command {
         #[arg(long)]
         config: PathBuf,
 
-        #[arg(long, default_value = ".cps-real-exp")]
-        state_dir: PathBuf,
+        #[arg(long, value_name = "DIR")]
+        state_dir: Option<PathBuf>,
 
         #[arg(long)]
         dry_run_cost: bool,
@@ -269,7 +271,7 @@ pub enum Command {
         #[arg(long)]
         experiment: String,
 
-        #[arg(long, default_value = ".cps-real-exp")]
+        #[arg(long, default_value = DEFAULT_EXPERIMENT_STATE_DIR)]
         state_dir: PathBuf,
 
         #[arg(long)]
@@ -282,7 +284,7 @@ pub enum Command {
         #[arg(long)]
         from_events: PathBuf,
 
-        #[arg(long, default_value = ".cps-real-exp")]
+        #[arg(long, default_value = DEFAULT_EXPERIMENT_STATE_DIR)]
         state_dir: PathBuf,
     },
     Replay {
@@ -595,8 +597,7 @@ pub async fn run() -> Result<()> {
             state_dir,
             dry_run_cost,
         } => {
-            let output =
-                run_experiment_from_file(&config, StateDir::new(state_dir), dry_run_cost).await?;
+            let output = run_experiment_from_file(&config, state_dir, dry_run_cost).await?;
             println!("{}", serde_json::to_string_pretty(&output)?);
         }
         Command::ExperimentReport {
