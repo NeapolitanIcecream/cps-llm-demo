@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -145,6 +146,7 @@ pub struct BudgetGuard {
     pub config: BudgetConfig,
     pub catalog: PriceCatalog,
     pub store: FileBudgetStore,
+    reservations: Arc<Mutex<BTreeMap<BudgetReservationKey, f64>>>,
 }
 
 impl BudgetGuard {
@@ -153,6 +155,7 @@ impl BudgetGuard {
             config,
             catalog,
             store,
+            reservations: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -173,29 +176,93 @@ impl BudgetGuard {
         budget_scope_id: Option<&str>,
         run_id: Option<&str>,
     ) -> Result<()> {
+        self.check_call_allowed_for_scope(
+            model,
+            input_bytes,
+            max_output_tokens,
+            budget_scope_id,
+            run_id,
+            false,
+        )
+        .map(|_| ())
+    }
+
+    pub fn reserve_call_for_scope(
+        &self,
+        model: &str,
+        input_bytes: u64,
+        max_output_tokens: Option<u64>,
+        budget_scope_id: Option<&str>,
+        run_id: Option<&str>,
+    ) -> Result<BudgetReservation> {
+        self.check_call_allowed_for_scope(
+            model,
+            input_bytes,
+            max_output_tokens,
+            budget_scope_id,
+            run_id,
+            true,
+        )
+    }
+
+    fn check_call_allowed_for_scope(
+        &self,
+        model: &str,
+        input_bytes: u64,
+        max_output_tokens: Option<u64>,
+        budget_scope_id: Option<&str>,
+        run_id: Option<&str>,
+        reserve: bool,
+    ) -> Result<BudgetReservation> {
         let report = self
             .store
             .report_for_scope(&self.config, budget_scope_id, run_id)?;
-        let projected_output_tokens = max_output_tokens.unwrap_or(4_096);
-        let projected_usage = estimate_usage_from_bytes(input_bytes, projected_output_tokens * 2);
-        let projected_cost = match self.catalog.estimate_cost(model, &projected_usage, true) {
-            Ok(cost) => cost.total_usd * self.config.projection_multiplier,
-            Err(_) => {
-                return Ok(());
-            }
+        let Some(projected_cost) = self.projected_cost_usd(model, input_bytes, max_output_tokens)
+        else {
+            return Ok(BudgetReservation::none());
         };
-        let projected_spend = report.spent_usd + projected_cost;
+        let key = BudgetReservationKey::new(budget_scope_id, run_id);
+        let mut reservations = self
+            .reservations
+            .lock()
+            .map_err(|_| anyhow!("budget reservation lock poisoned"))?;
+        let in_flight_spend = reservations.get(&key).copied().unwrap_or(0.0);
+        let projected_spend = report.spent_usd + in_flight_spend + projected_cost;
         if self.config.abort_when_projected_over_hard_cap
             && projected_spend > self.config.hard_cap_usd
         {
             return Err(anyhow!(
-                "budget hard cap would be exceeded: spent ${:.4}, projected call ${:.4}, hard cap ${:.4}",
+                "budget hard cap would be exceeded: spent ${:.4}, in-flight ${:.4}, projected call ${:.4}, hard cap ${:.4}",
                 report.spent_usd,
+                in_flight_spend,
                 projected_cost,
                 self.config.hard_cap_usd
             ));
         }
-        Ok(())
+        if reserve {
+            *reservations.entry(key.clone()).or_insert(0.0) += projected_cost;
+            Ok(BudgetReservation {
+                reservations: Some(Arc::clone(&self.reservations)),
+                key,
+                amount_usd: projected_cost,
+            })
+        } else {
+            Ok(BudgetReservation::none())
+        }
+    }
+
+    fn projected_cost_usd(
+        &self,
+        model: &str,
+        input_bytes: u64,
+        max_output_tokens: Option<u64>,
+    ) -> Option<f64> {
+        let projected_output_tokens = max_output_tokens.unwrap_or(4_096);
+        let projected_usage = estimate_usage_from_bytes(input_bytes, projected_output_tokens * 2);
+        match self.catalog.estimate_cost(model, &projected_usage, true) {
+            Ok(cost) => Some(cost.total_usd * self.config.projection_multiplier),
+            Err(_) => None,
+        }
     }
 
     pub fn estimated_cost_for_request(&self, model: &str, input_bytes: u64) -> Result<f64> {
@@ -207,6 +274,60 @@ impl BudgetGuard {
             total_tokens: conservative_bytes_to_tokens(input_bytes) + 4_096,
         };
         Ok(self.catalog.estimate_cost(model, &usage, true)?.total_usd)
+    }
+}
+
+#[derive(Debug)]
+pub struct BudgetReservation {
+    reservations: Option<Arc<Mutex<BTreeMap<BudgetReservationKey, f64>>>>,
+    key: BudgetReservationKey,
+    amount_usd: f64,
+}
+
+impl BudgetReservation {
+    fn none() -> Self {
+        Self {
+            reservations: None,
+            key: BudgetReservationKey::Global,
+            amount_usd: 0.0,
+        }
+    }
+}
+
+impl Drop for BudgetReservation {
+    fn drop(&mut self) {
+        let Some(reservations) = self.reservations.take() else {
+            return;
+        };
+        let Ok(mut reservations) = reservations.lock() else {
+            return;
+        };
+        let Some(current) = reservations.get_mut(&self.key) else {
+            return;
+        };
+        *current -= self.amount_usd;
+        if *current <= f64::EPSILON {
+            reservations.remove(&self.key);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+enum BudgetReservationKey {
+    Scope(String),
+    Run(String),
+    Global,
+}
+
+impl BudgetReservationKey {
+    fn new(budget_scope_id: Option<&str>, run_id: Option<&str>) -> Self {
+        if let Some(budget_scope_id) = budget_scope_id {
+            Self::Scope(budget_scope_id.to_owned())
+        } else if let Some(run_id) = run_id {
+            Self::Run(run_id.to_owned())
+        } else {
+            Self::Global
+        }
     }
 }
 

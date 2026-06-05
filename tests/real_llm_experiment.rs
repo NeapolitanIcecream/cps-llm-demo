@@ -10,8 +10,8 @@ use cps_llm_demo::engine::run_coordinator::{
 };
 use cps_llm_demo::experiment::config::{
     ExperimentBudget, ExperimentCache, ExperimentConfig, ExperimentData, ExperimentModels,
-    ExperimentSchemas, ExperimentSplitCounts, ExperimentWorkflow, ShadowConfig,
-    load_experiment_config, write_locked_config,
+    ExperimentSchemas, ExperimentSplitCounts, ExperimentWorkflow, PatchGateConfigYaml,
+    ShadowConfig, load_experiment_config, write_locked_config,
 };
 use cps_llm_demo::experiment::exact_memo::ExactMemoTable;
 use cps_llm_demo::experiment::patch_gate::{PatchGateConfig, PatchGateInput, evaluate_patch_gate};
@@ -315,6 +315,53 @@ fn budget_guard_counts_only_current_budget_scope() {
 
     assert!(error.to_string().contains("budget hard cap"));
     assert!(error.to_string().contains("spent $1.0000"));
+}
+
+#[test]
+fn budget_guard_counts_in_flight_reservations_for_current_scope() {
+    let state = temp_state();
+    let store = FileBudgetStore::new(state);
+    let guard = cps_llm_demo::store::budget_store::BudgetGuard::new(
+        BudgetConfig {
+            hard_cap_usd: 0.000012,
+            projection_multiplier: 1.0,
+            ..BudgetConfig::default()
+        },
+        default_catalog(),
+        store,
+    );
+
+    let first = guard
+        .reserve_call_for_scope(
+            "gpt-5.4-mini",
+            10,
+            Some(1),
+            Some("current-scope"),
+            Some("run-a"),
+        )
+        .unwrap();
+    let error = guard
+        .reserve_call_for_scope(
+            "gpt-5.4-mini",
+            10,
+            Some(1),
+            Some("current-scope"),
+            Some("run-b"),
+        )
+        .unwrap_err();
+
+    assert!(error.to_string().contains("budget hard cap"));
+    assert!(error.to_string().contains("in-flight"));
+    drop(first);
+    guard
+        .reserve_call_for_scope(
+            "gpt-5.4-mini",
+            10,
+            Some(1),
+            Some("current-scope"),
+            Some("run-b"),
+        )
+        .unwrap();
 }
 
 #[test]
@@ -745,6 +792,145 @@ async fn run_experiment_executes_variants_and_writes_predictions_and_quality() {
         )),
         "installed program should emit fast-path output through template_emit"
     );
+}
+
+#[tokio::test]
+async fn patch_validation_measures_candidate_frames_before_gate() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_experiment_schemas(&dir);
+    fs::write(
+        dir.join("task.md"),
+        "Return one action draft for the event.",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("program.json"),
+        serde_json::to_vec_pretty(&capture_to_think_program()).unwrap(),
+    )
+    .unwrap();
+
+    let splits_dir = dir.join("splits");
+    fs::create_dir_all(&splits_dir).unwrap();
+    let profile = frame_validation_event("profile", true);
+    let validation = frame_validation_event("pv0", false);
+    write_jsonl(
+        &dir.join("all_events.jsonl"),
+        &[profile.clone(), validation.clone()],
+    );
+    write_jsonl(
+        &dir.join("gold_labels.jsonl"),
+        &[
+            gold("profile", "create_task", true, false),
+            gold("pv0", "create_task", true, false),
+        ],
+    );
+    write_jsonl(&splits_dir.join("profile_train.events.jsonl"), &[profile]);
+    write_jsonl(
+        &splits_dir.join("profile_train.gold.jsonl"),
+        &[gold("profile", "create_task", true, false)],
+    );
+    write_jsonl(
+        &splits_dir.join("patch_validation.events.jsonl"),
+        &[validation],
+    );
+    write_jsonl(
+        &splits_dir.join("patch_validation.gold.jsonl"),
+        &[gold("pv0", "create_task", true, false)],
+    );
+
+    let state = StateDir::new(dir.join("state"));
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    let artifacts_dir = experiment_dir.join("artifacts");
+    fs::create_dir_all(&artifacts_dir).unwrap();
+    let semantic_plan = json!({
+        "patch_id": "semantic_patch_v1",
+        "rationale": "fixture semantic fast path",
+        "rules": [{
+            "rule_id": "cluster_v1",
+            "semantic_cluster": "cluster",
+            "kind": "create_task",
+            "title": "title",
+            "datetime_hint": "tomorrow",
+            "examples": ["profile"],
+            "negative_examples": []
+        }],
+        "negative_guards": [],
+        "optimizer_source": "strong_model_generated_semantic_patch_plan"
+    });
+    fs::write(
+        artifacts_dir.join("semantic_patch_plan.json"),
+        serde_json::to_vec_pretty(&semantic_plan).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        artifacts_dir.join("semantic_rules.json"),
+        serde_json::to_vec_pretty(&semantic_plan["rules"]).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        artifacts_dir.join("exact_memo_table.json"),
+        serde_json::to_vec_pretty(&ExactMemoTable::default()).unwrap(),
+    )
+    .unwrap();
+
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.workflow = Some(ExperimentWorkflow {
+        program: dir.join("program.json"),
+        task: dir.join("task.md"),
+    });
+    config.phases = vec!["patch_validation".to_owned()];
+    config.patch_gate = Some(PatchGateConfigYaml {
+        max_quality_drop: 1.0,
+        max_critical_miss_delta: 1.0,
+        max_false_fast_path_rate: 1.0,
+        min_fast_path_hit_rate_lift: 0.0,
+        min_strong_think_rate_reduction: -1.0,
+        max_continuation_frame_p95_bytes: 1,
+        require_non_exact_generalization: false,
+    });
+
+    let error = run_experiment(config, state.clone(), false)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("continuation frame p95 exceeds gate")
+    );
+
+    let gate: Value = serde_json::from_slice(
+        &fs::read(
+            experiment_dir
+                .join("artifacts")
+                .join("patch_validation")
+                .join("patch_gate_decision.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(gate["accepted"], json!(false));
+    assert!(
+        gate["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason == "continuation frame p95 exceeds gate")
+    );
+
+    let metrics = FileMetricsStore::new(state)
+        .list("notification_triage")
+        .unwrap();
+    let candidate = metrics
+        .iter()
+        .find(|metrics| metrics.mode == "cps_generalized_patch.patch_validation")
+        .expect("candidate patch-validation metrics should be written");
+    assert!(candidate.continuation_frames_total > 0);
+    assert!(candidate.continuation_frame_bytes_p95 > 1);
 }
 
 #[tokio::test]
@@ -2035,6 +2221,101 @@ fn weak_program() -> Program {
             },
         )]),
     }
+}
+
+fn capture_to_think_program() -> Program {
+    Program {
+        program_id: "notification_triage".to_owned(),
+        version: "v0001".to_owned(),
+        entry: "main".to_owned(),
+        input_schema: json!({"type": "object"}),
+        output_schema: action_schema(),
+        allowed_effects: vec![
+            EffectPermission::ModelTask {
+                strength: ModelStrength::Weak,
+            },
+            EffectPermission::Think,
+        ],
+        functions: BTreeMap::from([(
+            "main".to_owned(),
+            FunctionDef {
+                params: vec!["event".to_owned()],
+                output_schema: action_schema(),
+                body: vec![
+                    Instr::Perform {
+                        out: "draft".to_owned(),
+                        effect: EffectCall::ModelTask {
+                            strength: ModelStrength::Weak,
+                            task: ModelTaskSpec {
+                                name: "draft_action_from_event".to_owned(),
+                                instructions: "Return one action draft.".to_owned(),
+                            },
+                        },
+                        input: JsonExpr::Var {
+                            name: "event".to_owned(),
+                        },
+                        expected_schema: action_schema(),
+                        acceptance: AcceptancePolicy {
+                            min_confidence: Some(1.0),
+                            require_schema_valid: true,
+                            on_failure: FailureHandler::CaptureToThink {
+                                reason: "repair low-confidence weak draft".to_owned(),
+                            },
+                        },
+                    },
+                    Instr::Return {
+                        value: JsonExpr::Var {
+                            name: "draft".to_owned(),
+                        },
+                    },
+                ],
+            },
+        )]),
+    }
+}
+
+fn frame_validation_event(id: &str, semantic_match: bool) -> Value {
+    let fixture_value = json!({
+        "event_id": id,
+        "kind": "create_task",
+        "title": "title",
+        "datetime_hint": "tomorrow"
+    });
+    let mut value = event(id, &format!("message {id}"), id);
+    value["_fixture_model"] = json!({
+        "weak": {
+            "value": fixture_value,
+            "confidence": 0.25
+        },
+        "strong": {
+            "value": {
+                "event_id": id,
+                "kind": "create_task",
+                "title": "title",
+                "datetime_hint": "tomorrow"
+            },
+            "confidence": 1.0
+        }
+    });
+    value["_fixture_model_by_task"] = json!({
+        "weak": {
+            "semantic_fast_path_match": {
+                "value": {
+                    "matched": semantic_match,
+                    "rule_id": if semantic_match { "cluster_v1" } else { "" },
+                    "slots": {
+                        "kind": "create_task",
+                        "title": "title",
+                        "datetime_hint": "tomorrow"
+                    },
+                    "confidence": if semantic_match { 0.95 } else { 0.0 },
+                    "rationale": "fixture semantic decision"
+                },
+                "confidence": 1.0
+            }
+        }
+    });
+    value
 }
 
 fn semantic_patch() -> ProgramPatch {

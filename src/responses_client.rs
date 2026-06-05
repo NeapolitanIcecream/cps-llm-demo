@@ -133,6 +133,7 @@ impl ResponsesClient {
         let schema_hash = schema_hash(&request_schema)?;
         let model_config_hash = model_config_hash(&base_url, model)?;
 
+        let mut budget_reservation = None;
         if let Some(runtime) = &self.config.runtime {
             if let Some(cache) = &runtime.cache {
                 if let Some(entry) = cache.get(&request_hash)? {
@@ -166,38 +167,42 @@ impl ResponsesClient {
                 }
             }
             if let Some(guard) = &runtime.budget_guard {
-                if let Err(err) = guard.ensure_call_allowed_for_scope(
+                match guard.reserve_call_for_scope(
                     model,
                     body_bytes.len() as u64,
                     None,
                     context.budget_scope_id.as_deref(),
                     context.run_id.as_deref(),
                 ) {
-                    let metadata = StructuredCallMetadata {
-                        call_id: uuid::Uuid::new_v4().to_string(),
-                        request_hash: request_hash.clone(),
-                        prompt_hash: prompt_hash.clone(),
-                        schema_hash: schema_hash.clone(),
-                        model_config_hash: model_config_hash.clone(),
-                        input_bytes: body_bytes.len() as u64,
-                        output_bytes: 0,
-                        usage: None,
-                        estimated_usage: estimate_usage_from_bytes(body_bytes.len() as u64, 0),
-                        cost: CostBreakdown::zero(true),
-                        latency_ms: 0,
-                        cache_status: cache_status_for_runtime(runtime),
-                    };
-                    runtime.record_call(
-                        model,
-                        &context,
-                        &metadata,
-                        false,
-                        Some(err.to_string()),
-                    )?;
-                    return Err(err);
+                    Ok(reservation) => budget_reservation = Some(reservation),
+                    Err(err) => {
+                        let metadata = StructuredCallMetadata {
+                            call_id: uuid::Uuid::new_v4().to_string(),
+                            request_hash: request_hash.clone(),
+                            prompt_hash: prompt_hash.clone(),
+                            schema_hash: schema_hash.clone(),
+                            model_config_hash: model_config_hash.clone(),
+                            input_bytes: body_bytes.len() as u64,
+                            output_bytes: 0,
+                            usage: None,
+                            estimated_usage: estimate_usage_from_bytes(body_bytes.len() as u64, 0),
+                            cost: CostBreakdown::zero(true),
+                            latency_ms: 0,
+                            cache_status: cache_status_for_runtime(runtime),
+                        };
+                        runtime.record_call(
+                            model,
+                            &context,
+                            &metadata,
+                            false,
+                            Some(err.to_string()),
+                        )?;
+                        return Err(err);
+                    }
                 }
             }
         }
+        let _budget_reservation = budget_reservation;
 
         let request_id = uuid::Uuid::new_v4().to_string();
         let start = Instant::now();

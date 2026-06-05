@@ -42,8 +42,10 @@ use crate::experiment::semantic_fast_path::{
 use crate::experiment::shadow::{shadow_execution_does_not_change_output, summarize_shadow_audit};
 use crate::experiment::split::{SplitCounts, SplitStrategy, split_events_files};
 use crate::experiment::variants::ExperimentVariant;
+use crate::local_tools::LocalToolRegistry;
 use crate::model_cache::{ModelCache, ModelCacheMode};
 use crate::models::{EffectHandler, FixtureModelHandler, ResponsesStrongModel, ResponsesWeakModel};
+use crate::observability::metrics::MetricsAccumulator;
 use crate::pricing::price_catalog::PriceCatalog;
 use crate::program::{
     AcceptancePolicy, EffectCall, EffectPermission, FailureHandler, GuardExpr, Instr, JsonExpr,
@@ -53,6 +55,7 @@ use crate::responses_client::{ModelCallRuntime, ResponsesClient, ResponsesClient
 use crate::runtime::Runtime;
 use crate::schema::validate_value;
 use crate::store::budget_store::{BudgetReport, FileBudgetStore, build_budget_report};
+use crate::store::continuation_store::{FileEffectFrameEncoder, FrameEncodingConfig};
 use crate::store::metrics_store::{FileMetricsStore, RunMetrics};
 use crate::store::model_call_store::{FileModelCallStore, ModelCallRecord};
 use crate::store::patch_registry::{
@@ -1623,11 +1626,14 @@ async fn run_patch_validation_phase(
     phase_run_ids.extend(exact_run.run_ids.clone());
     let candidate_run = run_program_split_predictions(
         config,
+        state_dir,
         experiment_dir,
         budget_scope_id,
-        "patch_validation",
-        "cps_generalized_patch",
-        patched,
+        ProgramSplitSpec {
+            split_name: "patch_validation",
+            variant: "cps_generalized_patch",
+            program: patched,
+        },
         ExperimentHandlers {
             weak: Arc::clone(&weak),
             strong: Arc::clone(&strong),
@@ -1715,6 +1721,12 @@ async fn run_patch_validation_phase(
 struct PredictionSplitRun {
     path: PathBuf,
     run_ids: Vec<String>,
+}
+
+struct ProgramSplitSpec<'a> {
+    split_name: &'a str,
+    variant: &'a str,
+    program: Program,
 }
 
 #[derive(Clone, Copy)]
@@ -1884,13 +1896,17 @@ async fn run_exact_memo_split_predictions(
 
 async fn run_program_split_predictions(
     config: &ExperimentConfig,
+    state_dir: &StateDir,
     experiment_dir: &Path,
     budget_scope_id: &str,
-    split_name: &str,
-    variant: &str,
-    program: Program,
+    spec: ProgramSplitSpec<'_>,
     handlers: ExperimentHandlers,
 ) -> Result<PredictionSplitRun> {
+    let ProgramSplitSpec {
+        split_name,
+        variant,
+        program,
+    } = spec;
     let file_name = format!("{}.{}.jsonl", variant, split_suffix(split_name));
     let prediction_path = experiment_dir.join("predictions").join(&file_name);
     if prediction_path.exists() {
@@ -1914,15 +1930,37 @@ async fn run_program_split_predictions(
         config.workflow_id.clone(),
         phase,
     );
+    let mut metrics = RunMetrics::new(
+        run_id.clone(),
+        config.workflow_id.clone(),
+        format!("{variant}.{}", split_suffix(split_name)),
+        program.program_id.clone(),
+        program.version.clone(),
+        now_string(),
+    );
+    let mut accumulator = MetricsAccumulator::default();
+    let frame_encoder = Arc::new(FileEffectFrameEncoder::new(
+        state_dir.clone(),
+        config.workflow_id.clone(),
+        FrameEncodingConfig::default(),
+    ));
     for event in read_jsonl_values(
         &config
             .data
             .splits_dir
             .join(format!("{split_name}.events.jsonl")),
     )? {
+        metrics.events_total += 1;
         let event_id = event_id_or_generate(&event);
         let trace = TraceCollector::default();
-        let runtime = Runtime::new(Arc::clone(&weak), Arc::clone(&strong), trace.clone());
+        let runtime = Runtime::with_frame_encoder(
+            Arc::clone(&weak),
+            Arc::clone(&strong),
+            LocalToolRegistry::default(),
+            frame_encoder.clone(),
+            trace.clone(),
+            RuntimeBudget::default(),
+        );
         let result = runtime
             .run_program_with_result_and_trace_id(program.clone(), event, event_id.clone())
             .await;
@@ -1930,16 +1968,21 @@ async fn run_program_split_predictions(
         let (fast_path, model_calls) = prediction_metadata_from_trace(&trace_events);
         let (output, schema_valid) = match result {
             Ok(result) => {
+                metrics.events_succeeded += 1;
                 let schema_valid = validate_value(&program.output_schema, &result.output).is_ok();
                 (result.output, schema_valid)
             }
-            Err(err) => (
-                json!({
-                    "error": err.to_string()
-                }),
-                false,
-            ),
+            Err(err) => {
+                metrics.events_failed += 1;
+                (
+                    json!({
+                        "error": err.to_string()
+                    }),
+                    false,
+                )
+            }
         };
+        accumulator.update_from_trace(&mut metrics, &trace_events);
         store.append(
             &file_name,
             &PredictionRecord {
@@ -1954,6 +1997,9 @@ async fn run_program_split_predictions(
             },
         )?;
     }
+    accumulator.finalize(&mut metrics);
+    metrics.finished_at = now_string();
+    FileMetricsStore::new(state_dir.clone()).write(&metrics)?;
     Ok(PredictionSplitRun {
         path: prediction_path,
         run_ids: vec![run_id],
