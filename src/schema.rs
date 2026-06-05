@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use schemars::schema_for;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::effects::{Continuation, EffectFrame, HandlerDecision};
 use crate::program::{Program, ProgramFragment, ProgramPatch};
@@ -80,34 +80,13 @@ pub fn handler_decision_schema() -> Value {
 }
 
 pub fn handler_decision_value_schema(value_schema: Value) -> Value {
-    let mut schema = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["handler_decision"],
-        "properties": {
-            "handler_decision": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["decision", "value", "confidence", "rationale"],
-                "properties": {
-                    "decision": {
-                        "type": "string",
-                        "enum": ["return_value"]
-                    },
-                    "value": value_schema,
-                    "confidence": {
-                        "type": "number",
-                        "minimum": 0.0,
-                        "maximum": 1.0
-                    },
-                    "rationale": {
-                        "type": "string"
-                    }
-                }
-            }
-        }
-    });
-    make_strict_structured_output_schema(&mut schema);
+    let mut schema = handler_decision_schema();
+    let mut value_schema = value_schema;
+    make_strict_structured_output_schema(&mut value_schema);
+    assert!(
+        replace_return_value_schema(&mut schema, &value_schema),
+        "generated HandlerDecision schema should contain a return_value branch"
+    );
     schema
 }
 
@@ -157,6 +136,40 @@ fn schema_value(schema: impl serde::Serialize) -> Value {
     let mut value = serde_json::to_value(schema).expect("schemars schema should serialize");
     make_strict_structured_output_schema(&mut value);
     value
+}
+
+fn replace_return_value_schema(schema: &mut Value, value_schema: &Value) -> bool {
+    match schema {
+        Value::Object(map) => {
+            if is_return_value_branch(map) {
+                if let Some(properties) = map.get_mut("properties").and_then(Value::as_object_mut) {
+                    properties.insert("value".to_owned(), value_schema.clone());
+                    return true;
+                }
+            }
+
+            map.values_mut()
+                .any(|value| replace_return_value_schema(value, value_schema))
+        }
+        Value::Array(items) => items
+            .iter_mut()
+            .any(|value| replace_return_value_schema(value, value_schema)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+    }
+}
+
+fn is_return_value_branch(map: &Map<String, Value>) -> bool {
+    map.get("properties")
+        .and_then(Value::as_object)
+        .and_then(|properties| properties.get("decision"))
+        .and_then(|decision| decision.get("enum"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .any(|value| value.as_str() == Some("return_value"))
+        })
+        .unwrap_or(false)
 }
 
 fn make_strict_structured_output_schema(value: &mut Value) {

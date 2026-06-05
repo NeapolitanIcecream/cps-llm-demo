@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::effects::RuntimeBudget;
 use crate::engine::event_source::EventSource;
@@ -147,8 +147,20 @@ where
             metrics.events_failed += 1;
         }
         let events = trace.events();
-        if let (Ok(result), Some(predictions)) = (&result, options.predictions.as_ref()) {
-            let schema_valid = validate_value(&program.output_schema, &result.output).is_ok();
+        if let Some(predictions) = options.predictions.as_ref() {
+            let (output, schema_valid) = match &result {
+                Ok(result) => {
+                    let schema_valid =
+                        validate_value(&program.output_schema, &result.output).is_ok();
+                    (result.output.clone(), schema_valid)
+                }
+                Err(err) => (
+                    json!({
+                        "error": err.to_string()
+                    }),
+                    false,
+                ),
+            };
             let (fast_path, model_calls) = prediction_metadata_from_trace(&events);
             predictions.store.append(
                 &predictions.file_name,
@@ -156,7 +168,7 @@ where
                     event_id: event_id.clone(),
                     variant: predictions.variant.clone(),
                     program_version: program.version.clone(),
-                    output: result.output.clone(),
+                    output,
                     schema_valid,
                     trace_run_id: Some(run_id.clone()),
                     fast_path,

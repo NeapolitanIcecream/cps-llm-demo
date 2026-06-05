@@ -738,6 +738,98 @@ async fn run_stream_writes_predictions() {
 }
 
 #[tokio::test]
+async fn run_stream_writes_invalid_prediction_for_failed_event() {
+    let state = temp_state();
+    let workflow = "prediction_stream_failure";
+    let program = weak_program();
+    FileProgramRegistry::new(state.clone())
+        .init_workflow(
+            workflow,
+            program.clone(),
+            fixture_program_metadata(workflow, &program),
+        )
+        .unwrap();
+    let store = PredictionStore::new(state.root().join("predictions"));
+
+    let summary = run_stream_with_options(
+        state.clone(),
+        workflow,
+        InMemoryEventSource::new(vec![
+            json!({
+                "event_id": "ok",
+                "_fixture_model": {
+                    "weak": {
+                        "value": {
+                            "event_id": "ok",
+                            "kind": "create_task",
+                            "title": "title",
+                            "datetime_hint": "tomorrow"
+                        }
+                    }
+                }
+            }),
+            json!({
+                "event_id": "abort",
+                "_fixture_model": {
+                    "weak": {
+                        "abort": "model refused"
+                    }
+                }
+            }),
+        ]),
+        Arc::new(FixtureModelHandler::weak()),
+        Arc::new(FixtureModelHandler::strong()),
+        false,
+        RunStreamOptions {
+            predictions: Some(PredictionWriteOptions {
+                store,
+                file_name: "cps_generalized_patch.heldout.jsonl".to_owned(),
+                variant: "cps_generalized_patch".to_owned(),
+            }),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.events_total, 2);
+    assert_eq!(summary.events_succeeded, 1);
+    assert_eq!(summary.events_failed, 1);
+
+    let records = PredictionStore::read(
+        &state
+            .root()
+            .join("predictions")
+            .join("cps_generalized_patch.heldout.jsonl"),
+    )
+    .unwrap();
+    assert_eq!(records.len(), 2);
+
+    let failed = records
+        .iter()
+        .find(|record| record.event_id == "abort")
+        .expect("failed event should have a prediction row");
+    assert!(!failed.schema_valid);
+    assert!(
+        failed.output["error"]
+            .as_str()
+            .unwrap()
+            .contains("weak_model aborted: model refused")
+    );
+
+    let metrics = evaluate_quality(
+        &records,
+        &[
+            gold("ok", "create_task", true, false),
+            gold("abort", "create_task", true, false),
+        ],
+    )
+    .unwrap();
+    assert_eq!(metrics.events_total, 2);
+    assert_eq!(metrics.schema_validity, 0.5);
+    assert_eq!(metrics.actionable_recall, 0.5);
+}
+
+#[tokio::test]
 async fn predictions_include_fast_path_metadata() {
     let records = run_prediction_stream_and_read().await;
     assert!(records[0].fast_path.hit);
