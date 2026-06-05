@@ -59,16 +59,17 @@ impl PriceCatalog {
             .with_context(|| format!("failed to write price catalog {}", path.display()))
     }
 
+    pub fn require_model(&self, model: &str) -> Result<()> {
+        self.model_price(model).map(|_| ())
+    }
+
     pub fn estimate_cost(
         &self,
         model: &str,
         usage: &ModelUsage,
         estimated: bool,
     ) -> Result<CostBreakdown> {
-        let price = self
-            .prices_per_1m_tokens
-            .get(model)
-            .ok_or_else(|| anyhow!("model {model} is missing from price catalog"))?;
+        let price = self.model_price(model)?;
         let billable_input = usage.input_tokens.saturating_sub(usage.cached_input_tokens);
         let input_usd = billable_input as f64 / 1_000_000.0 * price.input;
         let cached_input_usd = usage.cached_input_tokens as f64 / 1_000_000.0 * price.cached_input;
@@ -80,5 +81,11 @@ impl PriceCatalog {
             total_usd: input_usd + cached_input_usd + output_usd,
             estimated,
         })
+    }
+
+    fn model_price(&self, model: &str) -> Result<&ModelPrice> {
+        self.prices_per_1m_tokens
+            .get(model)
+            .ok_or_else(|| anyhow!("model {model} is missing from price catalog"))
     }
 }

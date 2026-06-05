@@ -447,7 +447,7 @@ fn cli_init_workflow_from_task_records_strong_compile_metric() {
     let compile_mock = server.mock(|when, then| {
         when.method(POST)
             .path("/v1/responses")
-            .json_body_includes(r#"{"model":"fake-strong","text":{"format":{"name":"program"}}}"#);
+            .json_body_includes(r#"{"model":"gpt-5.5","text":{"format":{"name":"program"}}}"#);
         then.status(200).json_body(json!({
             "output_text": include_str!("../examples/message_action.v2.program.json")
         }));
@@ -468,9 +468,9 @@ fn cli_init_workflow_from_task_records_strong_compile_metric() {
         .arg("--api-key")
         .arg("test-key")
         .arg("--weak-model")
-        .arg("fake-weak")
+        .arg("gpt-5.4-mini")
         .arg("--strong-model")
-        .arg("fake-strong")
+        .arg("gpt-5.5")
         .assert()
         .success()
         .stdout(predicate::str::contains(

@@ -135,6 +135,7 @@ impl ResponsesClient {
 
         let mut budget_reservation = None;
         if let Some(runtime) = &self.config.runtime {
+            runtime.price_catalog.require_model(model)?;
             if let Some(cache) = &runtime.cache {
                 if let Some(entry) = cache.get(&request_hash)? {
                     let output_value = entry.parsed_output.clone();
@@ -655,14 +656,15 @@ fn cost_for_runtime(
     usage: &Option<ModelUsage>,
     estimated_usage: &ModelUsage,
 ) -> Result<CostBreakdown> {
-    let catalog = runtime
-        .map(|runtime| runtime.price_catalog.clone())
-        .unwrap_or_else(PriceCatalog::default_openai);
+    let Some(runtime) = runtime else {
+        return Ok(CostBreakdown::zero(true));
+    };
     match usage {
-        Some(usage) => catalog.estimate_cost(model, usage, false),
-        None => catalog.estimate_cost(model, estimated_usage, true),
+        Some(usage) => runtime.price_catalog.estimate_cost(model, usage, false),
+        None => runtime
+            .price_catalog
+            .estimate_cost(model, estimated_usage, true),
     }
-    .or_else(|_| Ok(CostBreakdown::zero(true)))
 }
 
 pub fn request_hash_for_debug(value: &Value) -> Result<String> {

@@ -212,6 +212,66 @@ fn budget_guard_aborts_projected_overspend() {
     assert!(error.to_string().contains("budget hard cap"));
 }
 
+#[test]
+fn budget_guard_rejects_missing_model_pricing() {
+    let state = temp_state();
+    let store = FileBudgetStore::new(state);
+    let guard = cps_llm_demo::store::budget_store::BudgetGuard::new(
+        BudgetConfig::default(),
+        PriceCatalog {
+            prices_per_1m_tokens: BTreeMap::new(),
+        },
+        store,
+    );
+
+    let error = guard
+        .ensure_call_allowed("unpriced-model", 10_000, Some(1_000))
+        .unwrap_err();
+
+    assert!(error.to_string().contains("missing from price catalog"));
+}
+
+#[tokio::test]
+async fn runtime_rejects_missing_model_pricing_without_zero_cost_record() {
+    let state = temp_state();
+    let server = mock_structured_response(json!({"ok": true}), Some(usage_json(100, 10, 0)));
+    let runtime = ModelCallRuntime::new(
+        FileModelCallStore::new(state.clone()),
+        PriceCatalog {
+            prices_per_1m_tokens: BTreeMap::new(),
+        },
+    )
+    .with_cache(ModelCache::new(
+        state.root().join("model_cache"),
+        ModelCacheMode::Disabled,
+    ));
+    let client = ResponsesClient::new(ResponsesClientConfig {
+        base_url: Url::parse(&server.url("/v1")).unwrap(),
+        api_key: SecretString::from("test-key".to_owned()),
+        runtime: Some(Arc::new(runtime)),
+    });
+
+    let error = client
+        .create_structured_with_context::<Value>(
+            "unpriced-model",
+            "Return JSON.",
+            &json!({"event_id": "e1"}),
+            "object",
+            json!({"type": "object"}),
+            call_context("weak_model", "model_task"),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("missing from price catalog"));
+    assert!(
+        FileModelCallStore::new(state)
+            .list_all()
+            .unwrap()
+            .is_empty()
+    );
+}
+
 #[tokio::test]
 async fn budget_guard_ignores_stale_spend_for_current_run_scope() {
     let state = temp_state();

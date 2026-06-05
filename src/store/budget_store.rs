@@ -217,10 +217,7 @@ impl BudgetGuard {
         let report = self
             .store
             .report_for_scope(&self.config, budget_scope_id, run_id)?;
-        let Some(projected_cost) = self.projected_cost_usd(model, input_bytes, max_output_tokens)
-        else {
-            return Ok(BudgetReservation::none());
-        };
+        let projected_cost = self.projected_cost_usd(model, input_bytes, max_output_tokens)?;
         let key = BudgetReservationKey::new(budget_scope_id, run_id);
         let mut reservations = self
             .reservations
@@ -256,13 +253,11 @@ impl BudgetGuard {
         model: &str,
         input_bytes: u64,
         max_output_tokens: Option<u64>,
-    ) -> Option<f64> {
+    ) -> Result<f64> {
         let projected_output_tokens = max_output_tokens.unwrap_or(4_096);
         let projected_usage = estimate_usage_from_bytes(input_bytes, projected_output_tokens * 2);
-        match self.catalog.estimate_cost(model, &projected_usage, true) {
-            Ok(cost) => Some(cost.total_usd * self.config.projection_multiplier),
-            Err(_) => None,
-        }
+        let cost = self.catalog.estimate_cost(model, &projected_usage, true)?;
+        Ok(cost.total_usd * self.config.projection_multiplier)
     }
 
     pub fn estimated_cost_for_request(&self, model: &str, input_bytes: u64) -> Result<f64> {
