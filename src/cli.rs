@@ -11,14 +11,23 @@ use crate::engine::event_source::JsonlEventSource;
 use crate::engine::run_coordinator::run_stream;
 use crate::evaluation::compare_runs::compare_runs;
 use crate::evaluation::strong_direct_baseline::baseline_strong_direct;
+use crate::experiment::exact_memo::write_exact_memo_patch;
+use crate::experiment::quality::evaluate_quality_files;
+use crate::experiment::runner::{experiment_dir, run_experiment_from_file};
+use crate::experiment::split::{SplitCounts, SplitStrategy, split_events_files};
+use crate::model_cache::{ModelCache, ModelCacheMode};
 use crate::models::{EffectHandler, FixtureModelHandler, ResponsesStrongModel, ResponsesWeakModel};
 use crate::observability::report::build_metrics_report;
 use crate::optimizer::patch_installer::install_fixture_patch;
 use crate::optimizer::patch_optimizer::{OptimizerContext, optimize_from_profile};
+use crate::pricing::price_catalog::PriceCatalog;
 use crate::program::{EffectCall, ModelStrength, ModelTaskSpec, Program, ProgramPatch};
+use crate::responses_client::{ModelCallRuntime, ResponsesClient, ResponsesClientConfig};
 use crate::runtime::Runtime;
 use crate::schema::{action_drafts_schema, message_events_schema, program_schema, schema_bundle};
+use crate::store::budget_store::FileBudgetStore;
 use crate::store::metrics_store::{FileMetricsStore, RunMetrics};
+use crate::store::model_call_store::FileModelCallStore;
 use crate::store::program_registry::{
     FileProgramRegistry, ProgramMetadata, ProgramSource, fixture_program_metadata,
 };
@@ -200,6 +209,82 @@ pub enum Command {
         #[arg(long, default_value = ".cps-llm-demo")]
         state_dir: PathBuf,
     },
+    BudgetReport {
+        #[arg(long, default_value = ".cps-llm-demo")]
+        state_dir: PathBuf,
+    },
+    BudgetReset {
+        #[arg(long, default_value = ".cps-llm-demo")]
+        state_dir: PathBuf,
+
+        #[arg(long)]
+        confirm: bool,
+    },
+    SplitEvents {
+        #[arg(long)]
+        events: PathBuf,
+
+        #[arg(long)]
+        gold: PathBuf,
+
+        #[arg(long)]
+        out: PathBuf,
+
+        #[arg(long, default_value = "time-cluster")]
+        strategy: String,
+
+        #[arg(long)]
+        profile_train: usize,
+
+        #[arg(long)]
+        patch_validation: usize,
+
+        #[arg(long)]
+        heldout_test: usize,
+
+        #[arg(long)]
+        adversarial_test: usize,
+    },
+    EvaluateQuality {
+        #[arg(long)]
+        predictions: PathBuf,
+
+        #[arg(long)]
+        gold: PathBuf,
+
+        #[arg(long)]
+        out: PathBuf,
+    },
+    RunExperiment {
+        #[arg(long)]
+        config: PathBuf,
+
+        #[arg(long, default_value = ".cps-real-exp")]
+        state_dir: PathBuf,
+
+        #[arg(long)]
+        dry_run_cost: bool,
+    },
+    ExperimentReport {
+        #[arg(long)]
+        experiment: String,
+
+        #[arg(long, default_value = ".cps-real-exp")]
+        state_dir: PathBuf,
+
+        #[arg(long)]
+        out: PathBuf,
+    },
+    BuildExactMemoPatch {
+        #[arg(long)]
+        workflow: String,
+
+        #[arg(long)]
+        from_events: PathBuf,
+
+        #[arg(long, default_value = ".cps-real-exp")]
+        state_dir: PathBuf,
+    },
     Replay {
         #[arg(long)]
         trace: PathBuf,
@@ -294,7 +379,7 @@ pub async fn run() -> Result<()> {
                 (Some(task), None) => {
                     let config = ModelConfig::new(base_url, api_key, weak_model, strong_model)?;
                     let task_spec = read_task(&task)?;
-                    let client = config.responses_client();
+                    let client = responses_client_for_state(&config, &state);
                     let strong = ResponsesStrongModel::new(client, config.strong_model);
                     let program =
                         compile_program(&strong, &task_spec, json!({}), json!({})).await?;
@@ -363,7 +448,8 @@ pub async fn run() -> Result<()> {
         } => {
             let state = StateDir::new(state_dir);
             let event_source = JsonlEventSource::from_path(&events)?;
-            let (weak, strong) = handler_pair(base_url, api_key, weak_model, strong_model)?;
+            let (weak, strong) =
+                handler_pair_for_state(base_url, api_key, weak_model, strong_model, &state)?;
             let summary =
                 run_stream(state, &workflow, event_source, weak, strong, trace_json).await?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -382,8 +468,9 @@ pub async fn run() -> Result<()> {
             let programs = FileProgramRegistry::new(state.clone());
             let patches = crate::store::patch_registry::FilePatchRegistry::new(state.clone());
             let traces = crate::store::trace_store::FileTraceStore::new(state.clone());
-            let profiles = crate::store::profile_store::FileProfileStore::new(state);
-            let (weak, strong) = handler_pair(base_url, api_key, weak_model, strong_model)?;
+            let profiles = crate::store::profile_store::FileProfileStore::new(state.clone());
+            let (weak, strong) =
+                handler_pair_for_state(base_url, api_key, weak_model, strong_model, &state)?;
             let installed_version = if let Some(patch_path) = patch {
                 let patch = read_patch(&patch_path)?;
                 install_fixture_patch(&programs, &patches, &traces, &workflow, patch, weak, strong)
@@ -424,7 +511,7 @@ pub async fn run() -> Result<()> {
             let state = StateDir::new(state_dir);
             let event_source = JsonlEventSource::from_path(&events)?;
             let task_spec = read_task(&task)?;
-            let strong = strong_handler(base_url, api_key, strong_model)?;
+            let strong = strong_handler_for_state(base_url, api_key, strong_model, &state)?;
             let summary =
                 baseline_strong_direct(state, &workflow, task_spec, event_source, strong).await?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -453,6 +540,113 @@ pub async fn run() -> Result<()> {
             let after = metrics.find_run(&after_run)?;
             let comparison = compare_runs(&baseline, &before, &after, 16_384);
             println!("{}", serde_json::to_string_pretty(&comparison)?);
+        }
+        Command::BudgetReport { state_dir } => {
+            let store = FileBudgetStore::new(StateDir::new(state_dir));
+            let config = store.read_config()?;
+            let report = store.report(&config)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::BudgetReset { state_dir, confirm } => {
+            if !confirm {
+                return Err(anyhow!("budget-reset requires --confirm"));
+            }
+            let store = FileBudgetStore::new(StateDir::new(state_dir));
+            store.reset()?;
+            println!("{}", serde_json::to_string_pretty(&json!({ "ok": true }))?);
+        }
+        Command::SplitEvents {
+            events,
+            gold,
+            out,
+            strategy,
+            profile_train,
+            patch_validation,
+            heldout_test,
+            adversarial_test,
+        } => {
+            if strategy != "time-cluster" {
+                return Err(anyhow!("unsupported split strategy {strategy}"));
+            }
+            let result = split_events_files(
+                &events,
+                &gold,
+                &out,
+                SplitStrategy::TimeCluster,
+                SplitCounts {
+                    profile_train,
+                    patch_validation,
+                    heldout_test,
+                    adversarial_test,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&result.leakage_report)?);
+        }
+        Command::EvaluateQuality {
+            predictions,
+            gold,
+            out,
+        } => {
+            let metrics = evaluate_quality_files(&predictions, &gold, &out)?;
+            println!("{}", serde_json::to_string_pretty(&metrics)?);
+        }
+        Command::RunExperiment {
+            config,
+            state_dir,
+            dry_run_cost,
+        } => {
+            let output =
+                run_experiment_from_file(&config, StateDir::new(state_dir), dry_run_cost).await?;
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+        Command::ExperimentReport {
+            experiment,
+            state_dir,
+            out,
+        } => {
+            let dir = experiment_dir(&StateDir::new(state_dir), &experiment);
+            let report_md = dir.join("report.md");
+            let report_json = dir.join("report.json");
+            if let Some(parent) = out.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create {}", parent.display()))?;
+            }
+            std::fs::copy(&report_md, &out)
+                .with_context(|| format!("failed to copy {}", report_md.display()))?;
+            if report_json.exists() {
+                std::fs::copy(&report_json, out.with_extension("json"))
+                    .with_context(|| format!("failed to copy {}", report_json.display()))?;
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "ok": true, "out": out }))?
+            );
+        }
+        Command::BuildExactMemoPatch {
+            workflow,
+            from_events,
+            state_dir,
+        } => {
+            let state = StateDir::new(state_dir);
+            let program_id = FileProgramRegistry::new(state.clone())
+                .load_latest(&workflow)
+                .map(|program| program.program_id)
+                .unwrap_or_else(|_| workflow.clone());
+            let _events = JsonlEventSource::from_path(&from_events)?;
+            let out = state
+                .root()
+                .join("experiments")
+                .join("artifacts")
+                .join(format!("{workflow}.exact_memo.patch.json"));
+            let patch = write_exact_memo_patch(&out, &program_id)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "patch_id": patch.patch_id,
+                    "path": out,
+                }))?
+            );
         }
         Command::Replay { trace } => {
             let raw = std::fs::read_to_string(&trace)
@@ -492,6 +686,9 @@ pub async fn run() -> Result<()> {
                 "text": "sample input"
             });
             let request = HandlerRequest {
+                run_id: None,
+                workflow_id: None,
+                phase: Some("probe_models".to_owned()),
                 effect: EffectCall::ModelTask {
                     strength: ModelStrength::Weak,
                     task,
@@ -509,6 +706,9 @@ pub async fn run() -> Result<()> {
             };
             let weak_decision = weak.handle(request).await?;
             let strong_request = HandlerRequest {
+                run_id: None,
+                workflow_id: None,
+                phase: Some("probe_models".to_owned()),
                 effect: EffectCall::Think {
                     reason: "probe".to_owned(),
                 },
@@ -559,6 +759,9 @@ where
     H: EffectHandler,
 {
     let request = HandlerRequest {
+        run_id: None,
+        workflow_id: None,
+        phase: None,
         effect: EffectCall::CompileProgram {
             strength: ModelStrength::Strong,
             task_spec: task_spec.to_owned(),
@@ -625,18 +828,19 @@ fn emit_trace(trace: TraceCollector, trace_json: bool) -> Result<()> {
     Ok(())
 }
 
-fn handler_pair(
+fn handler_pair_for_state(
     base_url: String,
     api_key: Option<String>,
     weak_model: String,
     strong_model: String,
+    state: &StateDir,
 ) -> Result<(Arc<dyn EffectHandler>, Arc<dyn EffectHandler>)> {
     if api_key
         .as_ref()
         .is_some_and(|value| !value.trim().is_empty())
     {
         let config = ModelConfig::new(base_url, api_key, weak_model, strong_model)?;
-        let client = config.responses_client();
+        let client = responses_client_for_state(&config, state);
         Ok((
             Arc::new(ResponsesWeakModel::new(client.clone(), config.weak_model)),
             Arc::new(ResponsesStrongModel::new(client, config.strong_model)),
@@ -649,10 +853,11 @@ fn handler_pair(
     }
 }
 
-fn strong_handler(
+fn strong_handler_for_state(
     base_url: String,
     api_key: Option<String>,
     strong_model: String,
+    state: &StateDir,
 ) -> Result<Arc<dyn EffectHandler>> {
     if api_key
         .as_ref()
@@ -664,7 +869,7 @@ fn strong_handler(
             DEFAULT_WEAK_MODEL.to_owned(),
             strong_model,
         )?;
-        let client = config.responses_client();
+        let client = responses_client_for_state(&config, state);
         Ok(Arc::new(ResponsesStrongModel::new(
             client,
             config.strong_model,
@@ -672,4 +877,22 @@ fn strong_handler(
     } else {
         Ok(Arc::new(FixtureModelHandler::strong()))
     }
+}
+
+fn responses_client_for_state(config: &ModelConfig, state: &StateDir) -> ResponsesClient {
+    let call_store = FileModelCallStore::new(state.clone());
+    let budget_store = FileBudgetStore::new(state.clone());
+    let budget_config = budget_store.read_config().unwrap_or_default();
+    let catalog = PriceCatalog::default_openai();
+    let runtime = ModelCallRuntime::new(call_store, catalog)
+        .with_budget(budget_store, budget_config)
+        .with_cache(ModelCache::new(
+            state.root().join("model_cache"),
+            ModelCacheMode::ReadWrite,
+        ));
+    ResponsesClient::new(ResponsesClientConfig {
+        base_url: config.base_url.clone(),
+        api_key: config.api_key.clone(),
+        runtime: Some(Arc::new(runtime)),
+    })
 }

@@ -1,0 +1,102 @@
+{
+  "calls_total": 1586,
+  "calls_success": 1586,
+  "calls_failed": 0,
+  "cost_total_usd": 0.9237334999999997,
+  "unknown_phase": 0,
+  "missing_run_id": 0,
+  "run_id_equals_event_id": 0,
+  "by_run_files": 13,
+  "event_named_run_files": 0,
+  "by_model": {
+    "gpt-5.4-mini": 851,
+    "gpt-5.5": 735
+  },
+  "by_task": {
+    "None": 1,
+    "cps_exact_memo": 240,
+    "cps_generalized_patch_no_semantic_weak": 160,
+    "draft_action_from_event": 411,
+    "optimize_semantic_patch_plan": 1,
+    "semantic_fast_path_match": 280,
+    "shadow_strong_direct": 93,
+    "strong_direct": 240,
+    "weak_only": 160
+  },
+  "by_phase": {
+    "cps_exact_memo": {
+      "calls": 160,
+      "cost_usd": 0
+    },
+    "cps_exact_memo.patch_validation": {
+      "calls": 80,
+      "cost_usd": 0
+    },
+    "cps_generalized_patch": {
+      "calls": 235,
+      "cost_usd": 0.4189725000000001
+    },
+    "cps_generalized_patch.adversarial": {
+      "calls": 72,
+      "cost_usd": 0.10848375000000002
+    },
+    "cps_generalized_patch.patch_validation": {
+      "calls": 104,
+      "cost_usd": 0.21751724999999997
+    },
+    "cps_generalized_patch_no_semantic_weak": {
+      "calls": 160,
+      "cost_usd": 0
+    },
+    "cps_unoptimized_heldout": {
+      "calls": 160,
+      "cost_usd": 0
+    },
+    "cps_unoptimized_profile": {
+      "calls": 121,
+      "cost_usd": 0.02104
+    },
+    "optimize": {
+      "calls": 1,
+      "cost_usd": 0.105235
+    },
+    "shadow_audit": {
+      "calls": 93,
+      "cost_usd": 0.052485
+    },
+    "strong_direct": {
+      "calls": 160,
+      "cost_usd": 0
+    },
+    "strong_direct.patch_validation": {
+      "calls": 80,
+      "cost_usd": 0
+    },
+    "weak_only": {
+      "calls": 160,
+      "cost_usd": 0
+    }
+  },
+  "by_cache_status": {
+    "hit": 1278,
+    "miss": 308
+  },
+  "optimizer_calls": [
+    {
+      "model": "gpt-5.5",
+      "handler": "strong_model",
+      "phase": "optimize",
+      "task_name": "optimize_semantic_patch_plan",
+      "cache_status": "miss",
+      "success": true,
+      "cost_usd": 0.105235,
+      "usage": {
+        "input_tokens": 4835,
+        "cached_input_tokens": 0,
+        "output_tokens": 2702,
+        "reasoning_tokens": 516,
+        "total_tokens": 7537
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "installed": true,
+  "installed_program_version": "v0002",
+  "negative_guards": 5,
+  "optimizer_source": "strong_model_generated_semantic_patch_plan",
+  "patch_id": "semantic_patch_v1",
+  "positive_clusters": [
+    "deadline_request_without_document",
+    "fyi_no_action",
+    "meeting_invitation",
+    "reply_needed_opinion_request",
+    "request_send_document_before_deadline",
+    "shipping_or_booking_update"
+  ],
+  "raw_optimizer_response_is_final_plan": true,
+  "source": "optimizer_strong_model"
+}

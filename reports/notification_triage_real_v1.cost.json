@@ -1,0 +1,427 @@
+{
+  "state_dir": ".cps-real-full-v11",
+  "experiment_id": "notification_triage_real_v1",
+  "budget": {
+    "hard_cap_usd": 100.0,
+    "soft_cap_usd": 60.0,
+    "spent_usd": 0.9237334999999997,
+    "remaining_usd": 99.0762665,
+    "calls_total": 1586,
+    "cache_hit_rate": 0.8058007566204287,
+    "by_model": {
+      "gpt-5.4-mini": 0.7449735,
+      "gpt-5.5": 0.17876
+    },
+    "by_phase": {
+      "cps_exact_memo": 0.0,
+      "cps_exact_memo.patch_validation": 0.0,
+      "cps_generalized_patch": 0.4189725000000001,
+      "cps_generalized_patch.adversarial": 0.10848375000000002,
+      "cps_generalized_patch.patch_validation": 0.21751724999999997,
+      "cps_generalized_patch_no_semantic_weak": 0.0,
+      "cps_unoptimized_heldout": 0.0,
+      "cps_unoptimized_profile": 0.02104,
+      "optimize": 0.105235,
+      "shadow_audit": 0.052485000000000004,
+      "strong_direct": 0.0,
+      "strong_direct.patch_validation": 0.0,
+      "weak_only": 0.0
+    }
+  },
+  "model_call_summary": {
+    "calls_total": 1586,
+    "calls_success": 1586,
+    "calls_failed": 0,
+    "cost_total_usd": 0.9237334999999997,
+    "unknown_phase": 0,
+    "missing_run_id": 0,
+    "run_id_equals_event_id": 0,
+    "by_run_files": 13,
+    "event_named_run_files": 0,
+    "by_model": {
+      "gpt-5.4-mini": 851,
+      "gpt-5.5": 735
+    },
+    "by_task": {
+      "None": 1,
+      "cps_exact_memo": 240,
+      "cps_generalized_patch_no_semantic_weak": 160,
+      "draft_action_from_event": 411,
+      "optimize_semantic_patch_plan": 1,
+      "semantic_fast_path_match": 280,
+      "shadow_strong_direct": 93,
+      "strong_direct": 240,
+      "weak_only": 160
+    },
+    "by_phase": {
+      "cps_exact_memo": {
+        "calls": 160,
+        "cost_usd": 0
+      },
+      "cps_exact_memo.patch_validation": {
+        "calls": 80,
+        "cost_usd": 0
+      },
+      "cps_generalized_patch": {
+        "calls": 235,
+        "cost_usd": 0.4189725000000001
+      },
+      "cps_generalized_patch.adversarial": {
+        "calls": 72,
+        "cost_usd": 0.10848375000000002
+      },
+      "cps_generalized_patch.patch_validation": {
+        "calls": 104,
+        "cost_usd": 0.21751724999999997
+      },
+      "cps_generalized_patch_no_semantic_weak": {
+        "calls": 160,
+        "cost_usd": 0
+      },
+      "cps_unoptimized_heldout": {
+        "calls": 160,
+        "cost_usd": 0
+      },
+      "cps_unoptimized_profile": {
+        "calls": 121,
+        "cost_usd": 0.02104
+      },
+      "optimize": {
+        "calls": 1,
+        "cost_usd": 0.105235
+      },
+      "shadow_audit": {
+        "calls": 93,
+        "cost_usd": 0.052485
+      },
+      "strong_direct": {
+        "calls": 160,
+        "cost_usd": 0
+      },
+      "strong_direct.patch_validation": {
+        "calls": 80,
+        "cost_usd": 0
+      },
+      "weak_only": {
+        "calls": 160,
+        "cost_usd": 0
+      }
+    },
+    "by_cache_status": {
+      "hit": 1278,
+      "miss": 308
+    },
+    "optimizer_calls": [
+      {
+        "model": "gpt-5.5",
+        "handler": "strong_model",
+        "phase": "optimize",
+        "task_name": "optimize_semantic_patch_plan",
+        "cache_status": "miss",
+        "success": true,
+        "cost_usd": 0.105235,
+        "usage": {
+          "input_tokens": 4835,
+          "cached_input_tokens": 0,
+          "output_tokens": 2702,
+          "reasoning_tokens": 516,
+          "total_tokens": 7537
+        }
+      }
+    ]
+  },
+  "cumulative_recorded_spend": {
+    "generated_at": "2026-06-05",
+    "scope": "local recorded spend across .cps-real* state dirs in this workspace",
+    "total_usd": 13.327848500000004,
+    "state_dirs": [
+      {
+        "state_dir": ".cps-real-attribution-replay",
+        "entries": 1320,
+        "total_usd": 0,
+        "by_model": {
+          "gpt-5.4-mini": 0,
+          "gpt-5.5": 0
+        },
+        "by_phase": {
+          "cps_exact_memo": 0,
+          "cps_generalized_patch": 0,
+          "cps_generalized_patch.adversarial": 0,
+          "cps_generalized_patch_no_semantic_weak": 0,
+          "cps_unoptimized_heldout": 0,
+          "cps_unoptimized_profile": 0,
+          "shadow_audit": 0,
+          "strong_direct": 0,
+          "weak_only": 0
+        }
+      },
+      {
+        "state_dir": ".cps-real-full-v10",
+        "entries": 1576,
+        "total_usd": 0.8956457499999998,
+        "by_model": {
+          "gpt-5.4-mini": 0.7436557499999994,
+          "gpt-5.5": 0.15199
+        },
+        "by_phase": {
+          "cps_exact_memo": 0,
+          "cps_exact_memo.patch_validation": 0,
+          "cps_generalized_patch": 0.42484275000000027,
+          "cps_generalized_patch.adversarial": 0.10852050000000002,
+          "cps_generalized_patch.patch_validation": 0.21029250000000002,
+          "cps_generalized_patch_no_semantic_weak": 0,
+          "cps_unoptimized_heldout": 0,
+          "cps_unoptimized_profile": 0.021635,
+          "optimize": 0.11171,
+          "shadow_audit": 0.018645000000000002,
+          "strong_direct": 0,
+          "strong_direct.patch_validation": 0,
+          "weak_only": 0
+        }
+      },
+      {
+        "state_dir": ".cps-real-full-v11",
+        "entries": 1586,
+        "total_usd": 0.9237334999999997,
+        "by_model": {
+          "gpt-5.4-mini": 0.7449735,
+          "gpt-5.5": 0.17876
+        },
+        "by_phase": {
+          "cps_exact_memo": 0,
+          "cps_exact_memo.patch_validation": 0,
+          "cps_generalized_patch": 0.4189725000000001,
+          "cps_generalized_patch.adversarial": 0.10848375000000002,
+          "cps_generalized_patch.patch_validation": 0.21751724999999997,
+          "cps_generalized_patch_no_semantic_weak": 0,
+          "cps_unoptimized_heldout": 0,
+          "cps_unoptimized_profile": 0.02104,
+          "optimize": 0.105235,
+          "shadow_audit": 0.052485,
+          "strong_direct": 0,
+          "strong_direct.patch_validation": 0,
+          "weak_only": 0
+        }
+      },
+      {
+        "state_dir": ".cps-real-full-v2",
+        "entries": 1321,
+        "total_usd": 7.531333000000003,
+        "by_model": {
+          "gpt-5.4-mini": 0.8064779999999994,
+          "gpt-5.5": 6.724855000000008
+        },
+        "by_phase": {
+          "unknown": 7.531333000000003
+        }
+      },
+      {
+        "state_dir": ".cps-real-full-v3",
+        "entries": 879,
+        "total_usd": 1.90533325,
+        "by_model": {
+          "gpt-5.4-mini": 0.12209325,
+          "gpt-5.5": 1.7832400000000006
+        },
+        "by_phase": {
+          "cps_exact_memo.patch_validation": 0.874115,
+          "cps_generalized_patch.patch_validation": 0.12209325,
+          "cps_unoptimized_heldout": 0,
+          "cps_unoptimized_profile": 0.02049,
+          "strong_direct": 0,
+          "strong_direct.patch_validation": 0.8886350000000002,
+          "weak_only": 0
+        }
+      },
+      {
+        "state_dir": ".cps-real-full-v4",
+        "entries": 1577,
+        "total_usd": 0.8915419999999995,
+        "by_model": {
+          "gpt-5.4-mini": 0.7561919999999996,
+          "gpt-5.5": 0.13534999999999997
+        },
+        "by_phase": {
+          "cps_exact_memo": 0,
+          "cps_exact_memo.patch_validation": 0,
+          "cps_generalized_patch": 0.43863000000000013,
+          "cps_generalized_patch.adversarial": 0.11809124999999997,
+          "cps_generalized_patch.patch_validation": 0.19947074999999997,
+          "cps_generalized_patch_no_semantic_weak": 0,
+          "cps_unoptimized_heldout": 0,
+          "cps_unoptimized_profile": 0.02063,
+          "shadow_audit": 0.11471999999999999,
+          "strong_direct": 0,
+          "strong_direct.patch_validation": 0,
+          "weak_only": 0
+        }
+      },
+      {
+        "state_dir": ".cps-real-full-v5",
+        "entries": 1577,
+        "total_usd": 0.02164675,
+        "by_model": {
+          "gpt-5.4-mini": 0.0017617499999999999,
+          "gpt-5.5": 0.019885
+        },
+        "by_phase": {
+          "cps_exact_memo": 0,
+          "cps_exact_memo.patch_validation": 0,
+          "cps_generalized_patch": 0,
+          "cps_generalized_patch.adversarial": 0.0017617499999999999,
+          "cps_generalized_patch.patch_validation": 0,
+          "cps_generalized_patch_no_semantic_weak": 0,
+          "cps_unoptimized_heldout": 0,
+          "cps_unoptimized_profile": 0.019885,
+          "shadow_audit": 0,
+          "strong_direct": 0,
+          "strong_direct.patch_validation": 0,
+          "weak_only": 0
+        }
+      },
+      {
+        "state_dir": ".cps-real-full-v6",
+        "entries": 1577,
+        "total_usd": 0.020885,
+        "by_model": {
+          "gpt-5.4-mini": 0,
+          "gpt-5.5": 0.020885
+        },
+        "by_phase": {
+          "cps_exact_memo": 0,
+          "cps_exact_memo.patch_validation": 0,
+          "cps_generalized_patch": 0,
+          "cps_generalized_patch.adversarial": 0,
+          "cps_generalized_patch.patch_validation": 0,
+          "cps_generalized_patch_no_semantic_weak": 0,
+          "cps_unoptimized_heldout": 0,
+          "cps_unoptimized_profile": 0.020885,
+          "shadow_audit": 0,
+          "strong_direct": 0,
+          "strong_direct.patch_validation": 0,
+          "weak_only": 0
+        }
+      },
+      {
+        "state_dir": ".cps-real-full-v7",
+        "entries": 1578,
+        "total_usd": 0.085875,
+        "by_model": {
+          "gpt-5.4-mini": 0,
+          "gpt-5.5": 0.085875
+        },
+        "by_phase": {
+          "cps_exact_memo": 0,
+          "cps_exact_memo.patch_validation": 0,
+          "cps_generalized_patch": 0,
+          "cps_generalized_patch.adversarial": 0,
+          "cps_generalized_patch.patch_validation": 0,
+          "cps_generalized_patch_no_semantic_weak": 0,
+          "cps_unoptimized_heldout": 0,
+          "cps_unoptimized_profile": 0.02033,
+          "optimize": 0.065545,
+          "shadow_audit": 0,
+          "strong_direct": 0,
+          "strong_direct.patch_validation": 0,
+          "weak_only": 0
+        }
+      },
+      {
+        "state_dir": ".cps-real-full-v8",
+        "entries": 1578,
+        "total_usd": 0.09008,
+        "by_model": {
+          "gpt-5.4-mini": 0,
+          "gpt-5.5": 0.09008
+        },
+        "by_phase": {
+          "cps_exact_memo": 0,
+          "cps_exact_memo.patch_validation": 0,
+          "cps_generalized_patch": 0,
+          "cps_generalized_patch.adversarial": 0,
+          "cps_generalized_patch.patch_validation": 0,
+          "cps_generalized_patch_no_semantic_weak": 0,
+          "cps_unoptimized_heldout": 0,
+          "cps_unoptimized_profile": 0.020885,
+          "optimize": 0.06919499999999999,
+          "shadow_audit": 0,
+          "strong_direct": 0,
+          "strong_direct.patch_validation": 0,
+          "weak_only": 0
+        }
+      },
+      {
+        "state_dir": ".cps-real-full-v9",
+        "entries": 1578,
+        "total_usd": 0.10087,
+        "by_model": {
+          "gpt-5.4-mini": 0,
+          "gpt-5.5": 0.10087
+        },
+        "by_phase": {
+          "cps_exact_memo": 0,
+          "cps_exact_memo.patch_validation": 0,
+          "cps_generalized_patch": 0,
+          "cps_generalized_patch.adversarial": 0,
+          "cps_generalized_patch.patch_validation": 0,
+          "cps_generalized_patch_no_semantic_weak": 0,
+          "cps_unoptimized_heldout": 0,
+          "cps_unoptimized_profile": 0.021214999999999998,
+          "optimize": 0.079655,
+          "shadow_audit": 0,
+          "strong_direct": 0,
+          "strong_direct.patch_validation": 0,
+          "weak_only": 0
+        }
+      },
+      {
+        "state_dir": ".cps-real-pilot-full-run",
+        "entries": 132,
+        "total_usd": 0.5958319999999999,
+        "by_model": {
+          "gpt-5.4-mini": 0.04957199999999999,
+          "gpt-5.5": 0.5462599999999999
+        },
+        "by_phase": {
+          "unknown": 0.5958319999999999
+        }
+      },
+      {
+        "state_dir": ".cps-real-pilot-run",
+        "entries": 32,
+        "total_usd": 0.1853735,
+        "by_model": {
+          "gpt-5.4-mini": 0.015433500000000001,
+          "gpt-5.5": 0.16994
+        },
+        "by_phase": {
+          "unknown": 0.1853735
+        }
+      },
+      {
+        "state_dir": ".cps-real-pilot-v2",
+        "entries": 132,
+        "total_usd": 0.06885699999999999,
+        "by_model": {
+          "gpt-5.4-mini": 0.027297000000000002,
+          "gpt-5.5": 0.04156
+        },
+        "by_phase": {
+          "unknown": 0.06885699999999999
+        }
+      },
+      {
+        "state_dir": ".cps-real-probe",
+        "entries": 2,
+        "total_usd": 0.01084175,
+        "by_model": {
+          "gpt-5.4-mini": 0.00087675,
+          "gpt-5.5": 0.009965
+        },
+        "by_phase": {
+          "unknown": 0.01084175
+        }
+      }
+    ]
+  }
+}

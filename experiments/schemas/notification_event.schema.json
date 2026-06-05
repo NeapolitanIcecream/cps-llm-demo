@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["event_id", "timestamp", "source", "sender_hint", "text"],
+  "properties": {
+    "event_id": { "type": "string" },
+    "timestamp": { "type": "string" },
+    "source": { "type": "string" },
+    "sender_hint": { "type": "string" },
+    "text": { "type": "string" }
+  }
+}

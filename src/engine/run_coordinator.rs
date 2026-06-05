@@ -6,6 +6,9 @@ use serde_json::Value;
 
 use crate::effects::RuntimeBudget;
 use crate::engine::event_source::EventSource;
+use crate::experiment::prediction::{
+    PredictionRecord, PredictionStore, prediction_metadata_from_trace,
+};
 use crate::local_tools::LocalToolRegistry;
 use crate::models::EffectHandler;
 use crate::observability::metrics::MetricsAccumulator;
@@ -30,13 +33,49 @@ pub struct RunSummary {
     pub events_failed: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct RunStreamOptions {
+    pub predictions: Option<PredictionWriteOptions>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PredictionWriteOptions {
+    pub store: PredictionStore,
+    pub file_name: String,
+    pub variant: String,
+}
+
 pub async fn run_stream<S>(
+    state: StateDir,
+    workflow_id: &str,
+    event_source: S,
+    weak: Arc<dyn EffectHandler>,
+    strong: Arc<dyn EffectHandler>,
+    trace_json: bool,
+) -> Result<RunSummary>
+where
+    S: EventSource,
+{
+    run_stream_with_options(
+        state,
+        workflow_id,
+        event_source,
+        weak,
+        strong,
+        trace_json,
+        RunStreamOptions { predictions: None },
+    )
+    .await
+}
+
+pub async fn run_stream_with_options<S>(
     state: StateDir,
     workflow_id: &str,
     mut event_source: S,
     weak: Arc<dyn EffectHandler>,
     strong: Arc<dyn EffectHandler>,
     trace_json: bool,
+    options: RunStreamOptions,
 ) -> Result<RunSummary>
 where
     S: EventSource,
@@ -84,7 +123,7 @@ where
             RuntimeBudget::default(),
         );
         let result = runtime
-            .run_program_with_result_and_trace_id(program.clone(), event, event_id)
+            .run_program_with_result_and_trace_id(program.clone(), event, event_id.clone())
             .await;
         if let Ok(result) = &result {
             metrics.events_succeeded += 1;
@@ -108,6 +147,23 @@ where
             metrics.events_failed += 1;
         }
         let events = trace.events();
+        if let (Ok(result), Some(predictions)) = (&result, options.predictions.as_ref()) {
+            let schema_valid = validate_value(&program.output_schema, &result.output).is_ok();
+            let (fast_path, model_calls) = prediction_metadata_from_trace(&events);
+            predictions.store.append(
+                &predictions.file_name,
+                &PredictionRecord {
+                    event_id: event_id.clone(),
+                    variant: predictions.variant.clone(),
+                    program_version: program.version.clone(),
+                    output: result.output.clone(),
+                    schema_valid,
+                    trace_run_id: Some(run_id.clone()),
+                    fast_path,
+                    model_calls,
+                },
+            )?;
+        }
         accumulator.update_from_trace(&mut metrics, &events);
         traces.append_events(workflow_id, &run_id, &events)?;
         profiles.update_from_trace(workflow_id, &events)?;

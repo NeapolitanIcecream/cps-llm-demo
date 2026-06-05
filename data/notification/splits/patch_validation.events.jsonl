@@ -1,0 +1,80 @@
+{"event_id":"e_263","sender_hint":"system","source":"chat","text":"FYI the release note is posted. [case 32]","timestamp":"2026-06-05T13:22:00+08:00"}
+{"event_id":"e_295","sender_hint":"system","source":"email","text":"FYI the release note is posted. [case 36]","timestamp":"2026-06-05T13:54:00+08:00"}
+{"event_id":"e_327","sender_hint":"system","source":"chat","text":"FYI the release note is posted. [case 40]","timestamp":"2026-06-05T14:26:00+08:00"}
+{"event_id":"e_359","sender_hint":"system","source":"chat","text":"FYI the release note is posted. [case 44]","timestamp":"2026-06-05T14:58:00+08:00"}
+{"event_id":"e_010","sender_hint":"coworker","source":"email","text":"Invitation: budget review at 15:00 next Monday. [case 01]","timestamp":"2026-06-05T09:09:00+08:00"}
+{"event_id":"e_042","sender_hint":"coworker","source":"chat","text":"Invitation: budget review at 15:00 next Monday. [case 05]","timestamp":"2026-06-05T09:41:00+08:00"}
+{"event_id":"e_074","sender_hint":"coworker","source":"chat","text":"Invitation: budget review at 15:00 next Monday. [case 09]","timestamp":"2026-06-05T10:13:00+08:00"}
+{"event_id":"e_106","sender_hint":"coworker","source":"email","text":"Invitation: budget review at 15:00 next Monday. [case 13]","timestamp":"2026-06-05T10:45:00+08:00"}
+{"event_id":"e_138","sender_hint":"coworker","source":"chat","text":"Invitation: budget review at 15:00 next Monday. [case 17]","timestamp":"2026-06-05T11:17:00+08:00"}
+{"event_id":"e_170","sender_hint":"coworker","source":"chat","text":"Invitation: budget review at 15:00 next Monday. [case 21]","timestamp":"2026-06-05T11:49:00+08:00"}
+{"event_id":"e_202","sender_hint":"coworker","source":"email","text":"Invitation: budget review at 15:00 next Monday. [case 25]","timestamp":"2026-06-05T12:21:00+08:00"}
+{"event_id":"e_234","sender_hint":"coworker","source":"chat","text":"Invitation: budget review at 15:00 next Monday. [case 29]","timestamp":"2026-06-05T12:53:00+08:00"}
+{"event_id":"e_266","sender_hint":"coworker","source":"chat","text":"Invitation: budget review at 15:00 next Monday. [case 33]","timestamp":"2026-06-05T13:25:00+08:00"}
+{"event_id":"e_298","sender_hint":"coworker","source":"email","text":"Invitation: budget review at 15:00 next Monday. [case 37]","timestamp":"2026-06-05T13:57:00+08:00"}
+{"event_id":"e_330","sender_hint":"coworker","source":"chat","text":"Invitation: budget review at 15:00 next Monday. [case 41]","timestamp":"2026-06-05T14:29:00+08:00"}
+{"event_id":"e_015","sender_hint":"system","source":"chat","text":"Just sharing the dashboard link. [case 01]","timestamp":"2026-06-05T09:14:00+08:00"}
+{"event_id":"e_047","sender_hint":"system","source":"chat","text":"Just sharing the dashboard link. [case 05]","timestamp":"2026-06-05T09:46:00+08:00"}
+{"event_id":"e_079","sender_hint":"system","source":"email","text":"Just sharing the dashboard link. [case 09]","timestamp":"2026-06-05T10:18:00+08:00"}
+{"event_id":"e_111","sender_hint":"system","source":"chat","text":"Just sharing the dashboard link. [case 13]","timestamp":"2026-06-05T10:50:00+08:00"}
+{"event_id":"e_143","sender_hint":"system","source":"chat","text":"Just sharing the dashboard link. [case 17]","timestamp":"2026-06-05T11:22:00+08:00"}
+{"event_id":"e_175","sender_hint":"system","source":"email","text":"Just sharing the dashboard link. [case 21]","timestamp":"2026-06-05T11:54:00+08:00"}
+{"event_id":"e_207","sender_hint":"system","source":"chat","text":"Just sharing the dashboard link. [case 25]","timestamp":"2026-06-05T12:26:00+08:00"}
+{"event_id":"e_239","sender_hint":"system","source":"chat","text":"Just sharing the dashboard link. [case 29]","timestamp":"2026-06-05T12:58:00+08:00"}
+{"event_id":"e_271","sender_hint":"system","source":"email","text":"Just sharing the dashboard link. [case 33]","timestamp":"2026-06-05T13:30:00+08:00"}
+{"event_id":"e_303","sender_hint":"system","source":"chat","text":"Just sharing the dashboard link. [case 37]","timestamp":"2026-06-05T14:02:00+08:00"}
+{"event_id":"e_335","sender_hint":"system","source":"chat","text":"Just sharing the dashboard link. [case 41]","timestamp":"2026-06-05T14:34:00+08:00"}
+{"event_id":"e_018","sender_hint":"coworker","source":"chat","text":"Let us meet Friday morning to review launch tasks. [case 02]","timestamp":"2026-06-05T09:17:00+08:00"}
+{"event_id":"e_050","sender_hint":"coworker","source":"chat","text":"Let us meet Friday morning to review launch tasks. [case 06]","timestamp":"2026-06-05T09:49:00+08:00"}
+{"event_id":"e_082","sender_hint":"coworker","source":"email","text":"Let us meet Friday morning to review launch tasks. [case 10]","timestamp":"2026-06-05T10:21:00+08:00"}
+{"event_id":"e_114","sender_hint":"coworker","source":"chat","text":"Let us meet Friday morning to review launch tasks. [case 14]","timestamp":"2026-06-05T10:53:00+08:00"}
+{"event_id":"e_146","sender_hint":"coworker","source":"chat","text":"Let us meet Friday morning to review launch tasks. [case 18]","timestamp":"2026-06-05T11:25:00+08:00"}
+{"event_id":"e_178","sender_hint":"coworker","source":"email","text":"Let us meet Friday morning to review launch tasks. [case 22]","timestamp":"2026-06-05T11:57:00+08:00"}
+{"event_id":"e_210","sender_hint":"coworker","source":"chat","text":"Let us meet Friday morning to review launch tasks. [case 26]","timestamp":"2026-06-05T12:29:00+08:00"}
+{"event_id":"e_242","sender_hint":"coworker","source":"chat","text":"Let us meet Friday morning to review launch tasks. [case 30]","timestamp":"2026-06-05T13:01:00+08:00"}
+{"event_id":"e_274","sender_hint":"coworker","source":"email","text":"Let us meet Friday morning to review launch tasks. [case 34]","timestamp":"2026-06-05T13:33:00+08:00"}
+{"event_id":"e_306","sender_hint":"coworker","source":"chat","text":"Let us meet Friday morning to review launch tasks. [case 38]","timestamp":"2026-06-05T14:05:00+08:00"}
+{"event_id":"e_338","sender_hint":"coworker","source":"chat","text":"Let us meet Friday morning to review launch tasks. [case 42]","timestamp":"2026-06-05T14:37:00+08:00"}
+{"event_id":"e_024","sender_hint":"coworker","source":"chat","text":"Maybe reply later if this becomes urgent. [case 02]","timestamp":"2026-06-05T09:23:00+08:00"}
+{"event_id":"e_056","sender_hint":"coworker","source":"chat","text":"Maybe reply later if this becomes urgent. [case 06]","timestamp":"2026-06-05T09:55:00+08:00"}
+{"event_id":"e_088","sender_hint":"coworker","source":"email","text":"Maybe reply later if this becomes urgent. [case 10]","timestamp":"2026-06-05T10:27:00+08:00"}
+{"event_id":"e_120","sender_hint":"coworker","source":"chat","text":"Maybe reply later if this becomes urgent. [case 14]","timestamp":"2026-06-05T10:59:00+08:00"}
+{"event_id":"e_152","sender_hint":"coworker","source":"chat","text":"Maybe reply later if this becomes urgent. [case 18]","timestamp":"2026-06-05T11:31:00+08:00"}
+{"event_id":"e_184","sender_hint":"coworker","source":"email","text":"Maybe reply later if this becomes urgent. [case 22]","timestamp":"2026-06-05T12:03:00+08:00"}
+{"event_id":"e_216","sender_hint":"coworker","source":"chat","text":"Maybe reply later if this becomes urgent. [case 26]","timestamp":"2026-06-05T12:35:00+08:00"}
+{"event_id":"e_248","sender_hint":"coworker","source":"chat","text":"Maybe reply later if this becomes urgent. [case 30]","timestamp":"2026-06-05T13:07:00+08:00"}
+{"event_id":"e_280","sender_hint":"coworker","source":"email","text":"Maybe reply later if this becomes urgent. [case 34]","timestamp":"2026-06-05T13:39:00+08:00"}
+{"event_id":"e_312","sender_hint":"coworker","source":"chat","text":"Maybe reply later if this becomes urgent. [case 38]","timestamp":"2026-06-05T14:11:00+08:00"}
+{"event_id":"e_344","sender_hint":"coworker","source":"chat","text":"Maybe reply later if this becomes urgent. [case 42]","timestamp":"2026-06-05T14:43:00+08:00"}
+{"event_id":"e_017","sender_hint":"system","source":"chat","text":"Need the contract draft sent before Friday noon. [case 02]","timestamp":"2026-06-05T09:16:00+08:00"}
+{"event_id":"e_049","sender_hint":"system","source":"email","text":"Need the contract draft sent before Friday noon. [case 06]","timestamp":"2026-06-05T09:48:00+08:00"}
+{"event_id":"e_081","sender_hint":"system","source":"chat","text":"Need the contract draft sent before Friday noon. [case 10]","timestamp":"2026-06-05T10:20:00+08:00"}
+{"event_id":"e_113","sender_hint":"system","source":"chat","text":"Need the contract draft sent before Friday noon. [case 14]","timestamp":"2026-06-05T10:52:00+08:00"}
+{"event_id":"e_145","sender_hint":"system","source":"email","text":"Need the contract draft sent before Friday noon. [case 18]","timestamp":"2026-06-05T11:24:00+08:00"}
+{"event_id":"e_177","sender_hint":"system","source":"chat","text":"Need the contract draft sent before Friday noon. [case 22]","timestamp":"2026-06-05T11:56:00+08:00"}
+{"event_id":"e_209","sender_hint":"system","source":"chat","text":"Need the contract draft sent before Friday noon. [case 26]","timestamp":"2026-06-05T12:28:00+08:00"}
+{"event_id":"e_241","sender_hint":"system","source":"email","text":"Need the contract draft sent before Friday noon. [case 30]","timestamp":"2026-06-05T13:00:00+08:00"}
+{"event_id":"e_273","sender_hint":"system","source":"chat","text":"Need the contract draft sent before Friday noon. [case 34]","timestamp":"2026-06-05T13:32:00+08:00"}
+{"event_id":"e_305","sender_hint":"system","source":"chat","text":"Need the contract draft sent before Friday noon. [case 38]","timestamp":"2026-06-05T14:04:00+08:00"}
+{"event_id":"e_337","sender_hint":"system","source":"email","text":"Need the contract draft sent before Friday noon. [case 42]","timestamp":"2026-06-05T14:36:00+08:00"}
+{"event_id":"e_019","sender_hint":"system","source":"email","text":"Need your answer before end of day. [case 02]","timestamp":"2026-06-05T09:18:00+08:00"}
+{"event_id":"e_051","sender_hint":"system","source":"chat","text":"Need your answer before end of day. [case 06]","timestamp":"2026-06-05T09:50:00+08:00"}
+{"event_id":"e_083","sender_hint":"system","source":"chat","text":"Need your answer before end of day. [case 10]","timestamp":"2026-06-05T10:22:00+08:00"}
+{"event_id":"e_115","sender_hint":"system","source":"email","text":"Need your answer before end of day. [case 14]","timestamp":"2026-06-05T10:54:00+08:00"}
+{"event_id":"e_147","sender_hint":"system","source":"chat","text":"Need your answer before end of day. [case 18]","timestamp":"2026-06-05T11:26:00+08:00"}
+{"event_id":"e_179","sender_hint":"system","source":"chat","text":"Need your answer before end of day. [case 22]","timestamp":"2026-06-05T11:58:00+08:00"}
+{"event_id":"e_211","sender_hint":"system","source":"email","text":"Need your answer before end of day. [case 26]","timestamp":"2026-06-05T12:30:00+08:00"}
+{"event_id":"e_243","sender_hint":"system","source":"chat","text":"Need your answer before end of day. [case 30]","timestamp":"2026-06-05T13:02:00+08:00"}
+{"event_id":"e_275","sender_hint":"system","source":"chat","text":"Need your answer before end of day. [case 34]","timestamp":"2026-06-05T13:34:00+08:00"}
+{"event_id":"e_307","sender_hint":"system","source":"email","text":"Need your answer before end of day. [case 38]","timestamp":"2026-06-05T14:06:00+08:00"}
+{"event_id":"e_339","sender_hint":"system","source":"chat","text":"Need your answer before end of day. [case 42]","timestamp":"2026-06-05T14:38:00+08:00"}
+{"event_id":"e_020","sender_hint":"coworker","source":"chat","text":"Need your opinion on this draft. [case 02]","timestamp":"2026-06-05T09:19:00+08:00"}
+{"event_id":"e_052","sender_hint":"coworker","source":"email","text":"Need your opinion on this draft. [case 06]","timestamp":"2026-06-05T09:51:00+08:00"}
+{"event_id":"e_084","sender_hint":"coworker","source":"chat","text":"Need your opinion on this draft. [case 10]","timestamp":"2026-06-05T10:23:00+08:00"}
+{"event_id":"e_116","sender_hint":"coworker","source":"chat","text":"Need your opinion on this draft. [case 14]","timestamp":"2026-06-05T10:55:00+08:00"}
+{"event_id":"e_148","sender_hint":"coworker","source":"email","text":"Need your opinion on this draft. [case 18]","timestamp":"2026-06-05T11:27:00+08:00"}
+{"event_id":"e_180","sender_hint":"coworker","source":"chat","text":"Need your opinion on this draft. [case 22]","timestamp":"2026-06-05T11:59:00+08:00"}
+{"event_id":"e_212","sender_hint":"coworker","source":"chat","text":"Need your opinion on this draft. [case 26]","timestamp":"2026-06-05T12:31:00+08:00"}
+{"event_id":"e_244","sender_hint":"coworker","source":"email","text":"Need your opinion on this draft. [case 30]","timestamp":"2026-06-05T13:03:00+08:00"}
+{"event_id":"e_276","sender_hint":"coworker","source":"chat","text":"Need your opinion on this draft. [case 34]","timestamp":"2026-06-05T13:35:00+08:00"}
+{"event_id":"e_308","sender_hint":"coworker","source":"chat","text":"Need your opinion on this draft. [case 38]","timestamp":"2026-06-05T14:07:00+08:00"}

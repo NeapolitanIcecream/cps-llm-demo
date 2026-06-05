@@ -1,0 +1,10 @@
+{
+  "workflow_id": "notification_triage",
+  "program_id": "notification_triage",
+  "version": "v0002",
+  "created_at": "unix:1780665324",
+  "source": "patch_install",
+  "parent_version": "v0001",
+  "patch_id": "semantic_patch_v1",
+  "task_hash": "semantic_patch_v1"
+}

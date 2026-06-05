@@ -1,0 +1,8 @@
+{
+  "soft_cap_usd": 60.0,
+  "hard_cap_usd": 100.0,
+  "reserve_usd": 15.0,
+  "abort_when_projected_over_hard_cap": true,
+  "warn_when_over_soft_cap": true,
+  "projection_multiplier": 1.5
+}

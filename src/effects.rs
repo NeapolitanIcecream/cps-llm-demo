@@ -213,6 +213,15 @@ impl EffectReturnMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct HandlerRequest {
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub run_id: Option<String>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub workflow_id: Option<String>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub phase: Option<String>,
     pub effect: EffectCall,
     pub input: Value,
     pub expected_schema: Value,

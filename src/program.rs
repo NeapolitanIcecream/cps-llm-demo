@@ -269,11 +269,47 @@ pub struct ProgramPatch {
     pub patch_id: String,
     pub operations: Vec<PatchOp>,
     pub rationale: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generalization: Option<PatchGeneralizationMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PatchKind {
+    ExactMemo,
+    DeterministicRule,
+    WeakSemanticFastPath,
+    Validator,
+    Probe,
+    Mixed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneralizationScope {
+    Exact,
+    NearDuplicate,
+    SemanticClass,
+    SchemaClass,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct PatchGeneralizationMetadata {
+    pub patch_kind: PatchKind,
+    pub generalization_scope: GeneralizationScope,
+    pub uses_weak_semantic_matcher: bool,
+    pub uses_deterministic_fast_path: bool,
+    pub uses_validator: bool,
+    pub declared_positive_clusters: Vec<String>,
+    pub declared_negative_clusters: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum PatchOp {
+    AddEffectPermission {
+        permission: EffectPermission,
+    },
     ReplaceInstruction {
         function: String,
         pc: usize,

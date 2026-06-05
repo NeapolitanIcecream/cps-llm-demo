@@ -1,0 +1,8 @@
+{
+  "events_total": 400,
+  "exact_duplicate_cross_split": 0,
+  "near_duplicate_cross_split_rate": 0.00075,
+  "semantic_clusters_total": 13,
+  "heldout_unseen_cluster_rate": 0.28125,
+  "adversarial_cases_total": 40
+}

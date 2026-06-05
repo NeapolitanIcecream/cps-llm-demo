@@ -1,0 +1,71 @@
+{
+  "failure_fingerprints": {
+    "a1b21beab7632a1f": {
+      "fingerprint": {
+        "fingerprint_id": "a1b21beab7632a1f",
+        "program_id": "notification_triage",
+        "program_version": "v0001",
+        "function": "main",
+        "pc": 0,
+        "failed_effect_kind": "model_task",
+        "failed_task_name": "draft_action_from_event",
+        "expected_schema_hash": "d4b7855f9f978597",
+        "observation_shape_hash": "0b6783e448064031"
+      },
+      "count": 1,
+      "sample_continuation_refs": [
+        "4100237e-1d78-4842-9ea0-f69e99ee7829"
+      ],
+      "sample_event_refs": [
+        "e_048"
+      ],
+      "successful_probes": []
+    }
+  },
+  "fast_path_stats": {
+    "deadline_request_without_document_v1": {
+      "rule_id": "deadline_request_without_document_v1",
+      "hits": 16,
+      "misses": 0
+    },
+    "fyi_no_action_v1": {
+      "rule_id": "fyi_no_action_v1",
+      "hits": 24,
+      "misses": 0
+    },
+    "meeting_invitation_v1": {
+      "rule_id": "meeting_invitation_v1",
+      "hits": 11,
+      "misses": 0
+    },
+    "reply_needed_opinion_request_v1": {
+      "rule_id": "reply_needed_opinion_request_v1",
+      "hits": 22,
+      "misses": 0
+    },
+    "request_send_document_before_deadline_v1": {
+      "rule_id": "request_send_document_before_deadline_v1",
+      "hits": 7,
+      "misses": 0
+    },
+    "shipping_or_booking_update_v1": {
+      "rule_id": "shipping_or_booking_update_v1",
+      "hits": 13,
+      "misses": 0
+    }
+  },
+  "effect_stats": {
+    "local_tool": {
+      "effect_key": "local_tool",
+      "calls": 195,
+      "captures": 0,
+      "accepted": 195
+    },
+    "model_task": {
+      "effect_key": "model_task",
+      "calls": 587,
+      "captures": 1,
+      "accepted": 587
+    }
+  }
+}

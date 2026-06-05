@@ -11,7 +11,7 @@ use crate::effects::{
     EffectReturnMode, HandlerBudget, HandlerDecision, HandlerRequest, Observation,
     ObservationSource, ReturnSlot, RuntimeBudget, RuntimeFrame,
 };
-use crate::local_tools::{FAST_PATH_APPLY_TOOL_NAME, LocalToolRegistry};
+use crate::local_tools::{FAST_PATH_APPLY_TOOL_NAME, LocalToolRegistry, TEMPLATE_EMIT_TOOL_NAME};
 use crate::models::EffectHandler;
 use crate::program::{
     AcceptancePolicy, EffectCall, FailureHandler, FunctionDef, GuardExpr, GuardFail, Instr,
@@ -755,6 +755,9 @@ where
             );
 
             let mut request = HandlerRequest {
+                run_id: None,
+                workflow_id: None,
+                phase: None,
                 effect: effect.clone(),
                 input,
                 expected_schema: expected_schema.clone(),
@@ -838,7 +841,7 @@ where
                         value, confidence, ..
                     } => {
                         ensure_probability(confidence, "handler return_value confidence")?;
-                        self.emit_local_tool_result_trace(state, &effect, &value);
+                        self.emit_local_tool_result_trace(state, &effect, &request.input, &value);
                         let source = source_for_effect(&effect);
                         return Ok(EffectResolution {
                             value,
@@ -1501,27 +1504,47 @@ impl<W, S> Runtime<W, S> {
         &self,
         state: &ProgramState,
         effect: &EffectCall,
+        input: &Value,
         value: &Value,
     ) {
         let EffectCall::LocalTool { tool_name, .. } = effect else {
             return;
         };
-        if tool_name != FAST_PATH_APPLY_TOOL_NAME {
-            return;
+        match tool_name.as_str() {
+            FAST_PATH_APPLY_TOOL_NAME => {
+                let hit = value.get("hit").and_then(Value::as_bool).unwrap_or(false);
+                self.trace.emit(
+                    if hit {
+                        "fast_path_hit"
+                    } else {
+                        "fast_path_miss"
+                    },
+                    &state.trace_id,
+                    json!({
+                        "tool": tool_name,
+                        "rule_id": value.get("rule_id").and_then(Value::as_str),
+                    }),
+                );
+            }
+            TEMPLATE_EMIT_TOOL_NAME => {
+                let rule_id = input
+                    .get("input")
+                    .and_then(|input| input.get("semantic_match"))
+                    .and_then(|semantic_match| semantic_match.get("rule_id"))
+                    .and_then(Value::as_str);
+                if rule_id.is_some() {
+                    self.trace.emit(
+                        "fast_path_hit",
+                        &state.trace_id,
+                        json!({
+                            "tool": tool_name,
+                            "rule_id": rule_id,
+                        }),
+                    );
+                }
+            }
+            _ => {}
         }
-        let hit = value.get("hit").and_then(Value::as_bool).unwrap_or(false);
-        self.trace.emit(
-            if hit {
-                "fast_path_hit"
-            } else {
-                "fast_path_miss"
-            },
-            &state.trace_id,
-            json!({
-                "tool": tool_name,
-                "rule_id": value.get("rule_id").and_then(Value::as_str),
-            }),
-        );
     }
 }
 

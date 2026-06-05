@@ -715,6 +715,12 @@ fn apply_patch_op(
     original_control_flow_functions: &BTreeSet<String>,
 ) -> Result<()> {
     match operation {
+        PatchOp::AddEffectPermission { permission } => {
+            if !program.allowed_effects.contains(permission) {
+                program.allowed_effects.push(permission.clone());
+            }
+            Ok(())
+        }
         PatchOp::ReplaceInstruction {
             function,
             pc,

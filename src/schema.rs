@@ -79,6 +79,38 @@ pub fn handler_decision_schema() -> Value {
     schema_value(schema_for!(HandlerDecisionOutput))
 }
 
+pub fn handler_decision_value_schema(value_schema: Value) -> Value {
+    let mut schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["handler_decision"],
+        "properties": {
+            "handler_decision": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["decision", "value", "confidence", "rationale"],
+                "properties": {
+                    "decision": {
+                        "type": "string",
+                        "enum": ["return_value"]
+                    },
+                    "value": value_schema,
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0
+                    },
+                    "rationale": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    });
+    make_strict_structured_output_schema(&mut schema);
+    schema
+}
+
 pub fn program_schema() -> Value {
     schema_value(schema_for!(Program))
 }
@@ -130,6 +162,10 @@ fn schema_value(schema: impl serde::Serialize) -> Value {
 fn make_strict_structured_output_schema(value: &mut Value) {
     match value {
         Value::Object(map) => {
+            if map.is_empty() {
+                *value = arbitrary_json_value_schema();
+                return;
+            }
             map.remove("$schema");
             map.remove("title");
 
@@ -162,16 +198,42 @@ fn make_strict_structured_output_schema(value: &mut Value) {
                     && !has_additional_properties)
             {
                 map.insert("additionalProperties".to_owned(), Value::Bool(false));
-
-                if let Some(property_names) = property_names {
-                    map.insert(
-                        "required".to_owned(),
-                        Value::Array(property_names.into_iter().map(Value::String).collect()),
-                    );
+                if !map.contains_key("properties") {
+                    map.insert("properties".to_owned(), json!({}));
                 }
+
+                map.insert(
+                    "required".to_owned(),
+                    Value::Array(
+                        property_names
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(Value::String)
+                            .collect(),
+                    ),
+                );
+            }
+
+            if let Some(property_names) = map
+                .get("properties")
+                .and_then(Value::as_object)
+                .map(|properties| properties.keys().cloned().collect::<Vec<_>>())
+            {
+                map.insert(
+                    "required".to_owned(),
+                    Value::Array(property_names.into_iter().map(Value::String).collect()),
+                );
             }
 
             for (key, item) in map {
+                if key == "properties" || key == "$defs" {
+                    if let Some(object) = item.as_object_mut() {
+                        for property_schema in object.values_mut() {
+                            make_strict_structured_output_schema(property_schema);
+                        }
+                    }
+                    continue;
+                }
                 if key == "additionalProperties" {
                     if item.as_bool() == Some(false) {
                         continue;
@@ -190,11 +252,53 @@ fn make_strict_structured_output_schema(value: &mut Value) {
             }
         }
         Value::Bool(true) => {
-            *value = json!({});
+            *value = arbitrary_json_value_schema();
         }
         Value::Bool(false) => {
             *value = json!({ "enum": [] });
         }
         Value::Null | Value::Number(_) | Value::String(_) => {}
     }
+}
+
+fn arbitrary_json_value_schema() -> Value {
+    json!({
+        "anyOf": [
+            {
+                "type": "object",
+                "additionalProperties": true
+            },
+            {
+                "type": "array",
+                "items": {
+                    "anyOf": [
+                        { "type": "object", "additionalProperties": true },
+                        {
+                            "type": "array",
+                            "items": {
+                                "anyOf": [
+                                    { "type": "object", "additionalProperties": true },
+                                    { "type": "string" },
+                                    { "type": "number" },
+                                    { "type": "integer" },
+                                    { "type": "boolean" },
+                                    { "type": "null" }
+                                ]
+                            }
+                        },
+                        { "type": "string" },
+                        { "type": "number" },
+                        { "type": "integer" },
+                        { "type": "boolean" },
+                        { "type": "null" }
+                    ]
+                }
+            },
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "integer" },
+            { "type": "boolean" },
+            { "type": "null" }
+        ]
+    })
 }

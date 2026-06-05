@@ -1,0 +1,194 @@
+{
+  "decision": "return_value",
+  "value": {
+    "negative_guards": [
+      {
+        "guard_id": "reply_needed_opinion_request_unsubscribe_flow_review_not_unsubscribe_001",
+        "pattern": "(?i)\\b(review|UX review|copy edits?|wording|prototype|label)\\b.*\\bunsubscribe\\b|\\bunsubscribe\\b.*\\b(review|UX review|copy edits?|wording|prototype|label)\\b",
+        "rationale": "Blocks product-copy or interface review mentions of unsubscribe from being treated as interpersonal opinion-reply requests.",
+        "rule_id": "reply_needed_opinion_request_v1"
+      },
+      {
+        "guard_id": "reply_needed_opinion_request_past_or_already_done_action_001",
+        "pattern": "(?i)\\b(replied|already handled|handled earlier|no follow-up needed)\\b.*\\b(opinion request|request)\\b|\\b(opinion request|request)\\b.*\\b(already handled|handled yesterday|replied)\\b",
+        "rationale": "Blocks already completed opinion-reply work from creating another draft reply.",
+        "rule_id": "reply_needed_opinion_request_v1"
+      },
+      {
+        "guard_id": "request_send_document_before_deadline_proposal_discussion_no_send_task_001",
+        "pattern": "(?i)\\balready sent\\b.*\\b(revised proposal|proposal|document)\\b|\\b(revised proposal|proposal|document)\\b.*\\balready sent\\b",
+        "rationale": "Blocks completed send-document actions from becoming new send tasks.",
+        "rule_id": "request_send_document_before_deadline_v1"
+      },
+      {
+        "guard_id": "fyi_no_action_verification_code_ux_review_not_otp_001",
+        "pattern": "(?i)\\b(verification code|OTP)\\b.*\\b(UX review|screen copy|copy|flow|confusing|no real code)\\b|\\b(UX review|screen copy|copy|flow|confusing|no real code)\\b.*\\b(verification code|OTP)\\b",
+        "rationale": "Blocks UX or copy discussions about verification-code flows from being handled as real actionable notifications.",
+        "rule_id": "fyi_no_action_v1"
+      },
+      {
+        "guard_id": "deadline_request_without_document_past_or_already_done_action_001",
+        "pattern": "(?i)\\b(deadline|deadline request)\\b.*\\b(passed|complete|completed|already completed|handled yesterday)\\b|\\b(passed|complete|completed|already completed|handled yesterday)\\b.*\\b(deadline|deadline request)\\b",
+        "rationale": "Blocks past or completed deadline work from creating a new deadline task.",
+        "rule_id": "deadline_request_without_document_v1"
+      }
+    ],
+    "optimizer_source": "strong_model_generated_semantic_patch_plan",
+    "patch_id": "semantic_patch_v1",
+    "rationale": "Adds weak semantic fast-path rules only for profile clusters marked fast_path_eligible, preserving needs_review for ineligible ambiguous cases. Negative guards target observed hard-negative failure modes using Rust-regex-compatible patterns.",
+    "rules": [
+      {
+        "datetime_hint": "2026-06-07T18:00:00+08:00",
+        "examples": [
+          "Can this be finished by Sunday evening? [case 00]",
+          "Could you close the loop by the deadline? [case 03]",
+          "Can this be finished by Sunday evening? [case 04]",
+          "Could you close the loop by the deadline? [case 07]",
+          "Can this be finished by Sunday evening? [case 08]",
+          "Could you close the loop by the deadline? [case 11]"
+        ],
+        "kind": "create_task",
+        "negative_examples": [
+          "Could you send the revised proposal before tomorrow 10? [case 00]",
+          "FYI the release note is posted. [case 00]",
+          "Can you reply with your view on the new plan? [case 01]",
+          "Can someone handle the thing we discussed? [case 01]",
+          "Flight gate changed to C12. [case 02]",
+          "Can you forward the revised document before the deadline? [case 03]",
+          "Calendar hold for design critique tomorrow afternoon. [case 03]",
+          "Delivery update: driver is nearby. [case 03]"
+        ],
+        "rule_id": "deadline_request_without_document_v1",
+        "semantic_cluster": "deadline_request_without_document",
+        "title": "finish requested work"
+      },
+      {
+        "datetime_hint": null,
+        "examples": [
+          "FYI the release note is posted. [case 00]",
+          "For awareness: metrics were refreshed. [case 03]",
+          "FYI the release note is posted. [case 04]",
+          "For awareness: metrics were refreshed. [case 07]",
+          "FYI the release note is posted. [case 08]",
+          "For awareness: metrics were refreshed. [case 11]"
+        ],
+        "kind": "ignore",
+        "negative_examples": [
+          "Could you send the revised proposal before tomorrow 10? [case 00]",
+          "Can this be finished by Sunday evening? [case 00]",
+          "Can you reply with your view on the new plan? [case 01]",
+          "Can someone handle the thing we discussed? [case 01]",
+          "Flight gate changed to C12. [case 02]",
+          "Can you forward the revised document before the deadline? [case 03]",
+          "Calendar hold for design critique tomorrow afternoon. [case 03]",
+          "Could you close the loop by the deadline? [case 03]"
+        ],
+        "rule_id": "fyi_no_action_v1",
+        "semantic_cluster": "fyi_no_action",
+        "title": null
+      },
+      {
+        "datetime_hint": "2026-06-08T15:00:00+08:00",
+        "examples": [
+          "Calendar hold for design critique tomorrow afternoon. [case 03]",
+          "Calendar hold for design critique tomorrow afternoon. [case 07]",
+          "Calendar hold for design critique tomorrow afternoon. [case 11]",
+          "Calendar hold for design critique tomorrow afternoon. [case 15]",
+          "Calendar hold for design critique tomorrow afternoon. [case 19]",
+          "Calendar hold for design critique tomorrow afternoon. [case 23]"
+        ],
+        "kind": "create_calendar_event",
+        "negative_examples": [
+          "Could you send the revised proposal before tomorrow 10? [case 00]",
+          "Can this be finished by Sunday evening? [case 00]",
+          "FYI the release note is posted. [case 00]",
+          "Can you reply with your view on the new plan? [case 01]",
+          "Can someone handle the thing we discussed? [case 01]",
+          "Flight gate changed to C12. [case 02]",
+          "Can you forward the revised document before the deadline? [case 03]",
+          "Could you close the loop by the deadline? [case 03]"
+        ],
+        "rule_id": "meeting_invitation_v1",
+        "semantic_cluster": "meeting_invitation",
+        "title": "attend project meeting"
+      },
+      {
+        "datetime_hint": null,
+        "examples": [
+          "Can you reply with your view on the new plan? [case 01]",
+          "Can you reply with your view on the new plan? [case 05]",
+          "Can you reply with your view on the new plan? [case 09]",
+          "Can you reply with your view on the new plan? [case 13]",
+          "Can you reply with your view on the new plan? [case 17]",
+          "Can you reply with your view on the new plan? [case 21]"
+        ],
+        "kind": "draft_reply",
+        "negative_examples": [
+          "Could you send the revised proposal before tomorrow 10? [case 00]",
+          "Can this be finished by Sunday evening? [case 00]",
+          "FYI the release note is posted. [case 00]",
+          "Can someone handle the thing we discussed? [case 01]",
+          "Flight gate changed to C12. [case 02]",
+          "Can you forward the revised document before the deadline? [case 03]",
+          "Calendar hold for design critique tomorrow afternoon. [case 03]",
+          "Could you close the loop by the deadline? [case 03]"
+        ],
+        "rule_id": "reply_needed_opinion_request_v1",
+        "semantic_cluster": "reply_needed_opinion_request",
+        "title": "reply with opinion"
+      },
+      {
+        "datetime_hint": "2026-06-06T10:00:00+08:00",
+        "examples": [
+          "Could you send the revised proposal before tomorrow 10? [case 00]",
+          "Can you forward the revised document before the deadline? [case 03]",
+          "Could you send the revised proposal before tomorrow 10? [case 04]",
+          "Can you forward the revised document before the deadline? [case 07]",
+          "Could you send the revised proposal before tomorrow 10? [case 08]",
+          "Can you forward the revised document before the deadline? [case 11]"
+        ],
+        "kind": "create_task",
+        "negative_examples": [
+          "Can this be finished by Sunday evening? [case 00]",
+          "FYI the release note is posted. [case 00]",
+          "Can you reply with your view on the new plan? [case 01]",
+          "Can someone handle the thing we discussed? [case 01]",
+          "Flight gate changed to C12. [case 02]",
+          "Calendar hold for design critique tomorrow afternoon. [case 03]",
+          "Could you close the loop by the deadline? [case 03]",
+          "Delivery update: driver is nearby. [case 03]"
+        ],
+        "rule_id": "request_send_document_before_deadline_v1",
+        "semantic_cluster": "request_send_document_before_deadline",
+        "title": "send revised proposal"
+      },
+      {
+        "datetime_hint": null,
+        "examples": [
+          "Flight gate changed to C12. [case 02]",
+          "Delivery update: driver is nearby. [case 03]",
+          "Flight gate changed to C12. [case 06]",
+          "Delivery update: driver is nearby. [case 07]",
+          "Flight gate changed to C12. [case 10]",
+          "Delivery update: driver is nearby. [case 11]"
+        ],
+        "kind": "ignore",
+        "negative_examples": [
+          "Could you send the revised proposal before tomorrow 10? [case 00]",
+          "Can this be finished by Sunday evening? [case 00]",
+          "FYI the release note is posted. [case 00]",
+          "Can you reply with your view on the new plan? [case 01]",
+          "Can someone handle the thing we discussed? [case 01]",
+          "Can you forward the revised document before the deadline? [case 03]",
+          "Calendar hold for design critique tomorrow afternoon. [case 03]",
+          "Could you close the loop by the deadline? [case 03]"
+        ],
+        "rule_id": "shipping_or_booking_update_v1",
+        "semantic_cluster": "shipping_or_booking_update",
+        "title": null
+      }
+    ]
+  },
+  "confidence": 0.99,
+  "rationale": "Generated the semantic patch plan from fast-path eligible profile clusters and hard-negative failure evidence."
+}

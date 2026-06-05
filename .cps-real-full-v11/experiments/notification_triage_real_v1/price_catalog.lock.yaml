@@ -1,0 +1,9 @@
+prices_per_1m_tokens:
+  gpt-5.4-mini:
+    input: 0.75
+    cached_input: 0.075
+    output: 4.5
+  gpt-5.5:
+    input: 5.0
+    cached_input: 0.5
+    output: 30.0

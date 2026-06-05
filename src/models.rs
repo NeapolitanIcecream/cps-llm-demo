@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use crate::effects::{HandlerDecision, HandlerRequest};
 use crate::program::{EffectCall, ModelStrength, Program};
-use crate::responses_client::ResponsesClient;
-use crate::schema::{handler_decision_schema, program_schema, weak_task_result_schema};
+use crate::responses_client::{ModelCallContext, ResponsesClient};
+use crate::schema::{handler_decision_value_schema, program_schema, weak_task_result_schema};
 
 pub const WEAK_HANDLER_INSTRUCTIONS: &str = r#"You are an effect handler inside a typed CPS program runtime.
 You do not execute the workflow and you do not decide the final answer.
@@ -100,8 +100,33 @@ impl EffectHandler for FixtureModelHandler {
             FixtureModelKind::Weak => "weak",
             FixtureModelKind::Strong => "strong",
         };
-        let fixture = fixture_model_value(&request.input, key)
+        let task_name = request.effect.model_task_name();
+        if matches!(self.kind, FixtureModelKind::Strong)
+            && task_name == Some("optimize_semantic_patch_plan")
+        {
+            let plan = fixture_semantic_patch_plan_from_evidence(&request.input)?;
+            return Ok(HandlerDecision::ReturnValue {
+                value: plan,
+                confidence: 1.0,
+                rationale: "fixture optimizer generated semantic patch plan from evidence"
+                    .to_owned(),
+            });
+        }
+        let fixture = task_name
+            .and_then(|task_name| fixture_model_task_value(&request.input, key, task_name))
             .cloned()
+            .or_else(|| {
+                request
+                    .effect_frame
+                    .as_ref()
+                    .and_then(|frame| serde_json::to_value(frame).ok())
+                    .and_then(|frame| {
+                        task_name
+                            .and_then(|task_name| fixture_model_task_value(&frame, key, task_name))
+                            .cloned()
+                    })
+            })
+            .or_else(|| fixture_model_value(&request.input, key).cloned())
             .or_else(|| {
                 let frame = request.effect_frame.as_ref()?;
                 let frame = serde_json::to_value(frame).ok()?;
@@ -123,6 +148,108 @@ impl EffectHandler for FixtureModelHandler {
             confidence,
             rationale: format!("fixture {key} value"),
         })
+    }
+}
+
+fn fixture_semantic_patch_plan_from_evidence(input: &Value) -> Result<Value> {
+    let clusters = input
+        .get("profile_evidence")
+        .and_then(|value| value.get("clusters"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("optimizer fixture input is missing profile_evidence.clusters"))?;
+    let rules = clusters
+        .iter()
+        .filter(|cluster| {
+            cluster
+                .get("fast_path_eligible")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .map(|cluster| {
+            let semantic_cluster = cluster
+                .get("semantic_cluster")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("optimizer fixture cluster missing semantic_cluster"))?;
+            Ok(json!({
+                "rule_id": format!("{semantic_cluster}_v1"),
+                "semantic_cluster": semantic_cluster,
+                "kind": cluster
+                    .get("output_kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("ignore"),
+                "title": cluster.get("title_canonical").cloned().unwrap_or(Value::Null),
+                "datetime_hint": cluster.get("datetime_canonical").cloned().unwrap_or(Value::Null),
+                "examples": cluster
+                    .get("positive_examples")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+                "negative_examples": cluster
+                    .get("contraindication_examples")
+                    .cloned()
+                    .unwrap_or_else(|| json!([]))
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let hard_negative_examples = input
+        .get("failure_cluster_evidence")
+        .and_then(|value| value.get("hard_negative_examples"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let negative_guards = fixture_negative_guards_from_evidence(&hard_negative_examples);
+    Ok(json!({
+        "patch_id": "semantic_patch_v1",
+        "rationale": "fixture optimizer generated rules and negative guards from profile evidence",
+        "rules": rules,
+        "negative_guards": negative_guards,
+        "optimizer_source": "strong_model_generated_semantic_patch_plan"
+    }))
+}
+
+fn fixture_negative_guards_from_evidence(examples: &[Value]) -> Vec<Value> {
+    let mut guards = Vec::new();
+    let mut guarded = std::collections::BTreeSet::new();
+    for example in examples {
+        let Some(rule_id) = example
+            .get("related_rule_ids")
+            .and_then(Value::as_array)
+            .and_then(|values| values.iter().find_map(Value::as_str))
+        else {
+            continue;
+        };
+        if !guarded.insert(rule_id.to_owned()) {
+            continue;
+        }
+        guards.push(json!({
+            "guard_id": format!("fixture_hard_negative_guard_{}", rule_id.trim_end_matches("_v1")),
+            "rule_id": rule_id,
+            "pattern": "(?s).+",
+            "rationale": "fixture guard generated from hard-negative evidence"
+        }));
+    }
+    guards
+}
+
+fn fixture_model_task_value<'a>(value: &'a Value, key: &str, task_name: &str) -> Option<&'a Value> {
+    if let Some(fixture) = value
+        .get("_fixture_model_by_task")
+        .and_then(Value::as_object)
+        .and_then(|model| model.get(key))
+        .and_then(Value::as_object)
+        .and_then(|tasks| tasks.get(task_name))
+    {
+        return Some(fixture);
+    }
+
+    match value {
+        Value::Object(object) => object
+            .values()
+            .find_map(|value| fixture_model_task_value(value, key, task_name)),
+        Value::Array(values) => values
+            .iter()
+            .find_map(|value| fixture_model_task_value(value, key, task_name)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
     }
 }
 
@@ -185,14 +312,16 @@ impl EffectHandler for ResponsesWeakModel {
                 let input_json = weak_handler_input_json(&request)?;
                 let output: HandlerDecisionOutput = self
                     .client
-                    .create_structured(
+                    .create_structured_with_context(
                         &self.model,
                         WEAK_HANDLER_INSTRUCTIONS,
                         &input_json,
                         "handler_decision",
-                        handler_decision_schema(),
+                        handler_decision_value_schema(request.expected_schema.clone()),
+                        context_from_request("weak_model", &request),
                     )
-                    .await?;
+                    .await?
+                    .parsed;
                 Ok(output.handler_decision)
             }
             _ => Err(anyhow!(
@@ -219,6 +348,7 @@ fn weak_handler_input_json(request: &HandlerRequest) -> Result<Value> {
             remove_weak_effect_strength_from_instruction(failed_instruction);
         }
     }
+    sanitize_weak_observation_sources(&mut input_json);
     Ok(input_json)
 }
 
@@ -247,6 +377,36 @@ fn remove_weak_effect_strength_from_instruction(instruction: &mut Value) {
     }
 }
 
+fn sanitize_weak_observation_sources(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            if let Some(observations) = object.get_mut("observations").and_then(Value::as_array_mut)
+            {
+                for observation in observations {
+                    if matches!(
+                        observation.get("source").and_then(Value::as_str),
+                        Some("weak_model" | "strong_model")
+                    ) {
+                        observation["source"] = Value::String("model".to_owned());
+                    }
+                    if let Some(observation_value) = observation.get_mut("value") {
+                        sanitize_weak_observation_sources(observation_value);
+                    }
+                }
+            }
+            for nested in object.values_mut() {
+                sanitize_weak_observation_sources(nested);
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                sanitize_weak_observation_sources(nested);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
 #[derive(Clone)]
 pub struct ResponsesStrongModel {
     client: ResponsesClient,
@@ -265,7 +425,7 @@ impl ResponsesStrongModel {
 #[async_trait]
 impl EffectHandler for ResponsesStrongModel {
     async fn handle(&self, request: HandlerRequest) -> Result<HandlerDecision> {
-        match request.effect {
+        match &request.effect {
             EffectCall::CompileProgram {
                 strength: ModelStrength::Strong,
                 task_spec,
@@ -279,14 +439,16 @@ impl EffectHandler for ResponsesStrongModel {
                 });
                 let program: Program = self
                     .client
-                    .create_structured(
+                    .create_structured_with_context(
                         &self.model,
                         STRONG_COMPILE_INSTRUCTIONS,
                         &input_json,
                         "program",
                         program_schema(),
+                        context_from_request("strong_model", &request),
                     )
-                    .await?;
+                    .await?
+                    .parsed;
                 Ok(HandlerDecision::ReturnProgram {
                     program,
                     rationale: "compiled Program IR".to_owned(),
@@ -300,14 +462,16 @@ impl EffectHandler for ResponsesStrongModel {
                 let input_json = serde_json::to_value(&request)?;
                 let output: HandlerDecisionOutput = self
                     .client
-                    .create_structured(
+                    .create_structured_with_context(
                         &self.model,
                         STRONG_HANDLER_INSTRUCTIONS,
                         &input_json,
                         "handler_decision",
-                        handler_decision_schema(),
+                        handler_decision_value_schema(request.expected_schema.clone()),
+                        context_from_request("strong_model", &request),
                     )
-                    .await?;
+                    .await?
+                    .parsed;
                 Ok(output.handler_decision)
             }
             _ => Err(anyhow!(
@@ -315,6 +479,35 @@ impl EffectHandler for ResponsesStrongModel {
                 request.effect.kind_name()
             )),
         }
+    }
+}
+
+fn context_from_request(handler: &str, request: &HandlerRequest) -> ModelCallContext {
+    ModelCallContext {
+        run_id: request.run_id.clone(),
+        workflow_id: request.workflow_id.clone(),
+        event_id: request
+            .input
+            .get("event_id")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                request
+                    .input
+                    .get("event")
+                    .and_then(|event| event.get("event_id"))
+                    .and_then(Value::as_str)
+            })
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                request
+                    .effect_frame
+                    .as_ref()
+                    .map(|frame| frame.continuation.continuation_id.clone())
+            }),
+        handler: handler.to_owned(),
+        effect_kind: request.effect.kind_name().to_owned(),
+        task_name: request.effect.model_task_name().map(ToOwned::to_owned),
+        phase: request.phase.clone(),
     }
 }
 

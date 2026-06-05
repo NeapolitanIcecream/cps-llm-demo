@@ -14,8 +14,12 @@ use crate::schema::validate_value;
 
 pub const FAST_PATH_APPLY_TOOL_NAME: &str = "fast_path_apply";
 pub const VALIDATOR_APPLY_TOOL_NAME: &str = "validator_apply";
-pub const BUILTIN_LOCAL_TOOL_NAMES: &[&str] =
-    &[FAST_PATH_APPLY_TOOL_NAME, VALIDATOR_APPLY_TOOL_NAME];
+pub const TEMPLATE_EMIT_TOOL_NAME: &str = "template_emit";
+pub const BUILTIN_LOCAL_TOOL_NAMES: &[&str] = &[
+    FAST_PATH_APPLY_TOOL_NAME,
+    VALIDATOR_APPLY_TOOL_NAME,
+    TEMPLATE_EMIT_TOOL_NAME,
+];
 
 pub fn builtin_local_tool_names() -> &'static [&'static str] {
     BUILTIN_LOCAL_TOOL_NAMES
@@ -117,6 +121,12 @@ pub struct ValidatorOutput {
     pub failed_validator_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct TemplateEmitInput {
+    pub input: Value,
+    pub template: Value,
+}
+
 #[derive(Debug, Clone)]
 pub struct LocalToolRegistry {
     allowed_tools: BTreeSet<String>,
@@ -160,6 +170,7 @@ impl EffectHandler for LocalToolRegistry {
         let value = match tool_name.as_str() {
             FAST_PATH_APPLY_TOOL_NAME => serde_json::to_value(apply_fast_path(request.input)?)?,
             VALIDATOR_APPLY_TOOL_NAME => serde_json::to_value(apply_validators(request.input)?)?,
+            TEMPLATE_EMIT_TOOL_NAME => apply_template_emit(request.input)?,
             _ => return Err(anyhow!("local tool {tool_name} is not implemented")),
         };
 
@@ -210,6 +221,12 @@ pub fn apply_validators(input: Value) -> Result<ValidatorOutput> {
         passed: failed_validator_ids.is_empty(),
         failed_validator_ids,
     })
+}
+
+pub fn apply_template_emit(input: Value) -> Result<Value> {
+    let input: TemplateEmitInput =
+        serde_json::from_value(input).context("invalid template emit input")?;
+    render_template_emit_expr(&input.input, &input.template)
 }
 
 fn predicate_matches(root: &Value, predicate: &PredicateExpr) -> Result<bool> {
@@ -275,6 +292,43 @@ fn render_template(root: &Value, template: &TemplateExpr) -> Result<Value> {
     }
 }
 
+fn render_template_emit_expr(root: &Value, template: &Value) -> Result<Value> {
+    let Some(object) = template.as_object() else {
+        return Ok(template.clone());
+    };
+    if let Some(value) = object.get("literal") {
+        return Ok(value.clone());
+    }
+    if let Some(path) = object.get("path") {
+        let path = path
+            .as_array()
+            .ok_or_else(|| anyhow!("template path must be an array"))?
+            .iter()
+            .map(|segment| {
+                segment
+                    .as_str()
+                    .map(ToOwned::to_owned)
+                    .ok_or_else(|| anyhow!("template path segments must be strings"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        return value_at_path(root, &path)
+            .cloned()
+            .ok_or_else(|| anyhow!("template path {path:?} was not present"));
+    }
+    if let Some(format) = object.get("format") {
+        let format = format
+            .as_str()
+            .ok_or_else(|| anyhow!("template format must be a string"))?;
+        return Ok(Value::String(render_string_template(root, format)?));
+    }
+
+    let mut rendered = Map::new();
+    for (key, value) in object {
+        rendered.insert(key.clone(), render_template_emit_expr(root, value)?);
+    }
+    Ok(Value::Object(rendered))
+}
+
 fn render_string_template(root: &Value, template: &str) -> Result<String> {
     let mut rendered = String::with_capacity(template.len());
     let mut cursor = 0;
@@ -290,7 +344,16 @@ fn render_string_template(root: &Value, template: &str) -> Result<String> {
         if name.is_empty() {
             return Err(anyhow!("string template contains an empty field"));
         }
-        let replacement = value_at_path(root, &[name.to_owned()])
+        let path = name
+            .split('.')
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        if path.is_empty() {
+            return Err(anyhow!("string template contains an empty field"));
+        }
+        let replacement = value_at_path(root, &path)
             .ok_or_else(|| anyhow!("string template field {name} was not present"))?;
         rendered.push_str(value_to_template_string(replacement).as_str());
         cursor = close + 1;

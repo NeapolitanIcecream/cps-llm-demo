@@ -1,0 +1,849 @@
+{
+  "program_id": "notification_triage",
+  "version": "v0002",
+  "entry": "main",
+  "input_schema": {
+    "type": "object"
+  },
+  "output_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "datetime_hint": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "event_id": {
+        "type": "string"
+      },
+      "kind": {
+        "enum": [
+          "ignore",
+          "create_task",
+          "create_calendar_event",
+          "draft_reply"
+        ],
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "event_id",
+      "kind",
+      "title",
+      "datetime_hint"
+    ],
+    "type": "object"
+  },
+  "functions": {
+    "main": {
+      "params": [
+        "event"
+      ],
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "datetime_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "ignore",
+              "create_task",
+              "create_calendar_event",
+              "draft_reply"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "kind",
+          "title",
+          "datetime_hint"
+        ],
+        "type": "object"
+      },
+      "body": [
+        {
+          "op": "perform",
+          "out": "semantic_match",
+          "effect": {
+            "kind": "model_task",
+            "strength": "weak",
+            "task": {
+              "name": "semantic_fast_path_match",
+              "instructions": "Match input.event to at most one object from input.rules. Return matched=true only when the selected rule_id exactly equals a rule_id in input.rules and the event is a close semantic fit to that rule's examples. Treat negative_examples as contraindications. When matched=true, fill slots.kind, slots.title, and slots.datetime_hint from the selected rule unless the event supplies a safer value. Return matched=false for vague, adversarial, unknown-rule, or merely keyword-overlapping events."
+            }
+          },
+          "input": {
+            "kind": "object",
+            "fields": {
+              "event": {
+                "kind": "var",
+                "name": "event"
+              },
+              "rules": {
+                "kind": "literal",
+                "value": [
+                  {
+                    "datetime_hint": "2026-06-07T18:00:00+08:00",
+                    "examples": [
+                      "Can this be finished by Sunday evening? [case 00]",
+                      "Could you close the loop by the deadline? [case 03]",
+                      "Can this be finished by Sunday evening? [case 04]",
+                      "Could you close the loop by the deadline? [case 07]",
+                      "Can this be finished by Sunday evening? [case 08]",
+                      "Could you close the loop by the deadline? [case 11]"
+                    ],
+                    "kind": "create_task",
+                    "negative_examples": [
+                      "Could you send the revised proposal before tomorrow 10? [case 00]",
+                      "FYI the release note is posted. [case 00]",
+                      "Can you reply with your view on the new plan? [case 01]",
+                      "Can someone handle the thing we discussed? [case 01]",
+                      "Flight gate changed to C12. [case 02]",
+                      "Can you forward the revised document before the deadline? [case 03]",
+                      "Calendar hold for design critique tomorrow afternoon. [case 03]",
+                      "Delivery update: driver is nearby. [case 03]"
+                    ],
+                    "rule_id": "deadline_request_without_document_v1",
+                    "semantic_cluster": "deadline_request_without_document",
+                    "title": "finish requested work"
+                  },
+                  {
+                    "datetime_hint": null,
+                    "examples": [
+                      "FYI the release note is posted. [case 00]",
+                      "For awareness: metrics were refreshed. [case 03]",
+                      "FYI the release note is posted. [case 04]",
+                      "For awareness: metrics were refreshed. [case 07]",
+                      "FYI the release note is posted. [case 08]",
+                      "For awareness: metrics were refreshed. [case 11]"
+                    ],
+                    "kind": "ignore",
+                    "negative_examples": [
+                      "Could you send the revised proposal before tomorrow 10? [case 00]",
+                      "Can this be finished by Sunday evening? [case 00]",
+                      "Can you reply with your view on the new plan? [case 01]",
+                      "Can someone handle the thing we discussed? [case 01]",
+                      "Flight gate changed to C12. [case 02]",
+                      "Can you forward the revised document before the deadline? [case 03]",
+                      "Calendar hold for design critique tomorrow afternoon. [case 03]",
+                      "Could you close the loop by the deadline? [case 03]"
+                    ],
+                    "rule_id": "fyi_no_action_v1",
+                    "semantic_cluster": "fyi_no_action",
+                    "title": null
+                  },
+                  {
+                    "datetime_hint": "2026-06-08T15:00:00+08:00",
+                    "examples": [
+                      "Calendar hold for design critique tomorrow afternoon. [case 03]",
+                      "Calendar hold for design critique tomorrow afternoon. [case 07]",
+                      "Calendar hold for design critique tomorrow afternoon. [case 11]",
+                      "Calendar hold for design critique tomorrow afternoon. [case 15]",
+                      "Calendar hold for design critique tomorrow afternoon. [case 19]",
+                      "Calendar hold for design critique tomorrow afternoon. [case 23]"
+                    ],
+                    "kind": "create_calendar_event",
+                    "negative_examples": [
+                      "Could you send the revised proposal before tomorrow 10? [case 00]",
+                      "Can this be finished by Sunday evening? [case 00]",
+                      "FYI the release note is posted. [case 00]",
+                      "Can you reply with your view on the new plan? [case 01]",
+                      "Can someone handle the thing we discussed? [case 01]",
+                      "Flight gate changed to C12. [case 02]",
+                      "Can you forward the revised document before the deadline? [case 03]",
+                      "Could you close the loop by the deadline? [case 03]"
+                    ],
+                    "rule_id": "meeting_invitation_v1",
+                    "semantic_cluster": "meeting_invitation",
+                    "title": "attend project meeting"
+                  },
+                  {
+                    "datetime_hint": null,
+                    "examples": [
+                      "Can you reply with your view on the new plan? [case 01]",
+                      "Can you reply with your view on the new plan? [case 05]",
+                      "Can you reply with your view on the new plan? [case 09]",
+                      "Can you reply with your view on the new plan? [case 13]",
+                      "Can you reply with your view on the new plan? [case 17]",
+                      "Can you reply with your view on the new plan? [case 21]"
+                    ],
+                    "kind": "draft_reply",
+                    "negative_examples": [
+                      "Could you send the revised proposal before tomorrow 10? [case 00]",
+                      "Can this be finished by Sunday evening? [case 00]",
+                      "FYI the release note is posted. [case 00]",
+                      "Can someone handle the thing we discussed? [case 01]",
+                      "Flight gate changed to C12. [case 02]",
+                      "Can you forward the revised document before the deadline? [case 03]",
+                      "Calendar hold for design critique tomorrow afternoon. [case 03]",
+                      "Could you close the loop by the deadline? [case 03]"
+                    ],
+                    "rule_id": "reply_needed_opinion_request_v1",
+                    "semantic_cluster": "reply_needed_opinion_request",
+                    "title": "reply with opinion"
+                  },
+                  {
+                    "datetime_hint": "2026-06-06T10:00:00+08:00",
+                    "examples": [
+                      "Could you send the revised proposal before tomorrow 10? [case 00]",
+                      "Can you forward the revised document before the deadline? [case 03]",
+                      "Could you send the revised proposal before tomorrow 10? [case 04]",
+                      "Can you forward the revised document before the deadline? [case 07]",
+                      "Could you send the revised proposal before tomorrow 10? [case 08]",
+                      "Can you forward the revised document before the deadline? [case 11]"
+                    ],
+                    "kind": "create_task",
+                    "negative_examples": [
+                      "Can this be finished by Sunday evening? [case 00]",
+                      "FYI the release note is posted. [case 00]",
+                      "Can you reply with your view on the new plan? [case 01]",
+                      "Can someone handle the thing we discussed? [case 01]",
+                      "Flight gate changed to C12. [case 02]",
+                      "Calendar hold for design critique tomorrow afternoon. [case 03]",
+                      "Could you close the loop by the deadline? [case 03]",
+                      "Delivery update: driver is nearby. [case 03]"
+                    ],
+                    "rule_id": "request_send_document_before_deadline_v1",
+                    "semantic_cluster": "request_send_document_before_deadline",
+                    "title": "send revised proposal"
+                  },
+                  {
+                    "datetime_hint": null,
+                    "examples": [
+                      "Flight gate changed to C12. [case 02]",
+                      "Delivery update: driver is nearby. [case 03]",
+                      "Flight gate changed to C12. [case 06]",
+                      "Delivery update: driver is nearby. [case 07]",
+                      "Flight gate changed to C12. [case 10]",
+                      "Delivery update: driver is nearby. [case 11]"
+                    ],
+                    "kind": "ignore",
+                    "negative_examples": [
+                      "Could you send the revised proposal before tomorrow 10? [case 00]",
+                      "Can this be finished by Sunday evening? [case 00]",
+                      "FYI the release note is posted. [case 00]",
+                      "Can you reply with your view on the new plan? [case 01]",
+                      "Can someone handle the thing we discussed? [case 01]",
+                      "Can you forward the revised document before the deadline? [case 03]",
+                      "Calendar hold for design critique tomorrow afternoon. [case 03]",
+                      "Could you close the loop by the deadline? [case 03]"
+                    ],
+                    "rule_id": "shipping_or_booking_update_v1",
+                    "semantic_cluster": "shipping_or_booking_update",
+                    "title": null
+                  }
+                ]
+              }
+            }
+          },
+          "expected_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "confidence": {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              "matched": {
+                "type": "boolean"
+              },
+              "rationale": {
+                "type": "string"
+              },
+              "rule_id": {
+                "type": "string"
+              },
+              "slots": {
+                "additionalProperties": false,
+                "properties": {
+                  "datetime_hint": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "title",
+                  "datetime_hint"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "matched",
+              "rule_id",
+              "slots",
+              "confidence",
+              "rationale"
+            ],
+            "type": "object"
+          },
+          "acceptance": {
+            "min_confidence": null,
+            "require_schema_valid": false,
+            "on_failure": {
+              "kind": "abort",
+              "reason": "semantic matcher failed"
+            }
+          }
+        },
+        {
+          "op": "branch",
+          "condition": {
+            "kind": "field_is_truthy",
+            "var": "semantic_match",
+            "path": [
+              "matched"
+            ]
+          },
+          "then_pc": 2,
+          "else_pc": 6
+        },
+        {
+          "op": "perform",
+          "out": "semantic_validation",
+          "effect": {
+            "kind": "local_tool",
+            "tool_name": "validator_apply",
+            "args_schema": {
+              "type": "object"
+            }
+          },
+          "input": {
+            "kind": "object",
+            "fields": {
+              "validators": {
+                "kind": "literal",
+                "value": [
+                  {
+                    "predicates": [
+                      {
+                        "op": "json_schema_valid",
+                        "schema": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "event": {
+                              "additionalProperties": true,
+                              "properties": {
+                                "text": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "text"
+                              ],
+                              "type": "object"
+                            },
+                            "semantic_match": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "confidence": {
+                                  "maximum": 1.0,
+                                  "minimum": 0.95,
+                                  "type": "number"
+                                },
+                                "matched": {
+                                  "const": true
+                                },
+                                "rationale": {
+                                  "type": "string"
+                                },
+                                "rule_id": {
+                                  "enum": [
+                                    "deadline_request_without_document_v1",
+                                    "fyi_no_action_v1",
+                                    "meeting_invitation_v1",
+                                    "reply_needed_opinion_request_v1",
+                                    "request_send_document_before_deadline_v1",
+                                    "shipping_or_booking_update_v1"
+                                  ],
+                                  "type": "string"
+                                },
+                                "slots": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "datetime_hint": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "kind": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "title": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "title",
+                                    "datetime_hint"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "matched",
+                                "rule_id",
+                                "slots",
+                                "confidence",
+                                "rationale"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "semantic_match",
+                            "event"
+                          ],
+                          "type": "object"
+                        }
+                      }
+                    ],
+                    "validator_id": "semantic_action_slots"
+                  },
+                  {
+                    "predicates": [
+                      {
+                        "op": "not",
+                        "term": {
+                          "op": "and",
+                          "terms": [
+                            {
+                              "op": "field_equals",
+                              "path": [
+                                "semantic_match",
+                                "rule_id"
+                              ],
+                              "value": "reply_needed_opinion_request_v1"
+                            },
+                            {
+                              "op": "regex_match",
+                              "path": [
+                                "event",
+                                "text"
+                              ],
+                              "pattern": "(?i)\\b(review|UX review|copy edits?|wording|prototype|label)\\b.*\\bunsubscribe\\b|\\bunsubscribe\\b.*\\b(review|UX review|copy edits?|wording|prototype|label)\\b"
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "validator_id": "semantic_negative_guard_reply_needed_opinion_request_unsubscribe_flow_review_not_unsubscribe_001"
+                  },
+                  {
+                    "predicates": [
+                      {
+                        "op": "not",
+                        "term": {
+                          "op": "and",
+                          "terms": [
+                            {
+                              "op": "field_equals",
+                              "path": [
+                                "semantic_match",
+                                "rule_id"
+                              ],
+                              "value": "reply_needed_opinion_request_v1"
+                            },
+                            {
+                              "op": "regex_match",
+                              "path": [
+                                "event",
+                                "text"
+                              ],
+                              "pattern": "(?i)\\b(replied|already handled|handled earlier|no follow-up needed)\\b.*\\b(opinion request|request)\\b|\\b(opinion request|request)\\b.*\\b(already handled|handled yesterday|replied)\\b"
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "validator_id": "semantic_negative_guard_reply_needed_opinion_request_past_or_already_done_action_001"
+                  },
+                  {
+                    "predicates": [
+                      {
+                        "op": "not",
+                        "term": {
+                          "op": "and",
+                          "terms": [
+                            {
+                              "op": "field_equals",
+                              "path": [
+                                "semantic_match",
+                                "rule_id"
+                              ],
+                              "value": "request_send_document_before_deadline_v1"
+                            },
+                            {
+                              "op": "regex_match",
+                              "path": [
+                                "event",
+                                "text"
+                              ],
+                              "pattern": "(?i)\\balready sent\\b.*\\b(revised proposal|proposal|document)\\b|\\b(revised proposal|proposal|document)\\b.*\\balready sent\\b"
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "validator_id": "semantic_negative_guard_request_send_document_before_deadline_proposal_discussion_no_send_task_001"
+                  },
+                  {
+                    "predicates": [
+                      {
+                        "op": "not",
+                        "term": {
+                          "op": "and",
+                          "terms": [
+                            {
+                              "op": "field_equals",
+                              "path": [
+                                "semantic_match",
+                                "rule_id"
+                              ],
+                              "value": "fyi_no_action_v1"
+                            },
+                            {
+                              "op": "regex_match",
+                              "path": [
+                                "event",
+                                "text"
+                              ],
+                              "pattern": "(?i)\\b(verification code|OTP)\\b.*\\b(UX review|screen copy|copy|flow|confusing|no real code)\\b|\\b(UX review|screen copy|copy|flow|confusing|no real code)\\b.*\\b(verification code|OTP)\\b"
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "validator_id": "semantic_negative_guard_fyi_no_action_verification_code_ux_review_not_otp_001"
+                  },
+                  {
+                    "predicates": [
+                      {
+                        "op": "not",
+                        "term": {
+                          "op": "and",
+                          "terms": [
+                            {
+                              "op": "field_equals",
+                              "path": [
+                                "semantic_match",
+                                "rule_id"
+                              ],
+                              "value": "deadline_request_without_document_v1"
+                            },
+                            {
+                              "op": "regex_match",
+                              "path": [
+                                "event",
+                                "text"
+                              ],
+                              "pattern": "(?i)\\b(deadline|deadline request)\\b.*\\b(passed|complete|completed|already completed|handled yesterday)\\b|\\b(passed|complete|completed|already completed|handled yesterday)\\b.*\\b(deadline|deadline request)\\b"
+                            }
+                          ]
+                        }
+                      }
+                    ],
+                    "validator_id": "semantic_negative_guard_deadline_request_without_document_past_or_already_done_action_001"
+                  }
+                ]
+              },
+              "value": {
+                "kind": "object",
+                "fields": {
+                  "event": {
+                    "kind": "var",
+                    "name": "event"
+                  },
+                  "semantic_match": {
+                    "kind": "var",
+                    "name": "semantic_match"
+                  }
+                }
+              }
+            }
+          },
+          "expected_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "failed_validator_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "passed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "passed",
+              "failed_validator_ids"
+            ],
+            "type": "object"
+          },
+          "acceptance": {
+            "min_confidence": 1.0,
+            "require_schema_valid": true,
+            "on_failure": {
+              "kind": "abort",
+              "reason": "semantic validator failed"
+            }
+          }
+        },
+        {
+          "op": "branch",
+          "condition": {
+            "kind": "field_is_truthy",
+            "var": "semantic_validation",
+            "path": [
+              "passed"
+            ]
+          },
+          "then_pc": 4,
+          "else_pc": 6
+        },
+        {
+          "op": "perform",
+          "out": "fast_action",
+          "effect": {
+            "kind": "local_tool",
+            "tool_name": "template_emit",
+            "args_schema": {
+              "type": "object"
+            }
+          },
+          "input": {
+            "kind": "object",
+            "fields": {
+              "input": {
+                "kind": "object",
+                "fields": {
+                  "event": {
+                    "kind": "var",
+                    "name": "event"
+                  },
+                  "semantic_match": {
+                    "kind": "var",
+                    "name": "semantic_match"
+                  }
+                }
+              },
+              "template": {
+                "kind": "literal",
+                "value": {
+                  "datetime_hint": {
+                    "path": [
+                      "semantic_match",
+                      "slots",
+                      "datetime_hint"
+                    ]
+                  },
+                  "event_id": {
+                    "path": [
+                      "event",
+                      "event_id"
+                    ]
+                  },
+                  "kind": {
+                    "path": [
+                      "semantic_match",
+                      "slots",
+                      "kind"
+                    ]
+                  },
+                  "title": {
+                    "path": [
+                      "semantic_match",
+                      "slots",
+                      "title"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "expected_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "datetime_hint": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "event_id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event_id",
+              "kind",
+              "title",
+              "datetime_hint"
+            ],
+            "type": "object"
+          },
+          "acceptance": {
+            "min_confidence": 1.0,
+            "require_schema_valid": true,
+            "on_failure": {
+              "kind": "abort",
+              "reason": "semantic template failed"
+            }
+          }
+        },
+        {
+          "op": "return",
+          "value": {
+            "kind": "var",
+            "name": "fast_action"
+          }
+        },
+        {
+          "op": "perform",
+          "out": "draft",
+          "effect": {
+            "kind": "model_task",
+            "strength": "weak",
+            "task": {
+              "name": "draft_action_from_event",
+              "instructions": "Return one action draft for the event."
+            }
+          },
+          "input": {
+            "kind": "var",
+            "name": "event"
+          },
+          "expected_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "datetime_hint": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "event_id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "ignore",
+                  "create_task",
+                  "create_calendar_event",
+                  "draft_reply"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event_id",
+              "kind",
+              "title",
+              "datetime_hint"
+            ],
+            "type": "object"
+          },
+          "acceptance": {
+            "min_confidence": 0.8,
+            "require_schema_valid": true,
+            "on_failure": {
+              "kind": "capture_to_think",
+              "reason": "weak result needs repair"
+            }
+          }
+        },
+        {
+          "op": "return",
+          "value": {
+            "kind": "var",
+            "name": "draft"
+          }
+        }
+      ]
+    }
+  },
+  "allowed_effects": [
+    {
+      "kind": "model_task",
+      "strength": "weak"
+    },
+    {
+      "kind": "think"
+    },
+    {
+      "kind": "local_tool",
+      "tool_name": "fast_path_apply"
+    },
+    {
+      "kind": "local_tool",
+      "tool_name": "validator_apply"
+    },
+    {
+      "kind": "local_tool",
+      "tool_name": "template_emit"
+    }
+  ]
+}

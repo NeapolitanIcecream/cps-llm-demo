@@ -1156,6 +1156,7 @@ fn validate_patch_rejects_insert_at_existing_branch_target() {
                 },
             },
         }],
+        generalization: None,
     };
 
     let err = validate_patch(&base, &patch).unwrap_err();
@@ -1212,6 +1213,7 @@ fn validate_patch_rejects_insert_at_existing_jump_target() {
                 },
             },
         }],
+        generalization: None,
     };
 
     let err = validate_patch(&base, &patch).unwrap_err();
@@ -1239,6 +1241,7 @@ fn validate_patch_allows_insert_after_existing_branch_targets() {
                 },
             },
         }],
+        generalization: None,
     };
 
     let patched = validate_patch(&base, &patch).unwrap();
@@ -1274,6 +1277,7 @@ fn validate_patch_rejects_later_insert_that_shifts_existing_branch_target() {
                 },
             },
         ],
+        generalization: None,
     };
 
     let err = validate_patch(&base, &patch).unwrap_err();
@@ -1643,6 +1647,7 @@ async fn run_stream_rejects_malformed_runtime_patch_id_without_aborting_later_ev
                 patch_id: "bad/id".to_owned(),
                 operations: Vec::new(),
                 rationale: "malformed patch id should be rejected".to_owned(),
+                generalization: None,
             },
             rationale: "propose malformed runtime patch".to_owned(),
         },
@@ -2072,6 +2077,7 @@ fn schema_valid_wrong_fast_path_patch() -> ProgramPatch {
                 },
             },
         ],
+        generalization: None,
     }
 }
 
@@ -2304,6 +2310,7 @@ async fn patch_can_insert_validator_apply() {
                 },
             },
         ],
+        generalization: None,
     };
     let patched = validate_patch(&base, &patch).unwrap();
     let runtime = Runtime::new(
@@ -2327,6 +2334,7 @@ fn validate_patch_rejects_unsafe_patch_id() {
         patch_id: "bad patch/id".to_owned(),
         operations: Vec::new(),
         rationale: "unsafe IDs must not become version or registry path components".to_owned(),
+        generalization: None,
     };
 
     let err = validate_patch(&base, &patch).unwrap_err();
@@ -2451,6 +2459,7 @@ fn registry_test_patch(patch_id: &str) -> ProgramPatch {
         patch_id: patch_id.to_owned(),
         operations: Vec::new(),
         rationale: "registry path safety test".to_owned(),
+        generalization: None,
     }
 }
 

@@ -1,0 +1,160 @@
+{"event_id":"e_340","sender_hint":"coworker","source":"email","text":"Need your opinion on this draft. [case 42]","timestamp":"2026-06-05T14:39:00+08:00"}
+{"event_id":"e_023","sender_hint":"system","source":"chat","text":"No action needed, status is green. [case 02]","timestamp":"2026-06-05T09:22:00+08:00"}
+{"event_id":"e_055","sender_hint":"system","source":"email","text":"No action needed, status is green. [case 06]","timestamp":"2026-06-05T09:54:00+08:00"}
+{"event_id":"e_087","sender_hint":"system","source":"chat","text":"No action needed, status is green. [case 10]","timestamp":"2026-06-05T10:26:00+08:00"}
+{"event_id":"e_119","sender_hint":"system","source":"chat","text":"No action needed, status is green. [case 14]","timestamp":"2026-06-05T10:58:00+08:00"}
+{"event_id":"e_151","sender_hint":"system","source":"email","text":"No action needed, status is green. [case 18]","timestamp":"2026-06-05T11:30:00+08:00"}
+{"event_id":"e_183","sender_hint":"system","source":"chat","text":"No action needed, status is green. [case 22]","timestamp":"2026-06-05T12:02:00+08:00"}
+{"event_id":"e_215","sender_hint":"system","source":"chat","text":"No action needed, status is green. [case 26]","timestamp":"2026-06-05T12:34:00+08:00"}
+{"event_id":"e_247","sender_hint":"system","source":"email","text":"No action needed, status is green. [case 30]","timestamp":"2026-06-05T13:06:00+08:00"}
+{"event_id":"e_279","sender_hint":"system","source":"chat","text":"No action needed, status is green. [case 34]","timestamp":"2026-06-05T13:38:00+08:00"}
+{"event_id":"e_311","sender_hint":"system","source":"chat","text":"No action needed, status is green. [case 38]","timestamp":"2026-06-05T14:10:00+08:00"}
+{"event_id":"e_343","sender_hint":"system","source":"email","text":"No action needed, status is green. [case 42]","timestamp":"2026-06-05T14:42:00+08:00"}
+{"event_id":"e_029","sender_hint":"system","source":"chat","text":"One-time code 884421 for sign in. [case 03]","timestamp":"2026-06-05T09:28:00+08:00"}
+{"event_id":"e_061","sender_hint":"system","source":"email","text":"One-time code 884421 for sign in. [case 07]","timestamp":"2026-06-05T10:00:00+08:00"}
+{"event_id":"e_093","sender_hint":"system","source":"chat","text":"One-time code 884421 for sign in. [case 11]","timestamp":"2026-06-05T10:32:00+08:00"}
+{"event_id":"e_125","sender_hint":"system","source":"chat","text":"One-time code 884421 for sign in. [case 15]","timestamp":"2026-06-05T11:04:00+08:00"}
+{"event_id":"e_157","sender_hint":"system","source":"email","text":"One-time code 884421 for sign in. [case 19]","timestamp":"2026-06-05T11:36:00+08:00"}
+{"event_id":"e_189","sender_hint":"system","source":"chat","text":"One-time code 884421 for sign in. [case 23]","timestamp":"2026-06-05T12:08:00+08:00"}
+{"event_id":"e_221","sender_hint":"system","source":"chat","text":"One-time code 884421 for sign in. [case 27]","timestamp":"2026-06-05T12:40:00+08:00"}
+{"event_id":"e_253","sender_hint":"system","source":"email","text":"One-time code 884421 for sign in. [case 31]","timestamp":"2026-06-05T13:12:00+08:00"}
+{"event_id":"e_285","sender_hint":"system","source":"chat","text":"One-time code 884421 for sign in. [case 35]","timestamp":"2026-06-05T13:44:00+08:00"}
+{"event_id":"e_317","sender_hint":"system","source":"chat","text":"One-time code 884421 for sign in. [case 39]","timestamp":"2026-06-05T14:16:00+08:00"}
+{"event_id":"e_349","sender_hint":"system","source":"email","text":"One-time code 884421 for sign in. [case 43]","timestamp":"2026-06-05T14:48:00+08:00"}
+{"event_id":"e_006","sender_hint":"coworker","source":"chat","text":"Package arrives tomorrow between 2 and 4. [case 00]","timestamp":"2026-06-05T09:05:00+08:00"}
+{"event_id":"e_038","sender_hint":"coworker","source":"chat","text":"Package arrives tomorrow between 2 and 4. [case 04]","timestamp":"2026-06-05T09:37:00+08:00"}
+{"event_id":"e_070","sender_hint":"coworker","source":"email","text":"Package arrives tomorrow between 2 and 4. [case 08]","timestamp":"2026-06-05T10:09:00+08:00"}
+{"event_id":"e_102","sender_hint":"coworker","source":"chat","text":"Package arrives tomorrow between 2 and 4. [case 12]","timestamp":"2026-06-05T10:41:00+08:00"}
+{"event_id":"e_134","sender_hint":"coworker","source":"chat","text":"Package arrives tomorrow between 2 and 4. [case 16]","timestamp":"2026-06-05T11:13:00+08:00"}
+{"event_id":"e_166","sender_hint":"coworker","source":"email","text":"Package arrives tomorrow between 2 and 4. [case 20]","timestamp":"2026-06-05T11:45:00+08:00"}
+{"event_id":"e_198","sender_hint":"coworker","source":"chat","text":"Package arrives tomorrow between 2 and 4. [case 24]","timestamp":"2026-06-05T12:17:00+08:00"}
+{"event_id":"e_230","sender_hint":"coworker","source":"chat","text":"Package arrives tomorrow between 2 and 4. [case 28]","timestamp":"2026-06-05T12:49:00+08:00"}
+{"event_id":"e_262","sender_hint":"coworker","source":"email","text":"Package arrives tomorrow between 2 and 4. [case 32]","timestamp":"2026-06-05T13:21:00+08:00"}
+{"event_id":"e_294","sender_hint":"coworker","source":"chat","text":"Package arrives tomorrow between 2 and 4. [case 36]","timestamp":"2026-06-05T13:53:00+08:00"}
+{"event_id":"e_326","sender_hint":"coworker","source":"chat","text":"Package arrives tomorrow between 2 and 4. [case 40]","timestamp":"2026-06-05T14:25:00+08:00"}
+{"event_id":"e_358","sender_hint":"coworker","source":"email","text":"Package arrives tomorrow between 2 and 4. [case 44]","timestamp":"2026-06-05T14:57:00+08:00"}
+{"event_id":"e_009","sender_hint":"system","source":"chat","text":"Please get me the updated deck by 10am tomorrow. [case 01]","timestamp":"2026-06-05T09:08:00+08:00"}
+{"event_id":"e_041","sender_hint":"system","source":"chat","text":"Please get me the updated deck by 10am tomorrow. [case 05]","timestamp":"2026-06-05T09:40:00+08:00"}
+{"event_id":"e_073","sender_hint":"system","source":"email","text":"Please get me the updated deck by 10am tomorrow. [case 09]","timestamp":"2026-06-05T10:12:00+08:00"}
+{"event_id":"e_105","sender_hint":"system","source":"chat","text":"Please get me the updated deck by 10am tomorrow. [case 13]","timestamp":"2026-06-05T10:44:00+08:00"}
+{"event_id":"e_137","sender_hint":"system","source":"chat","text":"Please get me the updated deck by 10am tomorrow. [case 17]","timestamp":"2026-06-05T11:16:00+08:00"}
+{"event_id":"e_169","sender_hint":"system","source":"email","text":"Please get me the updated deck by 10am tomorrow. [case 21]","timestamp":"2026-06-05T11:48:00+08:00"}
+{"event_id":"e_201","sender_hint":"system","source":"chat","text":"Please get me the updated deck by 10am tomorrow. [case 25]","timestamp":"2026-06-05T12:20:00+08:00"}
+{"event_id":"e_233","sender_hint":"system","source":"chat","text":"Please get me the updated deck by 10am tomorrow. [case 29]","timestamp":"2026-06-05T12:52:00+08:00"}
+{"event_id":"e_265","sender_hint":"system","source":"email","text":"Please get me the updated deck by 10am tomorrow. [case 33]","timestamp":"2026-06-05T13:24:00+08:00"}
+{"event_id":"e_297","sender_hint":"system","source":"chat","text":"Please get me the updated deck by 10am tomorrow. [case 37]","timestamp":"2026-06-05T13:56:00+08:00"}
+{"event_id":"e_329","sender_hint":"system","source":"chat","text":"Please get me the updated deck by 10am tomorrow. [case 41]","timestamp":"2026-06-05T14:28:00+08:00"}
+{"event_id":"e_011","sender_hint":"system","source":"chat","text":"Please make sure the review is done before 6pm tomorrow. [case 01]","timestamp":"2026-06-05T09:10:00+08:00"}
+{"event_id":"e_043","sender_hint":"system","source":"email","text":"Please make sure the review is done before 6pm tomorrow. [case 05]","timestamp":"2026-06-05T09:42:00+08:00"}
+{"event_id":"e_075","sender_hint":"system","source":"chat","text":"Please make sure the review is done before 6pm tomorrow. [case 09]","timestamp":"2026-06-05T10:14:00+08:00"}
+{"event_id":"e_107","sender_hint":"system","source":"chat","text":"Please make sure the review is done before 6pm tomorrow. [case 13]","timestamp":"2026-06-05T10:46:00+08:00"}
+{"event_id":"e_139","sender_hint":"system","source":"email","text":"Please make sure the review is done before 6pm tomorrow. [case 17]","timestamp":"2026-06-05T11:18:00+08:00"}
+{"event_id":"e_171","sender_hint":"system","source":"chat","text":"Please make sure the review is done before 6pm tomorrow. [case 21]","timestamp":"2026-06-05T11:50:00+08:00"}
+{"event_id":"e_203","sender_hint":"system","source":"chat","text":"Please make sure the review is done before 6pm tomorrow. [case 25]","timestamp":"2026-06-05T12:22:00+08:00"}
+{"event_id":"e_235","sender_hint":"system","source":"email","text":"Please make sure the review is done before 6pm tomorrow. [case 29]","timestamp":"2026-06-05T12:54:00+08:00"}
+{"event_id":"e_267","sender_hint":"system","source":"chat","text":"Please make sure the review is done before 6pm tomorrow. [case 33]","timestamp":"2026-06-05T13:26:00+08:00"}
+{"event_id":"e_299","sender_hint":"system","source":"chat","text":"Please make sure the review is done before 6pm tomorrow. [case 37]","timestamp":"2026-06-05T13:58:00+08:00"}
+{"event_id":"e_331","sender_hint":"system","source":"email","text":"Please make sure the review is done before 6pm tomorrow. [case 41]","timestamp":"2026-06-05T14:30:00+08:00"}
+{"event_id":"e_028","sender_hint":"coworker","source":"email","text":"Please respond with feedback when you can. [case 03]","timestamp":"2026-06-05T09:27:00+08:00"}
+{"event_id":"e_060","sender_hint":"coworker","source":"chat","text":"Please respond with feedback when you can. [case 07]","timestamp":"2026-06-05T09:59:00+08:00"}
+{"event_id":"e_092","sender_hint":"coworker","source":"chat","text":"Please respond with feedback when you can. [case 11]","timestamp":"2026-06-05T10:31:00+08:00"}
+{"event_id":"e_124","sender_hint":"coworker","source":"email","text":"Please respond with feedback when you can. [case 15]","timestamp":"2026-06-05T11:03:00+08:00"}
+{"event_id":"e_156","sender_hint":"coworker","source":"chat","text":"Please respond with feedback when you can. [case 19]","timestamp":"2026-06-05T11:35:00+08:00"}
+{"event_id":"e_188","sender_hint":"coworker","source":"chat","text":"Please respond with feedback when you can. [case 23]","timestamp":"2026-06-05T12:07:00+08:00"}
+{"event_id":"e_220","sender_hint":"coworker","source":"email","text":"Please respond with feedback when you can. [case 27]","timestamp":"2026-06-05T12:39:00+08:00"}
+{"event_id":"e_252","sender_hint":"coworker","source":"chat","text":"Please respond with feedback when you can. [case 31]","timestamp":"2026-06-05T13:11:00+08:00"}
+{"event_id":"e_284","sender_hint":"coworker","source":"chat","text":"Please respond with feedback when you can. [case 35]","timestamp":"2026-06-05T13:43:00+08:00"}
+{"event_id":"e_316","sender_hint":"coworker","source":"email","text":"Please respond with feedback when you can. [case 39]","timestamp":"2026-06-05T14:15:00+08:00"}
+{"event_id":"e_348","sender_hint":"coworker","source":"chat","text":"Please respond with feedback when you can. [case 43]","timestamp":"2026-06-05T14:47:00+08:00"}
+{"event_id":"e_002","sender_hint":"coworker","source":"chat","text":"Project sync moved to Monday 3pm, can you join? [case 00]","timestamp":"2026-06-05T09:01:00+08:00"}
+{"event_id":"e_034","sender_hint":"coworker","source":"email","text":"Project sync moved to Monday 3pm, can you join? [case 04]","timestamp":"2026-06-05T09:33:00+08:00"}
+{"event_id":"e_066","sender_hint":"coworker","source":"chat","text":"Project sync moved to Monday 3pm, can you join? [case 08]","timestamp":"2026-06-05T10:05:00+08:00"}
+{"event_id":"e_098","sender_hint":"coworker","source":"chat","text":"Project sync moved to Monday 3pm, can you join? [case 12]","timestamp":"2026-06-05T10:37:00+08:00"}
+{"event_id":"e_130","sender_hint":"coworker","source":"email","text":"Project sync moved to Monday 3pm, can you join? [case 16]","timestamp":"2026-06-05T11:09:00+08:00"}
+{"event_id":"e_162","sender_hint":"coworker","source":"chat","text":"Project sync moved to Monday 3pm, can you join? [case 20]","timestamp":"2026-06-05T11:41:00+08:00"}
+{"event_id":"e_194","sender_hint":"coworker","source":"chat","text":"Project sync moved to Monday 3pm, can you join? [case 24]","timestamp":"2026-06-05T12:13:00+08:00"}
+{"event_id":"e_226","sender_hint":"coworker","source":"email","text":"Project sync moved to Monday 3pm, can you join? [case 28]","timestamp":"2026-06-05T12:45:00+08:00"}
+{"event_id":"e_258","sender_hint":"coworker","source":"chat","text":"Project sync moved to Monday 3pm, can you join? [case 32]","timestamp":"2026-06-05T13:17:00+08:00"}
+{"event_id":"e_290","sender_hint":"coworker","source":"chat","text":"Project sync moved to Monday 3pm, can you join? [case 36]","timestamp":"2026-06-05T13:49:00+08:00"}
+{"event_id":"e_322","sender_hint":"coworker","source":"email","text":"Project sync moved to Monday 3pm, can you join? [case 40]","timestamp":"2026-06-05T14:21:00+08:00"}
+{"event_id":"e_354","sender_hint":"coworker","source":"chat","text":"Project sync moved to Monday 3pm, can you join? [case 44]","timestamp":"2026-06-05T14:53:00+08:00"}
+{"event_id":"e_021","sender_hint":"system","source":"chat","text":"Security notice: code 771902 was requested. [case 02]","timestamp":"2026-06-05T09:20:00+08:00"}
+{"event_id":"e_053","sender_hint":"system","source":"chat","text":"Security notice: code 771902 was requested. [case 06]","timestamp":"2026-06-05T09:52:00+08:00"}
+{"event_id":"e_085","sender_hint":"system","source":"email","text":"Security notice: code 771902 was requested. [case 10]","timestamp":"2026-06-05T10:24:00+08:00"}
+{"event_id":"e_117","sender_hint":"system","source":"chat","text":"Security notice: code 771902 was requested. [case 14]","timestamp":"2026-06-05T10:56:00+08:00"}
+{"event_id":"e_149","sender_hint":"system","source":"chat","text":"Security notice: code 771902 was requested. [case 18]","timestamp":"2026-06-05T11:28:00+08:00"}
+{"event_id":"e_181","sender_hint":"system","source":"email","text":"Security notice: code 771902 was requested. [case 22]","timestamp":"2026-06-05T12:00:00+08:00"}
+{"event_id":"e_213","sender_hint":"system","source":"chat","text":"Security notice: code 771902 was requested. [case 26]","timestamp":"2026-06-05T12:32:00+08:00"}
+{"event_id":"e_245","sender_hint":"system","source":"chat","text":"Security notice: code 771902 was requested. [case 30]","timestamp":"2026-06-05T13:04:00+08:00"}
+{"event_id":"e_277","sender_hint":"system","source":"email","text":"Security notice: code 771902 was requested. [case 34]","timestamp":"2026-06-05T13:36:00+08:00"}
+{"event_id":"e_309","sender_hint":"system","source":"chat","text":"Security notice: code 771902 was requested. [case 38]","timestamp":"2026-06-05T14:08:00+08:00"}
+{"event_id":"e_341","sender_hint":"system","source":"chat","text":"Security notice: code 771902 was requested. [case 42]","timestamp":"2026-06-05T14:40:00+08:00"}
+{"event_id":"e_008","sender_hint":"coworker","source":"chat","text":"This might need a follow-up, not sure who owns it. [case 00]","timestamp":"2026-06-05T09:07:00+08:00"}
+{"event_id":"e_040","sender_hint":"coworker","source":"email","text":"This might need a follow-up, not sure who owns it. [case 04]","timestamp":"2026-06-05T09:39:00+08:00"}
+{"event_id":"e_072","sender_hint":"coworker","source":"chat","text":"This might need a follow-up, not sure who owns it. [case 08]","timestamp":"2026-06-05T10:11:00+08:00"}
+{"event_id":"e_104","sender_hint":"coworker","source":"chat","text":"This might need a follow-up, not sure who owns it. [case 12]","timestamp":"2026-06-05T10:43:00+08:00"}
+{"event_id":"e_136","sender_hint":"coworker","source":"email","text":"This might need a follow-up, not sure who owns it. [case 16]","timestamp":"2026-06-05T11:15:00+08:00"}
+{"event_id":"e_168","sender_hint":"coworker","source":"chat","text":"This might need a follow-up, not sure who owns it. [case 20]","timestamp":"2026-06-05T11:47:00+08:00"}
+{"event_id":"e_200","sender_hint":"coworker","source":"chat","text":"This might need a follow-up, not sure who owns it. [case 24]","timestamp":"2026-06-05T12:19:00+08:00"}
+{"event_id":"e_232","sender_hint":"coworker","source":"email","text":"This might need a follow-up, not sure who owns it. [case 28]","timestamp":"2026-06-05T12:51:00+08:00"}
+{"event_id":"e_264","sender_hint":"coworker","source":"chat","text":"This might need a follow-up, not sure who owns it. [case 32]","timestamp":"2026-06-05T13:23:00+08:00"}
+{"event_id":"e_296","sender_hint":"coworker","source":"chat","text":"This might need a follow-up, not sure who owns it. [case 36]","timestamp":"2026-06-05T13:55:00+08:00"}
+{"event_id":"e_328","sender_hint":"coworker","source":"email","text":"This might need a follow-up, not sure who owns it. [case 40]","timestamp":"2026-06-05T14:27:00+08:00"}
+{"event_id":"e_360","sender_hint":"coworker","source":"chat","text":"This might need a follow-up, not sure who owns it. [case 44]","timestamp":"2026-06-05T14:59:00+08:00"}
+{"event_id":"e_032","sender_hint":"coworker","source":"chat","text":"Unclear whether we need to schedule anything here. [case 03]","timestamp":"2026-06-05T09:31:00+08:00"}
+{"event_id":"e_064","sender_hint":"coworker","source":"email","text":"Unclear whether we need to schedule anything here. [case 07]","timestamp":"2026-06-05T10:03:00+08:00"}
+{"event_id":"e_096","sender_hint":"coworker","source":"chat","text":"Unclear whether we need to schedule anything here. [case 11]","timestamp":"2026-06-05T10:35:00+08:00"}
+{"event_id":"e_128","sender_hint":"coworker","source":"chat","text":"Unclear whether we need to schedule anything here. [case 15]","timestamp":"2026-06-05T11:07:00+08:00"}
+{"event_id":"e_160","sender_hint":"coworker","source":"email","text":"Unclear whether we need to schedule anything here. [case 19]","timestamp":"2026-06-05T11:39:00+08:00"}
+{"event_id":"e_192","sender_hint":"coworker","source":"chat","text":"Unclear whether we need to schedule anything here. [case 23]","timestamp":"2026-06-05T12:11:00+08:00"}
+{"event_id":"e_224","sender_hint":"coworker","source":"chat","text":"Unclear whether we need to schedule anything here. [case 27]","timestamp":"2026-06-05T12:43:00+08:00"}
+{"event_id":"e_256","sender_hint":"coworker","source":"email","text":"Unclear whether we need to schedule anything here. [case 31]","timestamp":"2026-06-05T13:15:00+08:00"}
+{"event_id":"e_288","sender_hint":"coworker","source":"chat","text":"Unclear whether we need to schedule anything here. [case 35]","timestamp":"2026-06-05T13:47:00+08:00"}
+{"event_id":"e_320","sender_hint":"coworker","source":"chat","text":"Unclear whether we need to schedule anything here. [case 39]","timestamp":"2026-06-05T14:19:00+08:00"}
+{"event_id":"e_352","sender_hint":"coworker","source":"email","text":"Unclear whether we need to schedule anything here. [case 43]","timestamp":"2026-06-05T14:51:00+08:00"}
+{"event_id":"e_013","sender_hint":"system","source":"email","text":"Verification code: 120944. It expires soon. [case 01]","timestamp":"2026-06-05T09:12:00+08:00"}
+{"event_id":"e_045","sender_hint":"system","source":"chat","text":"Verification code: 120944. It expires soon. [case 05]","timestamp":"2026-06-05T09:44:00+08:00"}
+{"event_id":"e_077","sender_hint":"system","source":"chat","text":"Verification code: 120944. It expires soon. [case 09]","timestamp":"2026-06-05T10:16:00+08:00"}
+{"event_id":"e_109","sender_hint":"system","source":"email","text":"Verification code: 120944. It expires soon. [case 13]","timestamp":"2026-06-05T10:48:00+08:00"}
+{"event_id":"e_141","sender_hint":"system","source":"chat","text":"Verification code: 120944. It expires soon. [case 17]","timestamp":"2026-06-05T11:20:00+08:00"}
+{"event_id":"e_173","sender_hint":"system","source":"chat","text":"Verification code: 120944. It expires soon. [case 21]","timestamp":"2026-06-05T11:52:00+08:00"}
+{"event_id":"e_205","sender_hint":"system","source":"email","text":"Verification code: 120944. It expires soon. [case 25]","timestamp":"2026-06-05T12:24:00+08:00"}
+{"event_id":"e_237","sender_hint":"system","source":"chat","text":"Verification code: 120944. It expires soon. [case 29]","timestamp":"2026-06-05T12:56:00+08:00"}
+{"event_id":"e_269","sender_hint":"system","source":"chat","text":"Verification code: 120944. It expires soon. [case 33]","timestamp":"2026-06-05T13:28:00+08:00"}
+{"event_id":"e_301","sender_hint":"system","source":"email","text":"Verification code: 120944. It expires soon. [case 37]","timestamp":"2026-06-05T14:00:00+08:00"}
+{"event_id":"e_333","sender_hint":"system","source":"chat","text":"Verification code: 120944. It expires soon. [case 41]","timestamp":"2026-06-05T14:32:00+08:00"}
+{"event_id":"e_004","sender_hint":"coworker","source":"email","text":"What do you think about option B? [case 00]","timestamp":"2026-06-05T09:03:00+08:00"}
+{"event_id":"e_036","sender_hint":"coworker","source":"chat","text":"What do you think about option B? [case 04]","timestamp":"2026-06-05T09:35:00+08:00"}
+{"event_id":"e_068","sender_hint":"coworker","source":"chat","text":"What do you think about option B? [case 08]","timestamp":"2026-06-05T10:07:00+08:00"}
+{"event_id":"e_100","sender_hint":"coworker","source":"email","text":"What do you think about option B? [case 12]","timestamp":"2026-06-05T10:39:00+08:00"}
+{"event_id":"e_132","sender_hint":"coworker","source":"chat","text":"What do you think about option B? [case 16]","timestamp":"2026-06-05T11:11:00+08:00"}
+{"event_id":"e_164","sender_hint":"coworker","source":"chat","text":"What do you think about option B? [case 20]","timestamp":"2026-06-05T11:43:00+08:00"}
+{"event_id":"e_196","sender_hint":"coworker","source":"email","text":"What do you think about option B? [case 24]","timestamp":"2026-06-05T12:15:00+08:00"}
+{"event_id":"e_228","sender_hint":"coworker","source":"chat","text":"What do you think about option B? [case 28]","timestamp":"2026-06-05T12:47:00+08:00"}
+{"event_id":"e_260","sender_hint":"coworker","source":"chat","text":"What do you think about option B? [case 32]","timestamp":"2026-06-05T13:19:00+08:00"}
+{"event_id":"e_292","sender_hint":"coworker","source":"email","text":"What do you think about option B? [case 36]","timestamp":"2026-06-05T13:51:00+08:00"}
+{"event_id":"e_324","sender_hint":"coworker","source":"chat","text":"What do you think about option B? [case 40]","timestamp":"2026-06-05T14:23:00+08:00"}
+{"event_id":"e_356","sender_hint":"coworker","source":"chat","text":"What do you think about option B? [case 44]","timestamp":"2026-06-05T14:55:00+08:00"}
+{"event_id":"e_014","sender_hint":"coworker","source":"chat","text":"Your hotel booking is confirmed. [case 01]","timestamp":"2026-06-05T09:13:00+08:00"}
+{"event_id":"e_046","sender_hint":"coworker","source":"email","text":"Your hotel booking is confirmed. [case 05]","timestamp":"2026-06-05T09:45:00+08:00"}
+{"event_id":"e_078","sender_hint":"coworker","source":"chat","text":"Your hotel booking is confirmed. [case 09]","timestamp":"2026-06-05T10:17:00+08:00"}
+{"event_id":"e_110","sender_hint":"coworker","source":"chat","text":"Your hotel booking is confirmed. [case 13]","timestamp":"2026-06-05T10:49:00+08:00"}
+{"event_id":"e_142","sender_hint":"coworker","source":"email","text":"Your hotel booking is confirmed. [case 17]","timestamp":"2026-06-05T11:21:00+08:00"}
+{"event_id":"e_174","sender_hint":"coworker","source":"chat","text":"Your hotel booking is confirmed. [case 21]","timestamp":"2026-06-05T11:53:00+08:00"}
+{"event_id":"e_206","sender_hint":"coworker","source":"chat","text":"Your hotel booking is confirmed. [case 25]","timestamp":"2026-06-05T12:25:00+08:00"}
+{"event_id":"e_238","sender_hint":"coworker","source":"email","text":"Your hotel booking is confirmed. [case 29]","timestamp":"2026-06-05T12:57:00+08:00"}
+{"event_id":"e_270","sender_hint":"coworker","source":"chat","text":"Your hotel booking is confirmed. [case 33]","timestamp":"2026-06-05T13:29:00+08:00"}
+{"event_id":"e_302","sender_hint":"coworker","source":"chat","text":"Your hotel booking is confirmed. [case 37]","timestamp":"2026-06-05T14:01:00+08:00"}
+{"event_id":"e_334","sender_hint":"coworker","source":"email","text":"Your hotel booking is confirmed. [case 41]","timestamp":"2026-06-05T14:33:00+08:00"}
+{"event_id":"e_005","sender_hint":"system","source":"chat","text":"Your login code is 493102. [case 00]","timestamp":"2026-06-05T09:04:00+08:00"}
+{"event_id":"e_037","sender_hint":"system","source":"email","text":"Your login code is 493102. [case 04]","timestamp":"2026-06-05T09:36:00+08:00"}
+{"event_id":"e_069","sender_hint":"system","source":"chat","text":"Your login code is 493102. [case 08]","timestamp":"2026-06-05T10:08:00+08:00"}
+{"event_id":"e_101","sender_hint":"system","source":"chat","text":"Your login code is 493102. [case 12]","timestamp":"2026-06-05T10:40:00+08:00"}
+{"event_id":"e_133","sender_hint":"system","source":"email","text":"Your login code is 493102. [case 16]","timestamp":"2026-06-05T11:12:00+08:00"}
+{"event_id":"e_165","sender_hint":"system","source":"chat","text":"Your login code is 493102. [case 20]","timestamp":"2026-06-05T11:44:00+08:00"}
+{"event_id":"e_197","sender_hint":"system","source":"chat","text":"Your login code is 493102. [case 24]","timestamp":"2026-06-05T12:16:00+08:00"}
+{"event_id":"e_229","sender_hint":"system","source":"email","text":"Your login code is 493102. [case 28]","timestamp":"2026-06-05T12:48:00+08:00"}
+{"event_id":"e_261","sender_hint":"system","source":"chat","text":"Your login code is 493102. [case 32]","timestamp":"2026-06-05T13:20:00+08:00"}
+{"event_id":"e_293","sender_hint":"system","source":"chat","text":"Your login code is 493102. [case 36]","timestamp":"2026-06-05T13:52:00+08:00"}
+{"event_id":"e_325","sender_hint":"system","source":"email","text":"Your login code is 493102. [case 40]","timestamp":"2026-06-05T14:24:00+08:00"}
+{"event_id":"e_357","sender_hint":"system","source":"chat","text":"Your login code is 493102. [case 44]","timestamp":"2026-06-05T14:56:00+08:00"}

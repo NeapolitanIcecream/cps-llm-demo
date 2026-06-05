@@ -1,0 +1,23 @@
+{
+  "experiment_id": "notification_triage_real_v1",
+  "workflow_id": "notification_triage",
+  "started_at": "unix:1780664632",
+  "completed_phases": [
+    "split_events",
+    "weak_only",
+    "strong_direct",
+    "cps_unoptimized_profile",
+    "optimize",
+    "cps_unoptimized_heldout",
+    "patch_validation",
+    "cps_exact_memo_heldout",
+    "cps_generalized_patch_heldout",
+    "cps_generalized_patch_no_semantic_weak",
+    "adversarial_audit",
+    "shadow_audit",
+    "quality_eval",
+    "report"
+  ],
+  "skipped_phases": [],
+  "dry_run_cost": false
+}

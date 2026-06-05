@@ -9,6 +9,7 @@ use crate::engine::event_source::EventSource;
 use crate::models::EffectHandler;
 use crate::program::{EffectCall, ModelStrength, ModelTaskSpec};
 use crate::store::metrics_store::{FileMetricsStore, RunMetrics};
+use crate::store::program_registry::FileProgramRegistry;
 use crate::store::state_dir::{StateDir, now_string};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -32,6 +33,10 @@ where
     S: EventSource,
 {
     state.ensure_workflow_layout(workflow_id)?;
+    let expected_schema = FileProgramRegistry::new(state.clone())
+        .load_latest(workflow_id)
+        .map(|program| program.output_schema)
+        .unwrap_or_else(|_| json!({ "type": "object" }));
     let run_id = uuid::Uuid::new_v4().to_string();
     let mut metrics = RunMetrics::new(
         run_id.clone(),
@@ -45,6 +50,9 @@ where
     while let Some(event) = event_source.next_event()? {
         metrics.events_total += 1;
         let request = HandlerRequest {
+            run_id: Some(run_id.clone()),
+            workflow_id: Some(workflow_id.to_owned()),
+            phase: Some("strong_direct".to_owned()),
             effect: EffectCall::ModelTask {
                 strength: ModelStrength::Strong,
                 task: ModelTaskSpec {
@@ -53,7 +61,7 @@ where
                 },
             },
             input: event,
-            expected_schema: json!({}),
+            expected_schema: expected_schema.clone(),
             continuation_summary: None,
             effect_frame: None,
             observations: Vec::new(),

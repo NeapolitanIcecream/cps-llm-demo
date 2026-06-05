@@ -1,0 +1,32 @@
+{
+  "deadline_request_without_document_v1": {
+    "rule_id": "deadline_request_without_document_v1",
+    "hits": 16,
+    "misses": 0
+  },
+  "fyi_no_action_v1": {
+    "rule_id": "fyi_no_action_v1",
+    "hits": 24,
+    "misses": 0
+  },
+  "meeting_invitation_v1": {
+    "rule_id": "meeting_invitation_v1",
+    "hits": 11,
+    "misses": 0
+  },
+  "reply_needed_opinion_request_v1": {
+    "rule_id": "reply_needed_opinion_request_v1",
+    "hits": 22,
+    "misses": 0
+  },
+  "request_send_document_before_deadline_v1": {
+    "rule_id": "request_send_document_before_deadline_v1",
+    "hits": 7,
+    "misses": 0
+  },
+  "shipping_or_booking_update_v1": {
+    "rule_id": "shipping_or_booking_update_v1",
+    "hits": 13,
+    "misses": 0
+  }
+}
