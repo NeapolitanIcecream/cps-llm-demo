@@ -605,7 +605,7 @@ pub async fn run() -> Result<()> {
             state_dir,
             out,
         } => {
-            let dir = experiment_dir(&StateDir::new(state_dir), &experiment);
+            let dir = experiment_dir(&StateDir::new(state_dir), &experiment)?;
             let report_md = dir.join("report.md");
             let report_json = dir.join("report.json");
             if let Some(parent) = out.parent() {

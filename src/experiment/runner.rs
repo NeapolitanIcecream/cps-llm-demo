@@ -133,7 +133,7 @@ pub async fn run_experiment(
     state_dir: StateDir,
     dry_run_cost: bool,
 ) -> Result<serde_json::Value> {
-    let experiment_dir = experiment_dir(&state_dir, &config.experiment_id);
+    let experiment_dir = experiment_dir(&state_dir, &config.experiment_id)?;
     std::fs::create_dir_all(&experiment_dir)
         .with_context(|| format!("failed to create {}", experiment_dir.display()))?;
     write_locked_config(&config, &experiment_dir.join("config.lock.yaml"))?;
@@ -2470,7 +2470,7 @@ fn write_experiment_report(
     let continuation_frames =
         workflow_continuation_frame_summary(state_dir, &config.workflow_id, &current_run_ids)?;
     let patch_gate = read_patch_gate_decision(experiment_dir)?;
-    let patch = installed_semantic_patch_report(config, state_dir, experiment_dir)?;
+    let patch = installed_semantic_patch_report(experiment_dir)?;
     let pass_fail = build_report_pass_fail(
         &variants,
         &budget,
@@ -2560,45 +2560,18 @@ fn read_patch_gate_decision(experiment_dir: &Path) -> Result<PatchGateDecision> 
     })
 }
 
-fn installed_semantic_patch_report(
-    config: &ExperimentConfig,
-    state_dir: &StateDir,
-    experiment_dir: &Path,
-) -> Result<Option<Value>> {
-    let path = state_dir
-        .workflow_dir(&config.workflow_id)?
-        .join("patches")
-        .join("installed")
-        .join("semantic_patch_v1.json");
+fn installed_semantic_patch_report(experiment_dir: &Path) -> Result<Option<Value>> {
+    let path = experiment_dir
+        .join("artifacts")
+        .join("patch_validation")
+        .join("patch_install.json");
     if !path.exists() {
         return Ok(Some(json!({
             "patch_id": "semantic_patch_v1",
             "installed": false,
         })));
     }
-    let record: Value = read_json(&path)?;
-    let plan = read_semantic_patch_plan_from_artifacts(experiment_dir)?;
-    let positive_clusters = plan
-        .rules
-        .iter()
-        .map(|rule| rule.semantic_cluster.clone())
-        .collect::<Vec<_>>();
-    Ok(Some(json!({
-        "patch_id": "semantic_patch_v1",
-        "installed": true,
-        "installed_program_version": record
-            .get("metadata")
-            .and_then(|metadata| metadata.get("target_program_version"))
-            .and_then(Value::as_str),
-        "source": record
-            .get("metadata")
-            .and_then(|metadata| metadata.get("source"))
-            .and_then(Value::as_str),
-        "optimizer_source": plan.optimizer_source,
-        "raw_optimizer_response_is_final_plan": true,
-        "negative_guards": plan.negative_guards.len(),
-        "positive_clusters": positive_clusters,
-    })))
+    read_json(&path).map(Some)
 }
 
 fn install_semantic_patch_if_gate_accepted(
@@ -3534,8 +3507,9 @@ pub fn dry_run_estimate(
     })
 }
 
-pub fn experiment_dir(state_dir: &StateDir, experiment_id: &str) -> PathBuf {
-    state_dir.root().join("experiments").join(experiment_id)
+pub fn experiment_dir(state_dir: &StateDir, experiment_id: &str) -> Result<PathBuf> {
+    validate_path_component("experiment_id", experiment_id)?;
+    Ok(state_dir.root().join("experiments").join(experiment_id))
 }
 
 fn write_phase_marker(experiment_dir: &Path, phase: &str, status: &str) -> Result<()> {

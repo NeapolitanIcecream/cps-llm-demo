@@ -457,6 +457,30 @@ async fn run_experiment_respects_budget_hard_cap() {
 }
 
 #[tokio::test]
+async fn run_experiment_rejects_unsafe_experiment_id_before_writing_state() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_events_and_gold(&dir, 1, 0);
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.experiment_id = "../escaped_experiment".to_owned();
+    let state = StateDir::new(dir.join("state"));
+
+    let error = run_experiment(config, state.clone(), true)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("experiment_id"));
+    assert!(
+        !state
+            .root()
+            .join("escaped_experiment")
+            .join("config.lock.yaml")
+            .exists()
+    );
+}
+
+#[tokio::test]
 async fn run_experiment_executes_variants_and_writes_predictions_and_quality() {
     let dir = temp_dir();
     let price = dir.join("prices.yaml");
@@ -1121,6 +1145,98 @@ async fn experiment_report_scopes_spend_and_frame_metrics_to_manifest_runs() {
     assert_eq!(report["continuation_frames"]["p95_bytes"], json!(2_222));
     assert_eq!(report["budget"]["spent_usd"], json!(1.25));
     assert_eq!(report["budget"]["calls_total"], json!(1));
+}
+
+#[tokio::test]
+async fn experiment_report_ignores_stale_workflow_installed_patch_without_current_artifact() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_events_and_gold(&dir, 1, 0);
+    let splits_dir = dir.join("splits");
+    fs::create_dir_all(&splits_dir).unwrap();
+    let gold = vec![gold("e0", "create_task", true, false)];
+    write_jsonl(&splits_dir.join("heldout_test.gold.jsonl"), &gold);
+
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.phases = vec!["report".to_owned()];
+    let state = StateDir::new(dir.join("state"));
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    fs::create_dir_all(experiment_dir.join("quality")).unwrap();
+    fs::create_dir_all(experiment_dir.join("artifacts")).unwrap();
+    fs::write(
+        experiment_dir
+            .join("artifacts")
+            .join("semantic_patch_plan.json"),
+        serde_json::to_vec_pretty(&json!({
+            "patch_id": "semantic_patch_v1",
+            "rationale": "stale workflow registry regression",
+            "rules": [
+                {
+                    "rule_id": "cluster_0_v1",
+                    "semantic_cluster": "cluster_0",
+                    "kind": "create_task",
+                    "title": null,
+                    "datetime_hint": null,
+                    "examples": ["message 0"],
+                    "negative_examples": []
+                }
+            ],
+            "negative_guards": [],
+            "optimizer_source": "strong_model_generated_semantic_patch_plan"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let prediction = prediction("e0", "create_task", true);
+    let predictions = vec![prediction.clone()];
+    let quality = evaluate_quality(&predictions, &gold).unwrap();
+    let prediction_store = PredictionStore::new(experiment_dir.join("predictions"));
+    prediction_store
+        .append("cps_generalized_patch.heldout.jsonl", &prediction)
+        .unwrap();
+    prediction_store
+        .append("cps_exact_memo.heldout.jsonl", &prediction)
+        .unwrap();
+    fs::write(
+        experiment_dir
+            .join("quality")
+            .join("cps_generalized_patch.json"),
+        serde_json::to_vec_pretty(&quality).unwrap(),
+    )
+    .unwrap();
+    state.ensure_workflow_layout("notification_triage").unwrap();
+    fs::write(
+        state
+            .root()
+            .join("workflows")
+            .join("notification_triage")
+            .join("patches")
+            .join("installed")
+            .join("semantic_patch_v1.json"),
+        serde_json::to_vec_pretty(&json!({
+            "metadata": {
+                "target_program_version": "v0002",
+                "source": "optimizer_strong_model"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    run_experiment(config, state.clone(), false).await.unwrap();
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(experiment_dir.join("report.json")).unwrap()).unwrap();
+    assert_eq!(report["patch"]["installed"], json!(false));
+    assert_eq!(
+        report["pass_fail"]["program_version_advanced"],
+        json!(false)
+    );
 }
 
 #[tokio::test]
