@@ -210,6 +210,111 @@ fn budget_guard_aborts_projected_overspend() {
     assert!(error.to_string().contains("budget hard cap"));
 }
 
+#[tokio::test]
+async fn budget_guard_ignores_stale_spend_for_current_run_scope() {
+    let state = temp_state();
+    let budget_store = FileBudgetStore::new(state.clone());
+    budget_store
+        .append_spend(&spend(
+            "stale-call",
+            "gpt-5.4-mini",
+            "heldout",
+            2.0,
+            CacheStatus::Miss,
+        ))
+        .unwrap();
+    let runtime = ModelCallRuntime::new(FileModelCallStore::new(state.clone()), default_catalog())
+        .with_budget(
+            budget_store,
+            BudgetConfig {
+                hard_cap_usd: 1.0,
+                projection_multiplier: 1.0,
+                ..BudgetConfig::default()
+            },
+        );
+    let server = mock_structured_response(json!({"ok": true}), Some(usage_json(100, 0, 10)));
+    let client = ResponsesClient::new(ResponsesClientConfig {
+        base_url: Url::parse(&server.url("/v1")).unwrap(),
+        api_key: SecretString::from("test-key".to_owned()),
+        runtime: Some(Arc::new(runtime)),
+    });
+
+    let response: serde_json::Value = client
+        .create_structured_with_context(
+            "gpt-5.4-mini",
+            "Return JSON.",
+            &json!({"event_id": "e1"}),
+            "object",
+            json!({"type": "object"}),
+            call_context("weak_model", "model_task"),
+        )
+        .await
+        .unwrap()
+        .parsed;
+
+    assert_eq!(response, json!({"ok": true}));
+}
+
+#[test]
+fn budget_guard_counts_only_current_budget_scope() {
+    let state = temp_state();
+    let store = FileBudgetStore::new(state);
+    store
+        .append_spend(&spend_with_scope(
+            "stale-call",
+            "old-run",
+            Some("old-scope"),
+            "gpt-5.4-mini",
+            "heldout",
+            2.0,
+            CacheStatus::Miss,
+        ))
+        .unwrap();
+    let guard = cps_llm_demo::store::budget_store::BudgetGuard::new(
+        BudgetConfig {
+            hard_cap_usd: 1.0,
+            projection_multiplier: 1.0,
+            ..BudgetConfig::default()
+        },
+        default_catalog(),
+        store.clone(),
+    );
+
+    guard
+        .ensure_call_allowed_for_scope(
+            "gpt-5.4-mini",
+            10,
+            Some(1),
+            Some("current-scope"),
+            Some("current-run"),
+        )
+        .unwrap();
+
+    store
+        .append_spend(&spend_with_scope(
+            "current-prior-call",
+            "prior-run",
+            Some("current-scope"),
+            "gpt-5.4-mini",
+            "strong_direct",
+            0.999999,
+            CacheStatus::Miss,
+        ))
+        .unwrap();
+    let error = guard
+        .ensure_call_allowed_for_scope(
+            "gpt-5.4-mini",
+            10,
+            Some(1),
+            Some("current-scope"),
+            Some("current-run"),
+        )
+        .unwrap_err();
+
+    assert!(error.to_string().contains("budget hard cap"));
+    assert!(error.to_string().contains("spent $1.0000"));
+}
+
 #[test]
 fn budget_ledger_uses_reported_usage_when_available() {
     let catalog = default_catalog();
@@ -1270,6 +1375,7 @@ fn usage_json(input: u64, output: u64, cached: u64) -> Value {
 fn call_context(handler: &str, effect: &str) -> ModelCallContext {
     ModelCallContext {
         run_id: Some("run_1".to_owned()),
+        budget_scope_id: None,
         workflow_id: Some("workflow".to_owned()),
         event_id: Some("e1".to_owned()),
         handler: handler.to_owned(),
@@ -1298,9 +1404,22 @@ fn spend(
     cost: f64,
     cache_status: CacheStatus,
 ) -> BudgetSpendRecord {
+    spend_with_scope(call_id, "run", None, model, phase, cost, cache_status)
+}
+
+fn spend_with_scope(
+    call_id: &str,
+    run_id: &str,
+    budget_scope_id: Option<&str>,
+    model: &str,
+    phase: &str,
+    cost: f64,
+    cache_status: CacheStatus,
+) -> BudgetSpendRecord {
     BudgetSpendRecord {
         call_id: call_id.to_owned(),
-        run_id: Some("run".to_owned()),
+        run_id: Some(run_id.to_owned()),
+        budget_scope_id: budget_scope_id.map(ToOwned::to_owned),
         phase: Some(phase.to_owned()),
         model: model.to_owned(),
         cost_usd: cost,
@@ -1319,6 +1438,7 @@ fn model_call_record(
     ModelCallRecord {
         call_id: call_id.to_owned(),
         run_id: Some(run_id.to_owned()),
+        budget_scope_id: None,
         workflow_id: Some(workflow_id.to_owned()),
         event_id: Some("e0".to_owned()),
         model: "gpt-5.4-mini".to_owned(),

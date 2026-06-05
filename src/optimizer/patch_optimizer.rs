@@ -63,6 +63,7 @@ pub async fn optimize_from_profile(
             .strong
             .handle(HandlerRequest {
                 run_id: None,
+                budget_scope_id: None,
                 workflow_id: Some(workflow_id.to_owned()),
                 phase: Some("optimize".to_owned()),
                 effect: EffectCall::ModelTask {

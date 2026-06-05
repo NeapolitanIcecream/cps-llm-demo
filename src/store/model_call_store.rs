@@ -60,6 +60,8 @@ pub enum CacheStatus {
 pub struct ModelCallRecord {
     pub call_id: String,
     pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_scope_id: Option<String>,
     pub workflow_id: Option<String>,
     pub event_id: Option<String>,
 

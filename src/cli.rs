@@ -688,6 +688,7 @@ pub async fn run() -> Result<()> {
             });
             let request = HandlerRequest {
                 run_id: None,
+                budget_scope_id: None,
                 workflow_id: None,
                 phase: Some("probe_models".to_owned()),
                 effect: EffectCall::ModelTask {
@@ -708,6 +709,7 @@ pub async fn run() -> Result<()> {
             let weak_decision = weak.handle(request).await?;
             let strong_request = HandlerRequest {
                 run_id: None,
+                budget_scope_id: None,
                 workflow_id: None,
                 phase: Some("probe_models".to_owned()),
                 effect: EffectCall::Think {
@@ -761,6 +763,7 @@ where
 {
     let request = HandlerRequest {
         run_id: None,
+        budget_scope_id: None,
         workflow_id: None,
         phase: None,
         effect: EffectCall::CompileProgram {

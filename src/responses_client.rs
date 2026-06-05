@@ -166,7 +166,13 @@ impl ResponsesClient {
                 }
             }
             if let Some(guard) = &runtime.budget_guard {
-                if let Err(err) = guard.ensure_call_allowed(model, body_bytes.len() as u64, None) {
+                if let Err(err) = guard.ensure_call_allowed_for_scope(
+                    model,
+                    body_bytes.len() as u64,
+                    None,
+                    context.budget_scope_id.as_deref(),
+                    context.run_id.as_deref(),
+                ) {
                     let metadata = StructuredCallMetadata {
                         call_id: uuid::Uuid::new_v4().to_string(),
                         request_hash: request_hash.clone(),
@@ -396,6 +402,7 @@ impl ModelCallRuntime {
         let record = ModelCallRecord {
             call_id: metadata.call_id.clone(),
             run_id: context.run_id.clone(),
+            budget_scope_id: context.budget_scope_id.clone(),
             workflow_id: context.workflow_id.clone(),
             event_id: context.event_id.clone(),
             model: model.to_owned(),
@@ -429,6 +436,7 @@ impl ModelCallRuntime {
 #[derive(Debug, Clone, Default)]
 pub struct ModelCallContext {
     pub run_id: Option<String>,
+    pub budget_scope_id: Option<String>,
     pub workflow_id: Option<String>,
     pub event_id: Option<String>,
     pub handler: String,

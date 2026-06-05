@@ -485,6 +485,7 @@ impl EffectHandler for ResponsesStrongModel {
 fn context_from_request(handler: &str, request: &HandlerRequest) -> ModelCallContext {
     ModelCallContext {
         run_id: request.run_id.clone(),
+        budget_scope_id: request.budget_scope_id.clone(),
         workflow_id: request.workflow_id.clone(),
         event_id: request
             .input

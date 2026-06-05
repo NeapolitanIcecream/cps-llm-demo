@@ -51,6 +51,7 @@ where
         metrics.events_total += 1;
         let request = HandlerRequest {
             run_id: Some(run_id.clone()),
+            budget_scope_id: None,
             workflow_id: Some(workflow_id.to_owned()),
             phase: Some("strong_direct".to_owned()),
             effect: EffectCall::ModelTask {

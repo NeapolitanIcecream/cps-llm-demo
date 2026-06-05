@@ -128,6 +128,7 @@ async fn responses_weak_model_sends_neutral_instructions_and_request_context() {
     let decision = handler
         .handle(HandlerRequest {
             run_id: None,
+            budget_scope_id: None,
             workflow_id: None,
             phase: None,
             effect: EffectCall::ModelTask {
@@ -242,6 +243,7 @@ async fn responses_weak_model_preserves_schema_shaped_user_payloads() {
     let decision = handler
         .handle(HandlerRequest {
             run_id: None,
+            budget_scope_id: None,
             workflow_id: None,
             phase: None,
             effect: EffectCall::ModelTask {

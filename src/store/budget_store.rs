@@ -41,6 +41,8 @@ impl Default for BudgetConfig {
 pub struct BudgetSpendRecord {
     pub call_id: String,
     pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_scope_id: Option<String>,
     pub phase: Option<String>,
     pub model: String,
     pub cost_usd: f64,
@@ -90,6 +92,7 @@ impl FileBudgetStore {
         self.append_spend(&BudgetSpendRecord {
             call_id: record.call_id.clone(),
             run_id: record.run_id.clone(),
+            budget_scope_id: record.budget_scope_id.clone(),
             phase: record.phase.clone(),
             model: record.model.clone(),
             cost_usd: record.cost.total_usd,
@@ -112,6 +115,16 @@ impl FileBudgetStore {
 
     pub fn report(&self, config: &BudgetConfig) -> Result<BudgetReport> {
         let spend = self.list_spend()?;
+        Ok(build_budget_report(config, &spend))
+    }
+
+    pub fn report_for_scope(
+        &self,
+        config: &BudgetConfig,
+        budget_scope_id: Option<&str>,
+        run_id: Option<&str>,
+    ) -> Result<BudgetReport> {
+        let spend = scoped_spend(self.list_spend()?, budget_scope_id, run_id);
         Ok(build_budget_report(config, &spend))
     }
 
@@ -149,7 +162,20 @@ impl BudgetGuard {
         input_bytes: u64,
         max_output_tokens: Option<u64>,
     ) -> Result<()> {
-        let report = self.store.report(&self.config)?;
+        self.ensure_call_allowed_for_scope(model, input_bytes, max_output_tokens, None, None)
+    }
+
+    pub fn ensure_call_allowed_for_scope(
+        &self,
+        model: &str,
+        input_bytes: u64,
+        max_output_tokens: Option<u64>,
+        budget_scope_id: Option<&str>,
+        run_id: Option<&str>,
+    ) -> Result<()> {
+        let report = self
+            .store
+            .report_for_scope(&self.config, budget_scope_id, run_id)?;
         let projected_output_tokens = max_output_tokens.unwrap_or(4_096);
         let projected_usage = estimate_usage_from_bytes(input_bytes, projected_output_tokens * 2);
         let projected_cost = match self.catalog.estimate_cost(model, &projected_usage, true) {
@@ -216,6 +242,31 @@ pub fn build_budget_report(config: &BudgetConfig, spend: &[BudgetSpendRecord]) -
     }
 }
 
+fn scoped_spend(
+    spend: Vec<BudgetSpendRecord>,
+    budget_scope_id: Option<&str>,
+    run_id: Option<&str>,
+) -> Vec<BudgetSpendRecord> {
+    if let Some(budget_scope_id) = budget_scope_id {
+        return spend
+            .into_iter()
+            .filter(|record| {
+                record.budget_scope_id.as_deref() == Some(budget_scope_id)
+                    || (record.budget_scope_id.is_none()
+                        && run_id.is_some()
+                        && record.run_id.as_deref() == run_id)
+            })
+            .collect();
+    }
+    if let Some(run_id) = run_id {
+        return spend
+            .into_iter()
+            .filter(|record| record.run_id.as_deref() == Some(run_id))
+            .collect();
+    }
+    spend
+}
+
 fn append_jsonl<T: Serialize>(path: &PathBuf, value: &T) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -265,6 +316,7 @@ pub fn budget_event_from_call(record: &ModelCallRecord) -> BudgetSpendRecord {
     BudgetSpendRecord {
         call_id: record.call_id.clone(),
         run_id: record.run_id.clone(),
+        budget_scope_id: record.budget_scope_id.clone(),
         phase: record.phase.clone(),
         model: record.model.clone(),
         cost_usd: record.cost.total_usd,

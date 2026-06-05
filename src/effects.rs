@@ -218,6 +218,9 @@ pub struct HandlerRequest {
     pub run_id: Option<String>,
     #[serde(skip)]
     #[schemars(skip)]
+    pub budget_scope_id: Option<String>,
+    #[serde(skip)]
+    #[schemars(skip)]
     pub workflow_id: Option<String>,
     #[serde(skip)]
     #[schemars(skip)]
