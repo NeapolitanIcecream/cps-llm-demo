@@ -509,6 +509,34 @@ async fn run_experiment_rejects_unsafe_experiment_id_before_writing_state() {
 }
 
 #[tokio::test]
+async fn run_experiment_rejects_unsafe_phase_before_writing_skipped_marker() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_events_and_gold(&dir, 1, 0);
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.phases = vec!["../../run_manifest".to_owned()];
+    let state = StateDir::new(dir.join("state"));
+
+    let error = run_experiment(config, state.clone(), false)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("phase"));
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    assert!(!experiment_dir.join("run_manifest.json").exists());
+    assert!(
+        !experiment_dir
+            .join("artifacts")
+            .join("run_manifest.json")
+            .exists()
+    );
+}
+
+#[tokio::test]
 async fn run_experiment_executes_variants_and_writes_predictions_and_quality() {
     let dir = temp_dir();
     let price = dir.join("prices.yaml");

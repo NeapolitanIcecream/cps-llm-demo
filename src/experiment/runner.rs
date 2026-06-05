@@ -134,6 +134,7 @@ pub async fn run_experiment(
     dry_run_cost: bool,
 ) -> Result<serde_json::Value> {
     let experiment_dir = experiment_dir(&state_dir, &config.experiment_id)?;
+    validate_phase_components(&config.phases)?;
     std::fs::create_dir_all(&experiment_dir)
         .with_context(|| format!("failed to create {}", experiment_dir.display()))?;
     let manifest_path = experiment_dir.join("run_manifest.json");
@@ -3659,7 +3660,15 @@ pub fn experiment_dir(state_dir: &StateDir, experiment_id: &str) -> Result<PathB
     Ok(state_dir.root().join("experiments").join(experiment_id))
 }
 
+fn validate_phase_components(phases: &[String]) -> Result<()> {
+    for phase in phases {
+        validate_path_component("phase", phase)?;
+    }
+    Ok(())
+}
+
 fn write_phase_marker(experiment_dir: &Path, phase: &str, status: &str) -> Result<()> {
+    validate_path_component("phase", phase)?;
     let phase_dir = experiment_dir.join("artifacts").join("phases");
     std::fs::create_dir_all(&phase_dir)
         .with_context(|| format!("failed to create {}", phase_dir.display()))?;
@@ -3675,6 +3684,7 @@ fn write_phase_marker(experiment_dir: &Path, phase: &str, status: &str) -> Resul
 }
 
 fn write_skipped_phase_marker(experiment_dir: &Path, phase: &str, reason: &str) -> Result<()> {
+    validate_path_component("phase", phase)?;
     let phase_dir = experiment_dir.join("artifacts").join("phases");
     std::fs::create_dir_all(&phase_dir)
         .with_context(|| format!("failed to create {}", phase_dir.display()))?;
