@@ -545,6 +545,43 @@ async fn run_experiment_respects_budget_hard_cap() {
 }
 
 #[tokio::test]
+async fn run_experiment_rejects_unloadable_price_catalog_without_locking_defaults() {
+    for (name, price_contents, expected_error) in [
+        ("missing", None, "failed to read price catalog"),
+        (
+            "invalid",
+            Some("prices_per_1m_tokens: ["),
+            "invalid price catalog YAML",
+        ),
+    ] {
+        let dir = temp_dir();
+        let price = dir.join(format!("{name}_prices.yaml"));
+        if let Some(contents) = price_contents {
+            fs::write(&price, contents).unwrap();
+        }
+        write_events_and_gold(&dir, 1, 0);
+        let config = experiment_config(&dir, &price, 100.0);
+        let state = StateDir::new(dir.join("state"));
+
+        let error = run_experiment(config, state.clone(), true)
+            .await
+            .unwrap_err();
+
+        let error_chain = format!("{error:#}");
+        assert!(
+            error_chain.contains(expected_error),
+            "{name} catalog error chain was {error_chain}"
+        );
+        let experiment_dir = state
+            .root()
+            .join("experiments")
+            .join("notification_triage_real_v1");
+        assert!(!experiment_dir.join("config.lock.yaml").exists());
+        assert!(!experiment_dir.join("price_catalog.lock.yaml").exists());
+    }
+}
+
+#[tokio::test]
 async fn run_experiment_rejects_unsafe_experiment_id_before_writing_state() {
     let dir = temp_dir();
     let price = dir.join("prices.yaml");
@@ -1386,6 +1423,149 @@ async fn patch_validation_rebuilds_current_plan_instead_of_reusing_same_id_child
             .any(|instr| matches!(instr, Instr::Branch { .. })),
         "accepted semantic plan should be rebuilt into the installed program"
     );
+}
+
+#[tokio::test]
+async fn patch_validation_resume_uses_patch_parent_when_latest_is_installed_patch() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_fixture_program_and_task(&dir);
+    write_experiment_schemas(&dir);
+
+    let splits_dir = dir.join("splits");
+    fs::create_dir_all(&splits_dir).unwrap();
+    let profile = frame_validation_event("profile", true);
+    let validation = frame_validation_event("pv0", true);
+    write_jsonl(
+        &dir.join("all_events.jsonl"),
+        &[profile.clone(), validation.clone()],
+    );
+    write_jsonl(
+        &dir.join("gold_labels.jsonl"),
+        &[
+            gold("profile", "create_task", true, false),
+            gold("pv0", "create_task", true, false),
+        ],
+    );
+    write_jsonl(&splits_dir.join("profile_train.events.jsonl"), &[profile]);
+    write_jsonl(
+        &splits_dir.join("profile_train.gold.jsonl"),
+        &[gold("profile", "create_task", true, false)],
+    );
+    write_jsonl(
+        &splits_dir.join("patch_validation.events.jsonl"),
+        &[validation],
+    );
+    write_jsonl(
+        &splits_dir.join("patch_validation.gold.jsonl"),
+        &[gold("pv0", "create_task", true, false)],
+    );
+
+    let state = StateDir::new(dir.join("state"));
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    let artifacts_dir = experiment_dir.join("artifacts");
+    fs::create_dir_all(&artifacts_dir).unwrap();
+    let semantic_plan = json!({
+        "patch_id": "semantic_patch_v1",
+        "rationale": "resume from installed semantic patch",
+        "rules": [{
+            "rule_id": "cluster_v1",
+            "semantic_cluster": "cluster",
+            "kind": "create_task",
+            "title": "title",
+            "datetime_hint": "tomorrow",
+            "examples": ["profile"],
+            "negative_examples": []
+        }],
+        "negative_guards": [],
+        "optimizer_source": "strong_model_generated_semantic_patch_plan"
+    });
+    fs::write(
+        artifacts_dir.join("semantic_patch_plan.json"),
+        serde_json::to_vec_pretty(&semantic_plan).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        artifacts_dir.join("semantic_rules.json"),
+        serde_json::to_vec_pretty(&semantic_plan["rules"]).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        artifacts_dir.join("exact_memo_table.json"),
+        serde_json::to_vec_pretty(&ExactMemoTable::default()).unwrap(),
+    )
+    .unwrap();
+
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.workflow = Some(ExperimentWorkflow {
+        program: dir.join("program.json"),
+        task: dir.join("task.md"),
+    });
+    config.phases = vec!["patch_validation".to_owned()];
+    config.patch_gate = Some(PatchGateConfigYaml {
+        max_quality_drop: 1.0,
+        max_critical_miss_delta: 1.0,
+        max_false_fast_path_rate: 1.0,
+        min_fast_path_hit_rate_lift: 0.0,
+        min_strong_think_rate_reduction: -1.0,
+        max_continuation_frame_p95_bytes: 1_000_000,
+        require_non_exact_generalization: false,
+    });
+
+    run_experiment(config.clone(), state.clone(), false)
+        .await
+        .unwrap();
+    let programs = FileProgramRegistry::new(state.clone());
+    assert_eq!(
+        programs.latest_version("notification_triage").unwrap(),
+        "v0002"
+    );
+
+    let manifest_path = experiment_dir.join("run_manifest.json");
+    let mut manifest: RunManifest =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest
+        .completed_phases
+        .retain(|phase| phase != "patch_validation");
+    manifest
+        .runs
+        .retain(|record| record.phase != "patch_validation");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    let _ = fs::remove_file(
+        experiment_dir
+            .join("artifacts")
+            .join("phases")
+            .join("patch_validation.json"),
+    );
+    let _ = fs::remove_file(experiment_dir.join("report.json"));
+
+    run_experiment(config, state.clone(), false).await.unwrap();
+
+    assert_eq!(
+        programs.latest_version("notification_triage").unwrap(),
+        "v0002",
+        "resume should reuse the already installed semantic patch"
+    );
+    let patch_install: Value = serde_json::from_slice(
+        &fs::read(
+            experiment_dir
+                .join("artifacts")
+                .join("patch_validation")
+                .join("patch_install.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(patch_install["installed"], json!(true));
+    assert_eq!(patch_install["installed_program_version"], json!("v0002"));
 }
 
 #[tokio::test]

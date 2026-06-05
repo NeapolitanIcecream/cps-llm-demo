@@ -53,6 +53,20 @@ fn write_minimal_experiment_config(
     state_dir: &str,
 ) -> std::path::PathBuf {
     fs::write(workdir.join("all_events.jsonl"), "{}\n").unwrap();
+    fs::write(
+        workdir.join("prices.yaml"),
+        r#"prices_per_1m_tokens:
+  gpt-5.4-mini:
+    input: 0.75
+    cached_input: 0.075
+    output: 4.5
+  gpt-5.5:
+    input: 5.0
+    cached_input: 0.5
+    output: 30.0
+"#,
+    )
+    .unwrap();
     let config = json!({
         "experiment_id": experiment_id,
         "workflow_id": "notification_triage",
@@ -66,7 +80,7 @@ fn write_minimal_experiment_config(
             "structured_outputs": true
         },
         "budget": {
-            "price_catalog": "missing-prices.yaml",
+            "price_catalog": "prices.yaml",
             "soft_cap_usd": 1.0,
             "hard_cap_usd": 100.0,
             "projection_multiplier": 1.5

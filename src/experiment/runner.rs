@@ -135,8 +135,6 @@ pub async fn run_experiment(
 ) -> Result<serde_json::Value> {
     let experiment_dir = experiment_dir(&state_dir, &config.experiment_id)?;
     validate_phase_components(&config.phases)?;
-    std::fs::create_dir_all(&experiment_dir)
-        .with_context(|| format!("failed to create {}", experiment_dir.display()))?;
     let manifest_path = experiment_dir.join("run_manifest.json");
     let manifest_exists = manifest_path.exists();
     let existing_manifest = if manifest_exists {
@@ -148,9 +146,15 @@ pub async fn run_experiment(
     } else {
         None
     };
+    let catalog = PriceCatalog::load(&config.budget.price_catalog).with_context(|| {
+        format!(
+            "failed to load configured price catalog {}",
+            config.budget.price_catalog.display()
+        )
+    })?;
+    std::fs::create_dir_all(&experiment_dir)
+        .with_context(|| format!("failed to create {}", experiment_dir.display()))?;
     write_locked_config(&config, &experiment_dir.join("config.lock.yaml"))?;
-    let catalog = PriceCatalog::load(&config.budget.price_catalog)
-        .unwrap_or_else(|_| PriceCatalog::default_openai());
     catalog.write_yaml(&experiment_dir.join("price_catalog.lock.yaml"))?;
     let budget_store = FileBudgetStore::new(state_dir.clone());
     let budget_config = config.budget.budget_config();
@@ -1675,10 +1679,10 @@ async fn run_patch_validation_phase(
     let rules = plan.rules.clone();
     let output_schema: Value = read_json(&config.schemas.output_schema)?;
     let programs = FileProgramRegistry::new(state_dir.clone());
-    let latest = programs.latest_version(&config.workflow_id)?;
-    let base = programs.load_version(&config.workflow_id, &latest)?;
     let patch = semantic_program_patch(&config.workflow_id, &plan, output_schema);
-    let patched = validate_patch(&base, &patch).context("patch validation failed")?;
+    let patch_base =
+        semantic_patch_base_selection(&programs, &config.workflow_id, &patch.patch_id)?;
+    let patched = validate_patch(&patch_base.base, &patch).context("patch validation failed")?;
     let patch_dir = experiment_dir.join("artifacts").join("patch_records");
     std::fs::create_dir_all(&patch_dir)
         .with_context(|| format!("failed to create {}", patch_dir.display()))?;
@@ -2661,6 +2665,42 @@ fn installed_semantic_patch_report(experiment_dir: &Path) -> Result<Option<Value
     read_json(&path).map(Some)
 }
 
+struct SemanticPatchBaseSelection {
+    base_version: String,
+    base: Program,
+    reusable_installed_version: Option<String>,
+}
+
+fn semantic_patch_base_selection(
+    programs: &FileProgramRegistry,
+    workflow_id: &str,
+    patch_id: &str,
+) -> Result<SemanticPatchBaseSelection> {
+    let latest = programs.latest_version(workflow_id)?;
+    let versions = programs.list_versions(workflow_id)?;
+    let latest_metadata = versions.iter().find(|version| version.version == latest);
+    if latest_metadata.and_then(|version| version.patch_id.as_deref()) == Some(patch_id) {
+        let parent_version = latest_metadata
+            .and_then(|version| version.parent_version.clone())
+            .ok_or_else(|| {
+                anyhow!(
+                    "latest semantic patch version {latest:?} is missing parent version metadata"
+                )
+            })?;
+        return Ok(SemanticPatchBaseSelection {
+            base_version: parent_version.clone(),
+            base: programs.load_version(workflow_id, &parent_version)?,
+            reusable_installed_version: Some(latest),
+        });
+    }
+
+    Ok(SemanticPatchBaseSelection {
+        base_version: latest.clone(),
+        base: programs.load_version(workflow_id, &latest)?,
+        reusable_installed_version: None,
+    })
+}
+
 fn install_semantic_patch_if_gate_accepted(
     config: &ExperimentConfig,
     state_dir: &StateDir,
@@ -2690,32 +2730,11 @@ fn install_semantic_patch_if_gate_accepted(
     write_json_pretty(&patch_dir.join("semantic_patch_v1.json"), &patch)?;
     let programs = FileProgramRegistry::new(state_dir.clone());
     let patches = FilePatchRegistry::new(state_dir.clone());
-    let latest = programs.latest_version(&config.workflow_id)?;
-    let versions = programs.list_versions(&config.workflow_id)?;
-    let latest_metadata = versions.iter().find(|version| version.version == latest);
-    let (base_version, base, reusable_installed_version) = if latest_metadata
-        .and_then(|version| version.patch_id.as_deref())
-        == Some(patch.patch_id.as_str())
-    {
-        let parent_version = latest_metadata
-            .and_then(|version| version.parent_version.clone())
-            .ok_or_else(|| {
-                anyhow!(
-                    "latest semantic patch version {latest:?} is missing parent version metadata"
-                )
-            })?;
-        (
-            parent_version.clone(),
-            programs.load_version(&config.workflow_id, &parent_version)?,
-            Some(latest.clone()),
-        )
-    } else {
-        (
-            latest.clone(),
-            programs.load_version(&config.workflow_id, &latest)?,
-            None,
-        )
-    };
+    let patch_base =
+        semantic_patch_base_selection(&programs, &config.workflow_id, &patch.patch_id)?;
+    let base_version = patch_base.base_version;
+    let base = patch_base.base;
+    let reusable_installed_version = patch_base.reusable_installed_version;
     let metadata = PatchMetadata {
         patch_id: patch.patch_id.clone(),
         workflow_id: config.workflow_id.clone(),
