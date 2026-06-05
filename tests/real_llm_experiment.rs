@@ -337,6 +337,21 @@ async fn run_experiment_executes_variants_and_writes_predictions_and_quality() {
         "report".to_owned(),
     ];
     let state = StateDir::new(dir.join("state"));
+    let initial_program = weak_program();
+    FileProgramRegistry::new(state.clone())
+        .init_workflow(
+            "notification_triage",
+            initial_program.clone(),
+            fixture_program_metadata("notification_triage", &initial_program),
+        )
+        .unwrap();
+    FileMetricsStore::new(state.clone())
+        .write(&run_metrics(
+            "stale-frame-run",
+            "notification_triage",
+            99_999,
+        ))
+        .unwrap();
 
     let output = run_experiment(config, state.clone(), false).await.unwrap();
 
