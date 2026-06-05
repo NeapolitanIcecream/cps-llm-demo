@@ -10,8 +10,8 @@ use cps_llm_demo::engine::run_coordinator::{
 };
 use cps_llm_demo::experiment::config::{
     ExperimentBudget, ExperimentCache, ExperimentConfig, ExperimentData, ExperimentModels,
-    ExperimentSchemas, ExperimentSplitCounts, ExperimentWorkflow, load_experiment_config,
-    write_locked_config,
+    ExperimentSchemas, ExperimentSplitCounts, ExperimentWorkflow, ShadowConfig,
+    load_experiment_config, write_locked_config,
 };
 use cps_llm_demo::experiment::exact_memo::ExactMemoTable;
 use cps_llm_demo::experiment::patch_gate::{PatchGateConfig, PatchGateInput, evaluate_patch_gate};
@@ -744,6 +744,23 @@ async fn experiment_report_scopes_spend_and_frame_metrics_to_manifest_runs() {
     assert_eq!(report["budget"]["calls_total"], json!(1));
 }
 
+#[tokio::test]
+async fn shadow_audit_honors_zero_sample_rate_before_strong_checks() {
+    let metrics = run_shadow_audit_fixture(0.0, true).await;
+
+    assert_eq!(metrics["fast_path_hits"], json!(2));
+    assert_eq!(metrics["shadow_checked"], json!(0));
+    assert_eq!(metrics["shadow_disagreements"], json!(0));
+}
+
+#[tokio::test]
+async fn shadow_audit_can_include_non_fast_path_predictions_when_configured() {
+    let metrics = run_shadow_audit_fixture(1.0, false).await;
+
+    assert_eq!(metrics["fast_path_hits"], json!(2));
+    assert_eq!(metrics["shadow_checked"], json!(3));
+}
+
 #[test]
 fn exact_duplicates_are_not_cross_split() {
     let dir = temp_dir();
@@ -1471,6 +1488,106 @@ fn write_fixture_program_and_task(dir: &Path) {
         "Return one action draft for the event.",
     )
     .unwrap();
+}
+
+async fn run_shadow_audit_fixture(
+    sample_rate: f64,
+    only_when_fast_path_hit: bool,
+) -> serde_json::Value {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_experiment_schemas(&dir);
+    let splits_dir = dir.join("splits");
+    fs::create_dir_all(&splits_dir).unwrap();
+
+    let heldout_events = vec![
+        shadow_fixture_event("h0", "create_task"),
+        shadow_fixture_event("h1", "create_task"),
+    ];
+    let adversarial_events = vec![shadow_fixture_event("a0", "no_action")];
+    write_jsonl(
+        &splits_dir.join("heldout_test.gold.jsonl"),
+        &[
+            gold("h0", "create_task", true, false),
+            gold("h1", "create_task", true, false),
+        ],
+    );
+    write_jsonl(
+        &splits_dir.join("adversarial_test.gold.jsonl"),
+        &[gold("a0", "no_action", false, true)],
+    );
+    write_jsonl(
+        &splits_dir.join("heldout_test.events.jsonl"),
+        &heldout_events,
+    );
+    write_jsonl(
+        &splits_dir.join("adversarial_test.events.jsonl"),
+        &adversarial_events,
+    );
+
+    let state = StateDir::new(dir.join("state"));
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    let prediction_store = PredictionStore::new(experiment_dir.join("predictions"));
+    let mut hit_h0 = prediction("h0", "create_task", true);
+    hit_h0.fast_path.hit = true;
+    hit_h0.fast_path.kind = Some("weak_semantic_fast_path".to_owned());
+    hit_h0.fast_path.rule_id = Some("rule-h0".to_owned());
+    let mut hit_h1 = prediction("h1", "create_task", true);
+    hit_h1.fast_path.hit = true;
+    hit_h1.fast_path.kind = Some("weak_semantic_fast_path".to_owned());
+    hit_h1.fast_path.rule_id = Some("rule-h1".to_owned());
+    let miss_a0 = prediction("a0", "no_action", true);
+    prediction_store
+        .append("cps_generalized_patch.heldout.jsonl", &hit_h0)
+        .unwrap();
+    prediction_store
+        .append("cps_generalized_patch.heldout.jsonl", &hit_h1)
+        .unwrap();
+    prediction_store
+        .append("cps_generalized_patch.adversarial.jsonl", &miss_a0)
+        .unwrap();
+
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.phases = vec!["shadow_audit".to_owned()];
+    config.shadow = Some(ShadowConfig {
+        mode: "strong_direct".to_owned(),
+        sample_rate,
+        only_when_fast_path_hit,
+    });
+
+    run_experiment(config, state.clone(), false).await.unwrap();
+    serde_json::from_slice(
+        &fs::read(
+            state
+                .root()
+                .join("experiments")
+                .join("notification_triage_real_v1")
+                .join("shadow")
+                .join("shadow_metrics.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+fn shadow_fixture_event(id: &str, kind: &str) -> Value {
+    let mut value = event(id, &format!("message {id}"), id);
+    value["_fixture_model"] = json!({
+        "strong": {
+            "value": {
+                "event_id": id,
+                "kind": kind,
+                "title": if kind == "no_action" { "no action" } else { "title" },
+                "datetime_hint": if kind == "no_action" { Value::Null } else { json!("tomorrow") }
+            },
+            "confidence": 1.0
+        }
+    });
+    value
 }
 
 fn write_experiment_schemas(dir: &Path) {

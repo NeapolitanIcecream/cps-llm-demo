@@ -19,8 +19,8 @@ use crate::engine::run_coordinator::{
     PredictionWriteOptions, RunStreamOptions, run_stream_with_options,
 };
 use crate::experiment::config::{
-    ExperimentConfig, ExperimentSplitCounts, PatchGateConfigYaml, load_experiment_config,
-    write_locked_config,
+    ExperimentConfig, ExperimentSplitCounts, PatchGateConfigYaml, ShadowConfig,
+    load_experiment_config, write_locked_config,
 };
 use crate::experiment::exact_memo::{ExactMemoEntry, ExactMemoTable, normalized_text_hash};
 use crate::experiment::patch_gate::{
@@ -62,7 +62,7 @@ use crate::store::program_registry::{
     FileProgramRegistry, ProgramMetadata, ProgramSource, fixture_program_metadata,
 };
 use crate::store::state_dir::{
-    StateDir, now_string, read_json, validate_path_component, write_json_pretty,
+    StateDir, now_string, read_json, stable_hash_bytes, validate_path_component, write_json_pretty,
 };
 use crate::trace::TraceCollector;
 use crate::validator::validate_patch;
@@ -2124,6 +2124,13 @@ async fn run_shadow_audit(
     experiment_dir: &Path,
     strong: Arc<dyn EffectHandler>,
 ) -> Result<Vec<String>> {
+    let sample_rate = shadow_sample_rate(config.shadow.as_ref())?;
+    let only_when_fast_path_hit = config
+        .shadow
+        .as_ref()
+        .map(|shadow| shadow.only_when_fast_path_hit)
+        .unwrap_or(true);
+    validate_shadow_mode(config.shadow.as_ref())?;
     let output_schema: Value = read_json(&config.schemas.output_schema)?;
     let task_spec = experiment_task_spec(config)?;
     let mut source_predictions = Vec::new();
@@ -2168,10 +2175,9 @@ async fn run_shadow_audit(
         config.workflow_id.clone(),
         "shadow_audit",
     );
-    for prediction in source_predictions
-        .iter()
-        .filter(|prediction| prediction.fast_path.hit)
-    {
+    for prediction in source_predictions.iter().filter(|prediction| {
+        shadow_audit_should_check_prediction(prediction, sample_rate, only_when_fast_path_hit)
+    }) {
         let Some(event) = events_by_id.get(&prediction.event_id).cloned() else {
             continue;
         };
@@ -2196,6 +2202,56 @@ async fn run_shadow_audit(
     let metrics = summarize_shadow_audit(&source_predictions, &records);
     write_json_pretty(&shadow_dir.join("shadow_metrics.json"), &metrics)?;
     Ok(vec![run_id])
+}
+
+fn validate_shadow_mode(shadow: Option<&ShadowConfig>) -> Result<()> {
+    let Some(shadow) = shadow else {
+        return Ok(());
+    };
+    if shadow.mode == "strong_direct" {
+        Ok(())
+    } else {
+        Err(anyhow!("unsupported shadow audit mode {}", shadow.mode))
+    }
+}
+
+fn shadow_sample_rate(shadow: Option<&ShadowConfig>) -> Result<f64> {
+    let sample_rate = shadow.map(|shadow| shadow.sample_rate).unwrap_or(1.0);
+    if sample_rate.is_finite() && (0.0..=1.0).contains(&sample_rate) {
+        Ok(sample_rate)
+    } else {
+        Err(anyhow!(
+            "shadow sample_rate must be between 0.0 and 1.0, got {sample_rate}"
+        ))
+    }
+}
+
+fn shadow_audit_should_check_prediction(
+    prediction: &PredictionRecord,
+    sample_rate: f64,
+    only_when_fast_path_hit: bool,
+) -> bool {
+    if only_when_fast_path_hit && !prediction.fast_path.hit {
+        return false;
+    }
+    shadow_sample_includes_event(&prediction.event_id, sample_rate)
+}
+
+fn shadow_sample_includes_event(event_id: &str, sample_rate: f64) -> bool {
+    if sample_rate >= 1.0 {
+        return true;
+    }
+    if sample_rate <= 0.0 {
+        return false;
+    }
+    stable_sample_fraction("shadow_audit", event_id) < sample_rate
+}
+
+fn stable_sample_fraction(namespace: &str, event_id: &str) -> f64 {
+    let key = format!("{namespace}:{event_id}");
+    let hash = stable_hash_bytes(key.as_bytes());
+    let value = u64::from_str_radix(&hash, 16).unwrap_or_default();
+    value as f64 / (u64::MAX as f64 + 1.0)
 }
 
 fn write_experiment_report(
