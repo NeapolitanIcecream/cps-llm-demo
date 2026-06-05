@@ -1314,6 +1314,7 @@ fn validate_semantic_patch_plan(plan: &SemanticPatchPlan, optimizer_input: &Valu
 
     let mut guard_ids = BTreeSet::new();
     let mut guarded_rule_ids = BTreeSet::new();
+    let mut compiled_guards = Vec::new();
     for guard in &plan.negative_guards {
         if !guard_ids.insert(guard.guard_id.as_str()) {
             anyhow::bail!("duplicate semantic negative guard_id {:?}", guard.guard_id);
@@ -1326,18 +1327,42 @@ fn validate_semantic_patch_plan(plan: &SemanticPatchPlan, optimizer_input: &Valu
             );
         }
         guarded_rule_ids.insert(guard.rule_id.as_str());
-        Regex::new(&guard.pattern).with_context(|| {
+        let regex = Regex::new(&guard.pattern).with_context(|| {
             format!(
                 "semantic negative guard {:?} has invalid regex",
                 guard.guard_id
             )
         })?;
+        compiled_guards.push((guard.rule_id.as_str(), regex));
     }
     for rule_id in required_guard_rule_ids {
         if !guarded_rule_ids.contains(rule_id) {
             anyhow::bail!(
                 "strong semantic patch optimizer omitted negative guard for evidence-related rule_id {rule_id:?}"
             );
+        }
+    }
+    for example in &hard_negative_examples {
+        let Some(text) = example.get("text").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(related_rule_ids) = example.get("related_rule_ids").and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for rule_id in related_rule_ids.iter().filter_map(Value::as_str) {
+            if !compiled_guards
+                .iter()
+                .any(|(guard_rule_id, regex)| *guard_rule_id == rule_id && regex.is_match(text))
+            {
+                let evidence_id = example
+                    .get("event_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<unknown>");
+                anyhow::bail!(
+                    "semantic negative guards for rule_id {rule_id:?} do not match hard-negative evidence {evidence_id:?}"
+                );
+            }
         }
     }
     Ok(())
@@ -1637,7 +1662,7 @@ async fn run_patch_validation_phase(
     weak: Arc<dyn EffectHandler>,
     strong: Arc<dyn EffectHandler>,
     budget_scope_id: &str,
-    current_run_ids: &BTreeSet<String>,
+    _current_run_ids: &BTreeSet<String>,
 ) -> Result<Vec<String>> {
     let mut phase_run_ids =
         ensure_optimization_artifacts(config, experiment_dir, budget_scope_id, Arc::clone(&strong))
@@ -1699,10 +1724,13 @@ async fn run_patch_validation_phase(
     )
     .await?;
     phase_run_ids.extend(candidate_run.run_ids.clone());
-    let mut scoped_run_ids = current_run_ids.clone();
-    scoped_run_ids.extend(phase_run_ids.iter().cloned());
+    let candidate_run_ids = candidate_run
+        .run_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let continuation_frame_p95 =
-        workflow_continuation_frame_p95(state_dir, &config.workflow_id, &scoped_run_ids)?;
+        workflow_continuation_frame_p95(state_dir, &config.workflow_id, &candidate_run_ids)?;
     let quality_dir = validation_dir.join("quality");
     std::fs::create_dir_all(&quality_dir)
         .with_context(|| format!("failed to create {}", quality_dir.display()))?;
@@ -3718,6 +3746,52 @@ fn event_id_or_generate(event: &Value) -> String {
 mod tests {
     use super::*;
     use crate::program::FunctionDef;
+
+    #[test]
+    fn semantic_patch_plan_requires_negative_guard_to_match_related_evidence() {
+        let optimizer_input = json!({
+            "profile_evidence": {
+                "clusters": [{
+                    "semantic_cluster": "cluster",
+                    "fast_path_eligible": true,
+                    "output_kind": "create_task"
+                }]
+            },
+            "failure_cluster_evidence": {
+                "hard_negative_examples": [{
+                    "event_id": "hard-negative-1",
+                    "text": "Cancel the task creation for the lunch reminder.",
+                    "related_rule_ids": ["cluster_v1"]
+                }]
+            }
+        });
+        let plan = SemanticPatchPlan {
+            patch_id: "semantic_patch_v1".to_owned(),
+            rationale: "semantic fast path".to_owned(),
+            rules: vec![SemanticRule {
+                rule_id: "cluster_v1".to_owned(),
+                semantic_cluster: "cluster".to_owned(),
+                kind: "create_task".to_owned(),
+                title: Some("fast title".to_owned()),
+                datetime_hint: Some("tomorrow".to_owned()),
+                examples: vec!["create a task".to_owned()],
+                negative_examples: Vec::new(),
+            }],
+            negative_guards: vec![SemanticNegativeGuard {
+                guard_id: "guard_cluster".to_owned(),
+                rule_id: "cluster_v1".to_owned(),
+                pattern: "a^".to_owned(),
+                rationale: Some("non-matching fixture guard".to_owned()),
+            }],
+            optimizer_source: STRONG_MODEL_GENERATED_SEMANTIC_PATCH_PLAN.to_owned(),
+        };
+
+        let error = validate_semantic_patch_plan(&plan, &optimizer_input).unwrap_err();
+
+        assert!(error.to_string().contains(
+            "semantic negative guards for rule_id \"cluster_v1\" do not match hard-negative evidence"
+        ));
+    }
 
     #[tokio::test]
     async fn semantic_patch_rejects_mismatched_slot_kind_before_template_emit() {

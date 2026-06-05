@@ -20,7 +20,7 @@ use cps_llm_demo::experiment::prediction::{
 };
 use cps_llm_demo::experiment::quality::{GoldLabel, evaluate_quality};
 use cps_llm_demo::experiment::report::{VariantReportRow, build_pass_fail};
-use cps_llm_demo::experiment::runner::run_experiment;
+use cps_llm_demo::experiment::runner::{ExperimentRunRecord, RunManifest, run_experiment};
 use cps_llm_demo::experiment::semantic_fast_path::{
     SEMANTIC_FAST_PATH_TASK, generalized_semantic_metadata,
     semantic_fast_path_patch_uses_weak_matcher_not_exact_text as patch_uses_weak_matcher,
@@ -983,6 +983,173 @@ async fn patch_validation_measures_candidate_frames_before_gate() {
         .expect("candidate patch-validation metrics should be written");
     assert!(candidate.continuation_frames_total > 0);
     assert!(candidate.continuation_frame_bytes_p95 > 1);
+}
+
+#[tokio::test]
+async fn patch_validation_gate_uses_candidate_frame_p95_not_prior_baseline_runs() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_experiment_schemas(&dir);
+    fs::write(
+        dir.join("task.md"),
+        "Return one action draft for the event.",
+    )
+    .unwrap();
+    let baseline_program = capture_to_think_program();
+    fs::write(
+        dir.join("program.json"),
+        serde_json::to_vec_pretty(&baseline_program).unwrap(),
+    )
+    .unwrap();
+
+    let splits_dir = dir.join("splits");
+    fs::create_dir_all(&splits_dir).unwrap();
+    let profile = frame_validation_event("profile", true);
+    let validation = frame_validation_event("pv0", true);
+    write_jsonl(
+        &dir.join("all_events.jsonl"),
+        &[profile.clone(), validation.clone()],
+    );
+    write_jsonl(
+        &dir.join("gold_labels.jsonl"),
+        &[
+            gold("profile", "create_task", true, false),
+            gold("pv0", "create_task", true, false),
+        ],
+    );
+    write_jsonl(&splits_dir.join("profile_train.events.jsonl"), &[profile]);
+    write_jsonl(
+        &splits_dir.join("profile_train.gold.jsonl"),
+        &[gold("profile", "create_task", true, false)],
+    );
+    write_jsonl(
+        &splits_dir.join("patch_validation.events.jsonl"),
+        &[validation],
+    );
+    write_jsonl(
+        &splits_dir.join("patch_validation.gold.jsonl"),
+        &[gold("pv0", "create_task", true, false)],
+    );
+
+    let state = StateDir::new(dir.join("state"));
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    let artifacts_dir = experiment_dir.join("artifacts");
+    fs::create_dir_all(&artifacts_dir).unwrap();
+    let semantic_plan = json!({
+        "patch_id": "semantic_patch_v1",
+        "rationale": "fixture semantic fast path",
+        "rules": [{
+            "rule_id": "cluster_v1",
+            "semantic_cluster": "cluster",
+            "kind": "create_task",
+            "title": "title",
+            "datetime_hint": "tomorrow",
+            "examples": ["profile"],
+            "negative_examples": []
+        }],
+        "negative_guards": [],
+        "optimizer_source": "strong_model_generated_semantic_patch_plan"
+    });
+    fs::write(
+        artifacts_dir.join("semantic_patch_plan.json"),
+        serde_json::to_vec_pretty(&semantic_plan).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        artifacts_dir.join("semantic_rules.json"),
+        serde_json::to_vec_pretty(&semantic_plan["rules"]).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        artifacts_dir.join("exact_memo_table.json"),
+        serde_json::to_vec_pretty(&ExactMemoTable::default()).unwrap(),
+    )
+    .unwrap();
+
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.workflow = Some(ExperimentWorkflow {
+        program: dir.join("program.json"),
+        task: dir.join("task.md"),
+    });
+    config.phases = vec!["patch_validation".to_owned()];
+    config.patch_gate = Some(PatchGateConfigYaml {
+        max_quality_drop: 1.0,
+        max_critical_miss_delta: 1.0,
+        max_false_fast_path_rate: 1.0,
+        min_fast_path_hit_rate_lift: 0.0,
+        min_strong_think_rate_reduction: -1.0,
+        max_continuation_frame_p95_bytes: 1,
+        require_non_exact_generalization: false,
+    });
+    write_locked_config(&config, &experiment_dir.join("config.lock.yaml")).unwrap();
+    let prior_run_id = "prior-baseline-run";
+    fs::write(
+        experiment_dir.join("run_manifest.json"),
+        serde_json::to_vec_pretty(&RunManifest {
+            experiment_id: config.experiment_id.clone(),
+            workflow_id: config.workflow_id.clone(),
+            started_at: now_string(),
+            budget_scope_id: "frame-gate-scope".to_owned(),
+            runs: vec![ExperimentRunRecord {
+                phase: "cps_unoptimized_profile".to_owned(),
+                run_id: prior_run_id.to_owned(),
+            }],
+            completed_phases: vec!["cps_unoptimized_profile".to_owned()],
+            skipped_phases: Vec::new(),
+            dry_run_cost: false,
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    FileProgramRegistry::new(state.clone())
+        .init_workflow(
+            "notification_triage",
+            baseline_program.clone(),
+            fixture_program_metadata("notification_triage", &baseline_program),
+        )
+        .unwrap();
+    FileMetricsStore::new(state.clone())
+        .write(&run_metrics(prior_run_id, "notification_triage", 9_999))
+        .unwrap();
+
+    run_experiment(config, state.clone(), false).await.unwrap();
+
+    let gate: Value = serde_json::from_slice(
+        &fs::read(
+            experiment_dir
+                .join("artifacts")
+                .join("patch_validation")
+                .join("patch_gate_decision.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(gate["accepted"], json!(true));
+    assert!(
+        gate["reasons"].as_array().unwrap().is_empty(),
+        "prior baseline frame metrics should not reject the candidate gate"
+    );
+
+    let metrics = FileMetricsStore::new(state)
+        .list("notification_triage")
+        .unwrap();
+    assert_eq!(
+        metrics
+            .iter()
+            .find(|metrics| metrics.run_id == prior_run_id)
+            .unwrap()
+            .continuation_frame_bytes_p95,
+        9_999
+    );
+    let candidate = metrics
+        .iter()
+        .find(|metrics| metrics.mode == "cps_generalized_patch.patch_validation")
+        .expect("candidate patch-validation metrics should be written");
+    assert_eq!(candidate.continuation_frame_bytes_p95, 0);
 }
 
 #[tokio::test]
