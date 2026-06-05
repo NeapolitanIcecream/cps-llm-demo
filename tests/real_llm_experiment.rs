@@ -55,7 +55,9 @@ use cps_llm_demo::store::metrics_store::{FileMetricsStore, RunMetrics};
 use cps_llm_demo::store::model_call_store::{
     CacheStatus, CostBreakdown, FileModelCallStore, ModelCallRecord, ModelUsage,
 };
-use cps_llm_demo::store::program_registry::{FileProgramRegistry, fixture_program_metadata};
+use cps_llm_demo::store::program_registry::{
+    FileProgramRegistry, ProgramMetadata, ProgramSource, fixture_program_metadata,
+};
 use cps_llm_demo::store::state_dir::{StateDir, now_string};
 use httpmock::Method::POST;
 use httpmock::MockServer;
@@ -743,6 +745,92 @@ async fn run_experiment_executes_variants_and_writes_predictions_and_quality() {
         )),
         "installed program should emit fast-path output through template_emit"
     );
+}
+
+#[tokio::test]
+async fn new_experiment_resets_reused_workflow_latest_to_configured_baseline() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_fixture_program_and_task(&dir);
+    write_experiment_schemas(&dir);
+
+    let splits_dir = dir.join("splits");
+    fs::create_dir_all(&splits_dir).unwrap();
+    let mut heldout = event("h0", "message 0", "t0");
+    heldout["_fixture_model"] = json!({
+        "weak": {
+            "value": {
+                "event_id": "h0",
+                "kind": "create_task",
+                "title": "title",
+                "datetime_hint": "tomorrow"
+            },
+            "confidence": 1.0
+        }
+    });
+    write_jsonl(&splits_dir.join("heldout_test.events.jsonl"), &[heldout]);
+    write_jsonl(
+        &splits_dir.join("heldout_test.gold.jsonl"),
+        &[gold("h0", "create_task", true, false)],
+    );
+
+    let state = StateDir::new(dir.join("state"));
+    let baseline = weak_program();
+    let programs = FileProgramRegistry::new(state.clone());
+    programs
+        .init_workflow(
+            "notification_triage",
+            baseline.clone(),
+            fixture_program_metadata("notification_triage", &baseline),
+        )
+        .unwrap();
+    programs
+        .install_version(
+            "notification_triage",
+            baseline.clone(),
+            ProgramMetadata {
+                workflow_id: "notification_triage".to_owned(),
+                program_id: baseline.program_id.clone(),
+                version: String::new(),
+                created_at: now_string(),
+                source: ProgramSource::PatchInstall,
+                parent_version: Some("v0001".to_owned()),
+                patch_id: Some("stale_patch".to_owned()),
+                task_hash: "stale_patch".to_owned(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        programs.latest_version("notification_triage").unwrap(),
+        "v0002"
+    );
+
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.experiment_id = "notification_triage_rerun".to_owned();
+    config.workflow = Some(ExperimentWorkflow {
+        program: dir.join("program.json"),
+        task: dir.join("task.md"),
+    });
+    config.phases = vec!["cps_unoptimized_heldout".to_owned()];
+
+    run_experiment(config, state.clone(), false).await.unwrap();
+
+    assert_eq!(
+        programs.latest_version("notification_triage").unwrap(),
+        "v0001"
+    );
+    let predictions = PredictionStore::read(
+        &state
+            .root()
+            .join("experiments")
+            .join("notification_triage_rerun")
+            .join("predictions")
+            .join("cps_unoptimized.heldout.jsonl"),
+    )
+    .unwrap();
+    assert_eq!(predictions.len(), 1);
+    assert_eq!(predictions[0].program_version, "v0001");
 }
 
 #[tokio::test]

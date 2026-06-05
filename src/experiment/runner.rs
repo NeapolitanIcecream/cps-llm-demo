@@ -156,7 +156,8 @@ pub async fn run_experiment(
     }
 
     let manifest_path = experiment_dir.join("run_manifest.json");
-    let mut manifest = if manifest_path.exists() {
+    let manifest_exists = manifest_path.exists();
+    let mut manifest = if manifest_exists {
         read_json::<RunManifest>(&manifest_path)?
     } else {
         RunManifest {
@@ -180,7 +181,7 @@ pub async fn run_experiment(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    ensure_workflow_initialized(&state_dir, &config)?;
+    ensure_workflow_initialized(&state_dir, &config, !manifest_exists)?;
     let (weak, strong) = handler_pair_for_experiment(&config, &state_dir, &catalog)?;
     for phase in &config.phases {
         if completed.contains(phase) {
@@ -549,15 +550,27 @@ async fn execute_phase(
     }
 }
 
-fn ensure_workflow_initialized(state_dir: &StateDir, config: &ExperimentConfig) -> Result<()> {
+fn ensure_workflow_initialized(
+    state_dir: &StateDir,
+    config: &ExperimentConfig,
+    reset_existing_to_configured_baseline: bool,
+) -> Result<()> {
     let Some(workflow) = &config.workflow else {
         return Ok(());
     };
+    let program: Program = read_json(&workflow.program)?;
+    let programs = FileProgramRegistry::new(state_dir.clone());
     if state_dir.workflow_dir(&config.workflow_id)?.exists() {
+        if reset_existing_to_configured_baseline {
+            programs.ensure_configured_baseline(
+                &config.workflow_id,
+                program.clone(),
+                fixture_program_metadata(&config.workflow_id, &program),
+            )?;
+        }
         return Ok(());
     }
-    let program: Program = read_json(&workflow.program)?;
-    FileProgramRegistry::new(state_dir.clone()).init_workflow(
+    programs.init_workflow(
         &config.workflow_id,
         program.clone(),
         fixture_program_metadata(&config.workflow_id, &program),
@@ -2573,10 +2586,12 @@ fn install_semantic_patch_if_gate_accepted(
     let patches = FilePatchRegistry::new(state_dir.clone());
     let latest = programs.latest_version(&config.workflow_id)?;
     let versions = programs.list_versions(&config.workflow_id)?;
-    if let Some(existing) = versions
-        .iter()
-        .find(|version| version.patch_id.as_deref() == Some(patch.patch_id.as_str()))
-    {
+    if let Some(existing) = versions.iter().find(|version| {
+        version.patch_id.as_deref() == Some(patch.patch_id.as_str())
+            && (version.version == latest
+                || version.parent_version.as_deref() == Some(latest.as_str()))
+    }) {
+        programs.set_latest_version(&config.workflow_id, &existing.version)?;
         return Ok(Some(json!({
             "patch_id": patch.patch_id,
             "installed": true,

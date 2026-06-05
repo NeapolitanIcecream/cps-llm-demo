@@ -552,6 +552,66 @@ fn init_workflow_rejects_existing_workflow_without_mixing_stale_state() {
 }
 
 #[test]
+fn install_version_allocates_after_highest_version_when_latest_was_reset() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "version_counter_after_reset";
+    let program: Program = serde_json::from_str(include_str!(
+        "../examples/notification_triage.v1.program.json"
+    ))
+    .unwrap();
+    let programs = FileProgramRegistry::new(state);
+    programs
+        .init_workflow(
+            workflow_id,
+            program.clone(),
+            fixture_program_metadata(workflow_id, &program),
+        )
+        .unwrap();
+    let first_patch = programs
+        .install_version(
+            workflow_id,
+            program.clone(),
+            ProgramMetadata {
+                workflow_id: workflow_id.to_owned(),
+                program_id: program.program_id.clone(),
+                version: String::new(),
+                created_at: String::new(),
+                source: ProgramSource::PatchInstall,
+                parent_version: Some("v0001".to_owned()),
+                patch_id: Some("first_patch".to_owned()),
+                task_hash: "first_patch".to_owned(),
+            },
+        )
+        .unwrap();
+    assert_eq!(first_patch, "v0002");
+
+    programs.set_latest_version(workflow_id, "v0001").unwrap();
+    let second_patch = programs
+        .install_version(
+            workflow_id,
+            program.clone(),
+            ProgramMetadata {
+                workflow_id: workflow_id.to_owned(),
+                program_id: program.program_id.clone(),
+                version: String::new(),
+                created_at: String::new(),
+                source: ProgramSource::PatchInstall,
+                parent_version: Some("v0001".to_owned()),
+                patch_id: Some("second_patch".to_owned()),
+                task_hash: "second_patch".to_owned(),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(second_patch, "v0003");
+    assert_eq!(programs.latest_version(workflow_id).unwrap(), "v0003");
+    assert!(programs.load_version(workflow_id, "v0002").is_ok());
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[test]
 fn profile_store_records_successful_probe_for_failure_fingerprint() {
     let state_path = temp_state_dir();
     let store = FileProfileStore::new(StateDir::new(state_path.clone()));
