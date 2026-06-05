@@ -2773,9 +2773,13 @@ fn program_matches_patch_output(stored: &Program, patched: &Program) -> bool {
 }
 
 fn semantic_patch_validators_value(
-    declared_rule_ids: &[String],
+    rules: &[SemanticRule],
     negative_guards: &[SemanticNegativeGuard],
 ) -> Value {
+    let declared_rule_ids = rules
+        .iter()
+        .map(|rule| rule.rule_id.clone())
+        .collect::<Vec<_>>();
     let mut validators = vec![json!({
         "validator_id": "semantic_action_slots",
         "predicates": [
@@ -2841,6 +2845,35 @@ fn semantic_patch_validators_value(
         ]
     })];
 
+    validators.extend(rules.iter().map(|rule| {
+        json!({
+            "validator_id": format!("semantic_kind_matches_rule_{}", rule.rule_id),
+            "predicates": [
+                {
+                    "op": "not",
+                    "term": {
+                        "op": "and",
+                        "terms": [
+                            {
+                                "op": "field_equals",
+                                "path": ["semantic_match", "rule_id"],
+                                "value": rule.rule_id
+                            },
+                            {
+                                "op": "not",
+                                "term": {
+                                    "op": "field_equals",
+                                    "path": ["semantic_match", "slots", "kind"],
+                                    "value": rule.kind
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        })
+    }));
+
     validators.extend(negative_guards.iter().map(|guard| {
         json!({
             "validator_id": format!("semantic_negative_guard_{}", guard.guard_id),
@@ -2880,13 +2913,8 @@ fn semantic_program_patch(
         .iter()
         .map(|rule| rule.semantic_cluster.clone())
         .collect::<Vec<_>>();
-    let declared_rule_ids = rules
-        .iter()
-        .map(|rule| rule.rule_id.clone())
-        .collect::<Vec<_>>();
     let rules_value = serde_json::to_value(rules).unwrap_or_else(|_| json!([]));
-    let validators_value =
-        semantic_patch_validators_value(&declared_rule_ids, &plan.negative_guards);
+    let validators_value = semantic_patch_validators_value(rules, &plan.negative_guards);
     ProgramPatch {
         target_program_id: program_id.to_owned(),
         patch_id: plan.patch_id.clone(),
@@ -3684,4 +3712,151 @@ fn event_id_or_generate(event: &Value) -> String {
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::program::FunctionDef;
+
+    #[tokio::test]
+    async fn semantic_patch_rejects_mismatched_slot_kind_before_template_emit() {
+        let output_schema = action_schema_with_kind_enum();
+        let baseline = baseline_action_program(output_schema.clone());
+        let plan = SemanticPatchPlan {
+            patch_id: "semantic_patch_v1".to_owned(),
+            rationale: "semantic fast path".to_owned(),
+            rules: vec![SemanticRule {
+                rule_id: "cluster_v1".to_owned(),
+                semantic_cluster: "cluster".to_owned(),
+                kind: "create_task".to_owned(),
+                title: Some("fast title".to_owned()),
+                datetime_hint: Some("tomorrow".to_owned()),
+                examples: vec!["create a task".to_owned()],
+                negative_examples: Vec::new(),
+            }],
+            negative_guards: Vec::new(),
+            optimizer_source: STRONG_MODEL_GENERATED_SEMANTIC_PATCH_PLAN.to_owned(),
+        };
+        let patch = semantic_program_patch("notification_triage", &plan, output_schema.clone());
+        let patched = validate_patch(&baseline, &patch).unwrap();
+        let runtime = Runtime::new(
+            FixtureModelHandler::weak(),
+            FixtureModelHandler::strong(),
+            TraceCollector::default(),
+        );
+
+        let output = runtime
+            .run_program(
+                patched,
+                json!({
+                    "event_id": "e1",
+                    "text": "create a task",
+                    "_fixture_model_by_task": {
+                        "weak": {
+                            "semantic_fast_path_match": {
+                                "value": {
+                                    "matched": true,
+                                    "rule_id": "cluster_v1",
+                                    "slots": {
+                                        "kind": "archive_invoice",
+                                        "title": "invalid fast path title",
+                                        "datetime_hint": "tomorrow"
+                                    },
+                                    "confidence": 0.95,
+                                    "rationale": "fixture returned a malformed kind"
+                                },
+                                "confidence": 1.0
+                            }
+                        }
+                    },
+                    "_fixture_model": {
+                        "weak": {
+                            "value": {
+                                "event_id": "e1",
+                                "kind": "create_task",
+                                "title": "baseline title",
+                                "datetime_hint": "tomorrow"
+                            },
+                            "confidence": 1.0
+                        }
+                    }
+                }),
+            )
+            .await
+            .expect("invalid fast-path kind should fall back to the baseline path");
+
+        assert_eq!(output["kind"], json!("create_task"));
+        assert_eq!(output["title"], json!("baseline title"));
+    }
+
+    fn baseline_action_program(output_schema: Value) -> Program {
+        Program {
+            program_id: "notification_triage".to_owned(),
+            version: "v0001".to_owned(),
+            entry: "main".to_owned(),
+            input_schema: json!({"type": "object"}),
+            output_schema: output_schema.clone(),
+            allowed_effects: vec![EffectPermission::ModelTask {
+                strength: ModelStrength::Weak,
+            }],
+            functions: BTreeMap::from([(
+                "main".to_owned(),
+                FunctionDef {
+                    params: vec!["event".to_owned()],
+                    output_schema: output_schema.clone(),
+                    body: vec![
+                        Instr::Perform {
+                            out: "draft".to_owned(),
+                            effect: EffectCall::ModelTask {
+                                strength: ModelStrength::Weak,
+                                task: ModelTaskSpec {
+                                    name: "draft_action_from_event".to_owned(),
+                                    instructions: "Return one action draft.".to_owned(),
+                                },
+                            },
+                            input: JsonExpr::Var {
+                                name: "event".to_owned(),
+                            },
+                            expected_schema: output_schema,
+                            acceptance: AcceptancePolicy {
+                                min_confidence: Some(1.0),
+                                require_schema_valid: true,
+                                on_failure: FailureHandler::Abort {
+                                    reason: "baseline failed".to_owned(),
+                                },
+                            },
+                        },
+                        Instr::Return {
+                            value: JsonExpr::Var {
+                                name: "draft".to_owned(),
+                            },
+                        },
+                    ],
+                },
+            )]),
+        }
+    }
+
+    fn action_schema_with_kind_enum() -> Value {
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event_id", "kind", "title", "datetime_hint"],
+            "properties": {
+                "event_id": { "type": "string" },
+                "kind": {
+                    "type": "string",
+                    "enum": ["ignore", "create_task"]
+                },
+                "title": { "type": "string" },
+                "datetime_hint": {
+                    "anyOf": [
+                        { "type": "string" },
+                        { "type": "null" }
+                    ]
+                }
+            }
+        })
+    }
 }
