@@ -50,7 +50,10 @@ use cps_llm_demo::responses_client::{
     ModelCallContext, ModelCallRuntime, ResponsesClient, ResponsesClientConfig, extract_usage,
 };
 use cps_llm_demo::store::budget_store::{BudgetConfig, BudgetSpendRecord, FileBudgetStore};
-use cps_llm_demo::store::model_call_store::{CacheStatus, FileModelCallStore, ModelUsage};
+use cps_llm_demo::store::metrics_store::{FileMetricsStore, RunMetrics};
+use cps_llm_demo::store::model_call_store::{
+    CacheStatus, CostBreakdown, FileModelCallStore, ModelCallRecord, ModelUsage,
+};
 use cps_llm_demo::store::program_registry::{FileProgramRegistry, fixture_program_metadata};
 use cps_llm_demo::store::state_dir::{StateDir, now_string};
 use httpmock::Method::POST;
@@ -621,6 +624,110 @@ async fn run_experiment_executes_variants_and_writes_predictions_and_quality() {
     );
 }
 
+#[tokio::test]
+async fn experiment_report_scopes_spend_and_frame_metrics_to_manifest_runs() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_events_and_gold(&dir, 1, 0);
+    let splits_dir = dir.join("splits");
+    fs::create_dir_all(&splits_dir).unwrap();
+    let gold = vec![gold("e0", "create_task", true, false)];
+    write_jsonl(&splits_dir.join("heldout_test.gold.jsonl"), &gold);
+
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.phases = vec!["report".to_owned()];
+    let state = StateDir::new(dir.join("state"));
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    fs::create_dir_all(experiment_dir.join("quality")).unwrap();
+
+    let prediction = prediction("e0", "create_task", true);
+    let predictions = vec![prediction.clone()];
+    let quality = evaluate_quality(&predictions, &gold).unwrap();
+    let prediction_store = PredictionStore::new(experiment_dir.join("predictions"));
+    prediction_store
+        .append("cps_generalized_patch.heldout.jsonl", &prediction)
+        .unwrap();
+    prediction_store
+        .append("cps_exact_memo.heldout.jsonl", &prediction)
+        .unwrap();
+    fs::write(
+        experiment_dir
+            .join("quality")
+            .join("cps_generalized_patch.json"),
+        serde_json::to_vec_pretty(&quality).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        experiment_dir.join("run_manifest.json"),
+        serde_json::to_vec_pretty(&json!({
+            "experiment_id": "notification_triage_real_v1",
+            "workflow_id": "notification_triage",
+            "started_at": now_string(),
+            "runs": [
+                {
+                    "phase": "cps_generalized_patch_heldout",
+                    "run_id": "current-run"
+                }
+            ],
+            "completed_phases": [],
+            "skipped_phases": [],
+            "dry_run_cost": false
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let call_store = FileModelCallStore::new(state.clone());
+    let budget_store = FileBudgetStore::new(state.clone());
+    for record in [
+        model_call_record(
+            "current-call",
+            "current-run",
+            "notification_triage",
+            "cps_generalized_patch",
+            1.25,
+        ),
+        model_call_record(
+            "stale-call",
+            "stale-run",
+            "notification_triage",
+            "cps_generalized_patch",
+            9.75,
+        ),
+    ] {
+        call_store.append(&record).unwrap();
+        budget_store.record_model_call(&record).unwrap();
+    }
+
+    let metrics_store = FileMetricsStore::new(state.clone());
+    metrics_store
+        .write(&run_metrics("current-run", "notification_triage", 2_222))
+        .unwrap();
+    metrics_store
+        .write(&run_metrics("stale-run", "notification_triage", 99_999))
+        .unwrap();
+
+    run_experiment(config, state.clone(), false).await.unwrap();
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(experiment_dir.join("report.json")).unwrap()).unwrap();
+    let generalized_row = report["variants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["variant"] == json!("cps_generalized_patch"))
+        .unwrap();
+    assert_eq!(generalized_row["api_spend_usd"], json!(1.25));
+    assert_eq!(generalized_row["p95_frame_bytes"], json!(2_222));
+    assert_eq!(report["continuation_frames"]["p95_bytes"], json!(2_222));
+    assert_eq!(report["budget"]["spent_usd"], json!(1.25));
+    assert_eq!(report["budget"]["calls_total"], json!(1));
+}
+
 #[test]
 fn exact_duplicates_are_not_cross_split() {
     let dir = temp_dir();
@@ -781,6 +888,7 @@ async fn run_stream_writes_invalid_prediction_for_failed_event() {
         Arc::new(FixtureModelHandler::strong()),
         false,
         RunStreamOptions {
+            run_id: None,
             predictions: Some(PredictionWriteOptions {
                 store,
                 file_name: "cps_generalized_patch.heldout.jsonl".to_owned(),
@@ -1132,6 +1240,65 @@ fn spend(
     }
 }
 
+fn model_call_record(
+    call_id: &str,
+    run_id: &str,
+    workflow_id: &str,
+    phase: &str,
+    cost: f64,
+) -> ModelCallRecord {
+    ModelCallRecord {
+        call_id: call_id.to_owned(),
+        run_id: Some(run_id.to_owned()),
+        workflow_id: Some(workflow_id.to_owned()),
+        event_id: Some("e0".to_owned()),
+        model: "gpt-5.4-mini".to_owned(),
+        handler: "weak_model".to_owned(),
+        effect_kind: "model_task".to_owned(),
+        task_name: Some("semantic_fast_path_match".to_owned()),
+        phase: Some(phase.to_owned()),
+        request_hash: call_id.to_owned(),
+        prompt_hash: call_id.to_owned(),
+        schema_hash: call_id.to_owned(),
+        model_config_hash: call_id.to_owned(),
+        input_bytes: 10,
+        output_bytes: 20,
+        usage: None,
+        estimated_usage: ModelUsage::zero(),
+        cost: CostBreakdown {
+            input_usd: cost,
+            cached_input_usd: 0.0,
+            output_usd: 0.0,
+            total_usd: cost,
+            estimated: false,
+        },
+        latency_ms: 1,
+        cache_status: CacheStatus::Miss,
+        success: true,
+        error: None,
+        created_at: now_string(),
+    }
+}
+
+fn run_metrics(run_id: &str, workflow_id: &str, p95: u64) -> RunMetrics {
+    let mut metrics = RunMetrics::new(
+        run_id.to_owned(),
+        workflow_id.to_owned(),
+        "stream".to_owned(),
+        "program".to_owned(),
+        "v0002".to_owned(),
+        now_string(),
+    );
+    metrics.events_total = 1;
+    metrics.events_succeeded = 1;
+    metrics.continuation_frames_total = 1;
+    metrics.continuation_frame_bytes_p50 = p95 / 2;
+    metrics.continuation_frame_bytes_p95 = p95;
+    metrics.continuation_frame_bytes_max = p95;
+    metrics.finished_at = now_string();
+    metrics
+}
+
 fn experiment_config(dir: &Path, price: &Path, hard_cap: f64) -> ExperimentConfig {
     ExperimentConfig {
         experiment_id: "notification_triage_real_v1".to_owned(),
@@ -1348,6 +1515,7 @@ async fn run_prediction_stream_and_read() -> Vec<PredictionRecord> {
         Arc::new(FixtureModelHandler::strong()),
         false,
         RunStreamOptions {
+            run_id: None,
             predictions: Some(PredictionWriteOptions {
                 store,
                 file_name: "cps_generalized_patch.heldout.jsonl".to_owned(),

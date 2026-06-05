@@ -16,7 +16,7 @@ use crate::config::DEFAULT_BASE_URL;
 use crate::effects::{HandlerBudget, HandlerDecision, HandlerRequest, RuntimeBudget};
 use crate::engine::event_source::JsonlEventSource;
 use crate::engine::run_coordinator::{
-    PredictionWriteOptions, RunStreamOptions, run_stream, run_stream_with_options,
+    PredictionWriteOptions, RunStreamOptions, run_stream_with_options,
 };
 use crate::experiment::config::{
     ExperimentConfig, ExperimentSplitCounts, PatchGateConfigYaml, load_experiment_config,
@@ -52,7 +52,8 @@ use crate::program::{
 use crate::responses_client::{ModelCallRuntime, ResponsesClient, ResponsesClientConfig};
 use crate::runtime::Runtime;
 use crate::schema::validate_value;
-use crate::store::budget_store::{BudgetReport, FileBudgetStore};
+use crate::store::budget_store::{BudgetReport, FileBudgetStore, build_budget_report};
+use crate::store::metrics_store::{FileMetricsStore, RunMetrics};
 use crate::store::model_call_store::{FileModelCallStore, ModelCallRecord};
 use crate::store::patch_registry::{
     FilePatchRegistry, PatchEvaluationMetrics, PatchMetadata, PatchSource, PatchStatus,
@@ -60,7 +61,9 @@ use crate::store::patch_registry::{
 use crate::store::program_registry::{
     FileProgramRegistry, ProgramMetadata, ProgramSource, fixture_program_metadata,
 };
-use crate::store::state_dir::{StateDir, now_string, read_json, write_json_pretty};
+use crate::store::state_dir::{
+    StateDir, now_string, read_json, validate_path_component, write_json_pretty,
+};
 use crate::trace::TraceCollector;
 use crate::validator::validate_patch;
 
@@ -70,10 +73,18 @@ pub struct RunManifest {
     pub workflow_id: String,
     pub started_at: String,
     #[serde(default)]
+    pub runs: Vec<ExperimentRunRecord>,
+    #[serde(default)]
     pub completed_phases: Vec<String>,
     #[serde(default)]
     pub skipped_phases: Vec<String>,
     pub dry_run_cost: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExperimentRunRecord {
+    pub phase: String,
+    pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -132,6 +143,7 @@ pub async fn run_experiment(
             experiment_id: config.experiment_id.clone(),
             workflow_id: config.workflow_id.clone(),
             started_at: now_string(),
+            runs: Vec::new(),
             completed_phases: Vec::new(),
             skipped_phases: Vec::new(),
             dry_run_cost: false,
@@ -153,6 +165,7 @@ pub async fn run_experiment(
         if completed.contains(phase) {
             continue;
         }
+        let current_run_ids = manifest_run_ids(&manifest);
         match execute_phase(
             &config,
             &state_dir,
@@ -160,11 +173,13 @@ pub async fn run_experiment(
             phase,
             Arc::clone(&weak),
             Arc::clone(&strong),
+            &current_run_ids,
         )
         .await?
         {
-            PhaseOutcome::Completed => {
+            PhaseOutcome::Completed { run_ids } => {
                 write_phase_marker(&experiment_dir, phase, "completed")?;
+                append_manifest_runs(&mut manifest, phase, run_ids);
                 manifest.completed_phases.push(phase.clone());
                 write_json_pretty(&manifest_path, &manifest)?;
             }
@@ -193,8 +208,48 @@ pub async fn run_experiment(
 }
 
 enum PhaseOutcome {
-    Completed,
+    Completed { run_ids: Vec<String> },
     Skipped(String),
+}
+
+impl PhaseOutcome {
+    fn completed() -> Self {
+        Self::Completed {
+            run_ids: Vec::new(),
+        }
+    }
+
+    fn completed_with_runs(run_ids: Vec<String>) -> Self {
+        Self::Completed { run_ids }
+    }
+}
+
+fn append_manifest_runs(manifest: &mut RunManifest, phase: &str, run_ids: Vec<String>) {
+    let mut existing = manifest
+        .runs
+        .iter()
+        .map(|record| (record.phase.clone(), record.run_id.clone()))
+        .collect::<BTreeSet<_>>();
+    for run_id in run_ids {
+        if run_id.is_empty() {
+            continue;
+        }
+        let key = (phase.to_owned(), run_id.clone());
+        if existing.insert(key) {
+            manifest.runs.push(ExperimentRunRecord {
+                phase: phase.to_owned(),
+                run_id,
+            });
+        }
+    }
+}
+
+fn manifest_run_ids(manifest: &RunManifest) -> BTreeSet<String> {
+    manifest
+        .runs
+        .iter()
+        .map(|record| record.run_id.clone())
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -246,6 +301,7 @@ async fn execute_phase(
     phase: &str,
     weak: Arc<dyn EffectHandler>,
     strong: Arc<dyn EffectHandler>,
+    current_run_ids: &BTreeSet<String>,
 ) -> Result<PhaseOutcome> {
     match phase {
         "split_events" => {
@@ -270,10 +326,10 @@ async fn execute_phase(
                     adversarial_test: counts.adversarial_test,
                 },
             )?;
-            Ok(PhaseOutcome::Completed)
+            Ok(PhaseOutcome::completed())
         }
         "weak_only" => {
-            run_direct_variant(
+            let run_ids = run_direct_variant(
                 config,
                 experiment_dir,
                 ExperimentVariant::WeakOnly,
@@ -281,10 +337,10 @@ async fn execute_phase(
                 weak,
             )
             .await?;
-            Ok(PhaseOutcome::Completed)
+            Ok(PhaseOutcome::completed_with_runs(run_ids))
         }
         "strong_direct" => {
-            run_direct_variant(
+            let run_ids = run_direct_variant(
                 config,
                 experiment_dir,
                 ExperimentVariant::StrongDirect,
@@ -292,7 +348,7 @@ async fn execute_phase(
                 strong,
             )
             .await?;
-            Ok(PhaseOutcome::Completed)
+            Ok(PhaseOutcome::completed_with_runs(run_ids))
         }
         "cps_unoptimized_profile" => {
             let events = config.data.splits_dir.join("profile_train.events.jsonl");
@@ -306,20 +362,24 @@ async fn execute_phase(
             );
             let strong = attributed_handler(
                 strong,
-                run_id,
+                run_id.clone(),
                 config.workflow_id.clone(),
                 "cps_unoptimized_profile",
             );
-            run_stream(
+            run_stream_with_options(
                 state_dir.clone(),
                 &config.workflow_id,
                 source,
                 weak,
                 strong,
                 false,
+                RunStreamOptions {
+                    run_id: Some(run_id.clone()),
+                    predictions: None,
+                },
             )
             .await?;
-            Ok(PhaseOutcome::Completed)
+            Ok(PhaseOutcome::completed_with_runs(vec![run_id]))
         }
         "cps_unoptimized_heldout" => {
             let events = config.data.splits_dir.join("heldout_test.events.jsonl");
@@ -333,7 +393,7 @@ async fn execute_phase(
             );
             let strong = attributed_handler(
                 strong,
-                run_id,
+                run_id.clone(),
                 config.workflow_id.clone(),
                 "cps_unoptimized_heldout",
             );
@@ -345,6 +405,7 @@ async fn execute_phase(
                 strong,
                 false,
                 RunStreamOptions {
+                    run_id: Some(run_id.clone()),
                     predictions: Some(PredictionWriteOptions {
                         store: PredictionStore::new(experiment_dir.join("predictions")),
                         file_name: format!(
@@ -356,22 +417,30 @@ async fn execute_phase(
                 },
             )
             .await?;
-            Ok(PhaseOutcome::Completed)
+            Ok(PhaseOutcome::completed_with_runs(vec![run_id]))
         }
         "optimize" => {
-            write_optimization_artifacts(config, experiment_dir, strong).await?;
-            Ok(PhaseOutcome::Completed)
+            let run_ids = write_optimization_artifacts(config, experiment_dir, strong).await?;
+            Ok(PhaseOutcome::completed_with_runs(run_ids))
         }
         "patch_validation" => {
-            run_patch_validation_phase(config, state_dir, experiment_dir, weak, strong).await?;
-            Ok(PhaseOutcome::Completed)
+            let run_ids = run_patch_validation_phase(
+                config,
+                state_dir,
+                experiment_dir,
+                weak,
+                strong,
+                current_run_ids,
+            )
+            .await?;
+            Ok(PhaseOutcome::completed_with_runs(run_ids))
         }
         "cps_exact_memo_heldout" => {
-            run_exact_memo_variant(config, experiment_dir, strong).await?;
-            Ok(PhaseOutcome::Completed)
+            let run_ids = run_exact_memo_variant(config, experiment_dir, strong).await?;
+            Ok(PhaseOutcome::completed_with_runs(run_ids))
         }
         "cps_generalized_patch_heldout" => {
-            run_installed_patch_variant(
+            let run_ids = run_installed_patch_variant(
                 config,
                 state_dir,
                 experiment_dir,
@@ -381,10 +450,10 @@ async fn execute_phase(
                 strong,
             )
             .await?;
-            Ok(PhaseOutcome::Completed)
+            Ok(PhaseOutcome::completed_with_runs(run_ids))
         }
         "cps_generalized_patch_no_semantic_weak" => {
-            run_semantic_patch_variant(
+            let run_ids = run_semantic_patch_variant(
                 config,
                 experiment_dir,
                 "heldout_test",
@@ -394,10 +463,10 @@ async fn execute_phase(
                 strong,
             )
             .await?;
-            Ok(PhaseOutcome::Completed)
+            Ok(PhaseOutcome::completed_with_runs(run_ids))
         }
         "adversarial_audit" => {
-            run_installed_patch_variant(
+            let run_ids = run_installed_patch_variant(
                 config,
                 state_dir,
                 experiment_dir,
@@ -407,19 +476,19 @@ async fn execute_phase(
                 strong,
             )
             .await?;
-            Ok(PhaseOutcome::Completed)
+            Ok(PhaseOutcome::completed_with_runs(run_ids))
         }
         "shadow_audit" => {
-            run_shadow_audit(config, experiment_dir, strong).await?;
-            Ok(PhaseOutcome::Completed)
+            let run_ids = run_shadow_audit(config, experiment_dir, strong).await?;
+            Ok(PhaseOutcome::completed_with_runs(run_ids))
         }
         "quality_eval" => {
             evaluate_present_predictions(experiment_dir, &config.data.splits_dir)?;
-            Ok(PhaseOutcome::Completed)
+            Ok(PhaseOutcome::completed())
         }
         "report" => {
             write_experiment_report(config, experiment_dir, state_dir)?;
-            Ok(PhaseOutcome::Completed)
+            Ok(PhaseOutcome::completed())
         }
         other => Ok(PhaseOutcome::Skipped(format!(
             "phase {other} is not implemented by the real variant executor yet"
@@ -537,7 +606,7 @@ async fn run_direct_variant(
     variant: ExperimentVariant,
     strength: ModelStrength,
     handler: Arc<dyn EffectHandler>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let output_schema: Value = read_json(&config.schemas.output_schema)?;
     let task_spec = experiment_task_spec(config)?;
     let events = read_jsonl_values(&config.data.splits_dir.join("heldout_test.events.jsonl"))?;
@@ -593,7 +662,7 @@ async fn run_direct_variant(
     for (_, record) in records {
         store.append(&file_name, &record)?;
     }
-    Ok(())
+    Ok(vec![run_id])
 }
 
 #[derive(Clone)]
@@ -708,31 +777,32 @@ async fn write_optimization_artifacts(
     config: &ExperimentConfig,
     experiment_dir: &Path,
     strong: Arc<dyn EffectHandler>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let artifacts_dir = experiment_dir.join("artifacts");
     std::fs::create_dir_all(&artifacts_dir)
         .with_context(|| format!("failed to create {}", artifacts_dir.display()))?;
     let optimizer_input = build_semantic_optimizer_input(config)?;
-    let plan = run_strong_semantic_patch_optimizer(config, experiment_dir, strong, optimizer_input)
-        .await?;
+    let (plan, run_id) =
+        run_strong_semantic_patch_optimizer(config, experiment_dir, strong, optimizer_input)
+            .await?;
     write_json_pretty(&artifacts_dir.join("semantic_patch_plan.json"), &plan)?;
     write_json_pretty(&artifacts_dir.join("semantic_rules.json"), &plan.rules)?;
     let memo = build_exact_memo_table(config)?;
     write_json_pretty(&artifacts_dir.join("exact_memo_table.json"), &memo)?;
-    Ok(())
+    Ok(vec![run_id])
 }
 
 async fn ensure_optimization_artifacts(
     config: &ExperimentConfig,
     experiment_dir: &Path,
     strong: Arc<dyn EffectHandler>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let artifacts_dir = experiment_dir.join("artifacts");
     if artifacts_dir.join("semantic_patch_plan.json").exists()
         && artifacts_dir.join("semantic_rules.json").exists()
         && artifacts_dir.join("exact_memo_table.json").exists()
     {
-        return Ok(());
+        return Ok(Vec::new());
     }
     write_optimization_artifacts(config, experiment_dir, strong).await
 }
@@ -841,7 +911,7 @@ async fn run_strong_semantic_patch_optimizer(
     experiment_dir: &Path,
     strong: Arc<dyn EffectHandler>,
     request_input: Value,
-) -> Result<SemanticPatchPlan> {
+) -> Result<(SemanticPatchPlan, String)> {
     let artifacts_dir = experiment_dir.join("artifacts");
     std::fs::create_dir_all(&artifacts_dir)
         .with_context(|| format!("failed to create {}", artifacts_dir.display()))?;
@@ -859,7 +929,7 @@ async fn run_strong_semantic_patch_optimizer(
     let run_id = uuid::Uuid::new_v4().to_string();
     let decision = strong
         .handle(HandlerRequest {
-            run_id: Some(run_id),
+            run_id: Some(run_id.clone()),
             workflow_id: Some(config.workflow_id.clone()),
             phase: Some("optimize".to_owned()),
             effect: EffectCall::ModelTask {
@@ -906,7 +976,7 @@ async fn run_strong_semantic_patch_optimizer(
             "raw_optimizer_response_is_final_plan": true
         }),
     )?;
-    Ok(plan)
+    Ok((plan, run_id))
 }
 
 const STRONG_SEMANTIC_PATCH_OPTIMIZER_INSTRUCTIONS: &str = r#"You are the strong optimizer for a typed CPS Program IR experiment.
@@ -1129,7 +1199,7 @@ async fn run_exact_memo_variant(
     config: &ExperimentConfig,
     experiment_dir: &Path,
     strong: Arc<dyn EffectHandler>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let memo = build_exact_memo_table(config)?;
     let output_schema: Value = read_json(&config.schemas.output_schema)?;
     let task_spec = experiment_task_spec(config)?;
@@ -1199,7 +1269,7 @@ async fn run_exact_memo_variant(
             },
         )?;
     }
-    Ok(())
+    Ok(vec![run_id])
 }
 
 async fn run_semantic_patch_variant(
@@ -1210,7 +1280,7 @@ async fn run_semantic_patch_variant(
     semantic_weak_enabled: bool,
     weak: Arc<dyn EffectHandler>,
     strong: Arc<dyn EffectHandler>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let plan = read_semantic_patch_plan_from_artifacts(experiment_dir)?;
     let rules = plan.rules;
     let rules_by_id = rules
@@ -1328,7 +1398,7 @@ async fn run_semantic_patch_variant(
             },
         )?;
     }
-    Ok(())
+    Ok(vec![run_id])
 }
 
 async fn run_installed_patch_variant(
@@ -1339,7 +1409,7 @@ async fn run_installed_patch_variant(
     variant: ExperimentVariant,
     weak: Arc<dyn EffectHandler>,
     strong: Arc<dyn EffectHandler>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let suffix = if split_name == "heldout_test" {
         "heldout"
     } else {
@@ -1356,18 +1426,14 @@ async fn run_installed_patch_variant(
     } else {
         format!("{}.adversarial", variant.as_str())
     };
+    let run_id = uuid::Uuid::new_v4().to_string();
     let weak = attributed_handler(
         weak,
-        uuid::Uuid::new_v4().to_string(),
+        run_id.clone(),
         config.workflow_id.clone(),
         phase.clone(),
     );
-    let strong = attributed_handler(
-        strong,
-        uuid::Uuid::new_v4().to_string(),
-        config.workflow_id.clone(),
-        phase,
-    );
+    let strong = attributed_handler(strong, run_id.clone(), config.workflow_id.clone(), phase);
     let source = JsonlEventSource::from_path(
         &config
             .data
@@ -1382,6 +1448,7 @@ async fn run_installed_patch_variant(
         strong,
         false,
         RunStreamOptions {
+            run_id: Some(run_id.clone()),
             predictions: Some(PredictionWriteOptions {
                 store: PredictionStore::new(experiment_dir.join("predictions")),
                 file_name,
@@ -1396,7 +1463,7 @@ async fn run_installed_patch_variant(
             summary.program_version
         );
     }
-    Ok(())
+    Ok(vec![run_id])
 }
 
 async fn run_patch_validation_phase(
@@ -1405,8 +1472,10 @@ async fn run_patch_validation_phase(
     experiment_dir: &Path,
     weak: Arc<dyn EffectHandler>,
     strong: Arc<dyn EffectHandler>,
-) -> Result<()> {
-    ensure_optimization_artifacts(config, experiment_dir, Arc::clone(&strong)).await?;
+    current_run_ids: &BTreeSet<String>,
+) -> Result<Vec<String>> {
+    let mut phase_run_ids =
+        ensure_optimization_artifacts(config, experiment_dir, Arc::clone(&strong)).await?;
     let validation_dir = experiment_dir.join("artifacts").join("patch_validation");
     std::fs::create_dir_all(&validation_dir)
         .with_context(|| format!("failed to create {}", validation_dir.display()))?;
@@ -1424,7 +1493,7 @@ async fn run_patch_validation_phase(
     write_json_pretty(&patch_dir.join("semantic_patch_v1.json"), &patch)?;
 
     let task_spec = experiment_task_spec(config)?;
-    let strong_path = run_direct_split_predictions(
+    let strong_run = run_direct_split_predictions(
         config,
         experiment_dir,
         "patch_validation",
@@ -1434,14 +1503,16 @@ async fn run_patch_validation_phase(
         Arc::clone(&strong),
     )
     .await?;
-    let exact_path = run_exact_memo_split_predictions(
+    phase_run_ids.extend(strong_run.run_ids.clone());
+    let exact_run = run_exact_memo_split_predictions(
         config,
         experiment_dir,
         "patch_validation",
         Arc::clone(&strong),
     )
     .await?;
-    let candidate_path = run_program_split_predictions(
+    phase_run_ids.extend(exact_run.run_ids.clone());
+    let candidate_run = run_program_split_predictions(
         config,
         experiment_dir,
         "patch_validation",
@@ -1451,29 +1522,34 @@ async fn run_patch_validation_phase(
         Arc::clone(&strong),
     )
     .await?;
+    phase_run_ids.extend(candidate_run.run_ids.clone());
+    let mut scoped_run_ids = current_run_ids.clone();
+    scoped_run_ids.extend(phase_run_ids.iter().cloned());
+    let continuation_frame_p95 =
+        workflow_continuation_frame_p95(state_dir, &config.workflow_id, &scoped_run_ids)?;
     let quality_dir = validation_dir.join("quality");
     std::fs::create_dir_all(&quality_dir)
         .with_context(|| format!("failed to create {}", quality_dir.display()))?;
     let gold_path = config.data.splits_dir.join("patch_validation.gold.jsonl");
     let strong_quality = evaluate_quality_files(
-        &strong_path,
+        &strong_run.path,
         &gold_path,
         &quality_dir.join("strong_direct.json"),
     )?;
     let exact_quality = evaluate_quality_files(
-        &exact_path,
+        &exact_run.path,
         &gold_path,
         &quality_dir.join("cps_exact_memo.json"),
     )?;
     let candidate_quality = evaluate_quality_files(
-        &candidate_path,
+        &candidate_run.path,
         &gold_path,
         &quality_dir.join("cps_generalized_patch.json"),
     )?;
     let gold = read_gold_labels(&gold_path)?;
     let strong_row = row_from_prediction_file(
         "strong_direct",
-        &strong_path,
+        &strong_run.path,
         &gold,
         &strong_quality,
         None,
@@ -1481,7 +1557,7 @@ async fn run_patch_validation_phase(
     )?;
     let exact_row = row_from_prediction_file(
         "cps_exact_memo",
-        &exact_path,
+        &exact_run.path,
         &gold,
         &exact_quality,
         None,
@@ -1489,10 +1565,10 @@ async fn run_patch_validation_phase(
     )?;
     let candidate_row = row_from_prediction_file(
         "cps_generalized_patch",
-        &candidate_path,
+        &candidate_run.path,
         &gold,
         &candidate_quality,
-        workflow_continuation_frame_p95(state_dir, &config.workflow_id)?,
+        continuation_frame_p95,
         0.0,
     )?;
     let gate = evaluate_patch_gate_from_rows(
@@ -1501,7 +1577,7 @@ async fn run_patch_validation_phase(
         &strong_row,
         &exact_row,
         &candidate_row,
-        workflow_continuation_frame_p95(state_dir, &config.workflow_id)?,
+        continuation_frame_p95,
     );
     write_json_pretty(&validation_dir.join("patch_gate_decision.json"), &gate)?;
     write_json_pretty(
@@ -1521,7 +1597,12 @@ async fn run_patch_validation_phase(
     if !gate.accepted {
         anyhow::bail!("semantic patch failed patch gate: {:?}", gate.reasons);
     }
-    Ok(())
+    Ok(phase_run_ids)
+}
+
+struct PredictionSplitRun {
+    path: PathBuf,
+    run_ids: Vec<String>,
 }
 
 async fn run_direct_split_predictions(
@@ -1532,7 +1613,7 @@ async fn run_direct_split_predictions(
     strength: ModelStrength,
     task_spec: &str,
     handler: Arc<dyn EffectHandler>,
-) -> Result<PathBuf> {
+) -> Result<PredictionSplitRun> {
     let output_schema: Value = read_json(&config.schemas.output_schema)?;
     let file_name = format!("{}.{}.jsonl", variant, split_suffix(split_name));
     let prediction_path = experiment_dir.join("predictions").join(&file_name);
@@ -1589,7 +1670,10 @@ async fn run_direct_split_predictions(
             },
         )?;
     }
-    Ok(prediction_path)
+    Ok(PredictionSplitRun {
+        path: prediction_path,
+        run_ids: vec![run_id],
+    })
 }
 
 async fn run_exact_memo_split_predictions(
@@ -1597,7 +1681,7 @@ async fn run_exact_memo_split_predictions(
     experiment_dir: &Path,
     split_name: &str,
     strong: Arc<dyn EffectHandler>,
-) -> Result<PathBuf> {
+) -> Result<PredictionSplitRun> {
     let memo = build_exact_memo_table(config)?;
     let output_schema: Value = read_json(&config.schemas.output_schema)?;
     let task_spec = experiment_task_spec(config)?;
@@ -1671,7 +1755,10 @@ async fn run_exact_memo_split_predictions(
             },
         )?;
     }
-    Ok(prediction_path)
+    Ok(PredictionSplitRun {
+        path: prediction_path,
+        run_ids: vec![run_id],
+    })
 }
 
 async fn run_program_split_predictions(
@@ -1682,7 +1769,7 @@ async fn run_program_split_predictions(
     program: Program,
     weak: Arc<dyn EffectHandler>,
     strong: Arc<dyn EffectHandler>,
-) -> Result<PathBuf> {
+) -> Result<PredictionSplitRun> {
     let file_name = format!("{}.{}.jsonl", variant, split_suffix(split_name));
     let prediction_path = experiment_dir.join("predictions").join(&file_name);
     if prediction_path.exists() {
@@ -1691,18 +1778,14 @@ async fn run_program_split_predictions(
     }
     let store = PredictionStore::new(experiment_dir.join("predictions"));
     let phase = format!("{variant}.{}", split_suffix(split_name));
+    let run_id = uuid::Uuid::new_v4().to_string();
     let weak = attributed_handler(
         weak,
-        uuid::Uuid::new_v4().to_string(),
+        run_id.clone(),
         config.workflow_id.clone(),
         phase.clone(),
     );
-    let strong = attributed_handler(
-        strong,
-        uuid::Uuid::new_v4().to_string(),
-        config.workflow_id.clone(),
-        phase,
-    );
+    let strong = attributed_handler(strong, run_id.clone(), config.workflow_id.clone(), phase);
     for event in read_jsonl_values(
         &config
             .data
@@ -1737,13 +1820,16 @@ async fn run_program_split_predictions(
                 program_version: program.version.clone(),
                 output,
                 schema_valid,
-                trace_run_id: None,
+                trace_run_id: Some(run_id.clone()),
                 fast_path,
                 model_calls,
             },
         )?;
     }
-    Ok(prediction_path)
+    Ok(PredictionSplitRun {
+        path: prediction_path,
+        run_ids: vec![run_id],
+    })
 }
 
 fn split_suffix(split_name: &str) -> &'static str {
@@ -2023,7 +2109,7 @@ async fn run_shadow_audit(
     config: &ExperimentConfig,
     experiment_dir: &Path,
     strong: Arc<dyn EffectHandler>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     let output_schema: Value = read_json(&config.schemas.output_schema)?;
     let task_spec = experiment_task_spec(config)?;
     let mut source_predictions = Vec::new();
@@ -2061,9 +2147,10 @@ async fn run_shadow_audit(
             .with_context(|| format!("failed to remove {}", records_path.display()))?;
     }
     let mut records = Vec::new();
+    let run_id = uuid::Uuid::new_v4().to_string();
     let strong = attributed_handler(
         strong,
-        uuid::Uuid::new_v4().to_string(),
+        run_id.clone(),
         config.workflow_id.clone(),
         "shadow_audit",
     );
@@ -2094,7 +2181,7 @@ async fn run_shadow_audit(
     }
     let metrics = summarize_shadow_audit(&source_predictions, &records);
     write_json_pretty(&shadow_dir.join("shadow_metrics.json"), &metrics)?;
-    Ok(())
+    Ok(vec![run_id])
 }
 
 fn write_experiment_report(
@@ -2102,11 +2189,20 @@ fn write_experiment_report(
     experiment_dir: &Path,
     state_dir: &StateDir,
 ) -> Result<()> {
+    let current_run_ids = experiment_run_ids(experiment_dir)?;
     let budget_store = FileBudgetStore::new(state_dir.clone());
-    let budget = budget_store.report(&config.budget.budget_config())?;
-    let model_calls = FileModelCallStore::new(state_dir.clone()).list_all()?;
+    let budget = budget_report_for_run_ids(
+        &budget_store,
+        &config.budget.budget_config(),
+        &current_run_ids,
+    )?;
+    let model_calls = model_calls_for_run_ids(
+        &FileModelCallStore::new(state_dir.clone()),
+        &current_run_ids,
+    )?;
     let api_spend = api_spend_by_variant(&model_calls);
-    let continuation_frame_p95 = workflow_continuation_frame_p95(state_dir, &config.workflow_id)?;
+    let continuation_frame_p95 =
+        workflow_continuation_frame_p95(state_dir, &config.workflow_id, &current_run_ids)?;
     let quality_dir = experiment_dir.join("quality");
     let mut quality = BTreeMap::new();
     let mut variants = Vec::new();
@@ -2137,7 +2233,8 @@ fn write_experiment_report(
     variants.sort_by(|left, right| left.variant.cmp(&right.variant));
     let generalization_breakdown =
         build_generalization_breakdown(experiment_dir, &config.data.splits_dir)?;
-    let continuation_frames = workflow_continuation_frame_summary(state_dir, &config.workflow_id)?;
+    let continuation_frames =
+        workflow_continuation_frame_summary(state_dir, &config.workflow_id, &current_run_ids)?;
     let patch_gate = read_patch_gate_decision(experiment_dir)?;
     let patch = installed_semantic_patch_report(config, state_dir, experiment_dir)?;
     let pass_fail = build_report_pass_fail(
@@ -2163,6 +2260,44 @@ fn write_experiment_report(
         pass_fail,
     };
     write_report(&report, &experiment_dir.join("report.md"))
+}
+
+fn experiment_run_ids(experiment_dir: &Path) -> Result<BTreeSet<String>> {
+    let manifest_path = experiment_dir.join("run_manifest.json");
+    if !manifest_path.exists() {
+        return Ok(BTreeSet::new());
+    }
+    let manifest: RunManifest = read_json(&manifest_path)?;
+    Ok(manifest_run_ids(&manifest))
+}
+
+fn model_calls_for_run_ids(
+    store: &FileModelCallStore,
+    run_ids: &BTreeSet<String>,
+) -> Result<Vec<ModelCallRecord>> {
+    let mut records = Vec::new();
+    for run_id in run_ids {
+        records.extend(store.list_by_run(run_id)?);
+    }
+    Ok(records)
+}
+
+fn budget_report_for_run_ids(
+    store: &FileBudgetStore,
+    config: &crate::store::budget_store::BudgetConfig,
+    run_ids: &BTreeSet<String>,
+) -> Result<BudgetReport> {
+    let spend = store
+        .list_spend()?
+        .into_iter()
+        .filter(|record| {
+            record
+                .run_id
+                .as_deref()
+                .is_some_and(|run_id| run_ids.contains(run_id))
+        })
+        .collect::<Vec<_>>();
+    Ok(build_budget_report(config, &spend))
 }
 
 fn patch_gate_config_from_yaml(config: &PatchGateConfigYaml) -> PatchGateConfig {
@@ -2770,43 +2905,21 @@ fn generalized_hits_multiple_clusters(rows: &[Value]) -> bool {
 fn workflow_continuation_frame_summary(
     state_dir: &StateDir,
     workflow_id: &str,
+    run_ids: &BTreeSet<String>,
 ) -> Result<Option<Value>> {
-    let metrics_dir = state_dir.workflow_dir(workflow_id)?.join("metrics");
-    if !metrics_dir.exists() {
+    let metrics = workflow_continuation_metrics_for_runs(state_dir, workflow_id, run_ids)?;
+    if metrics.is_empty() {
         return Ok(None);
     }
     let mut frames_total = 0_u64;
     let mut p50 = 0_u64;
     let mut p95 = 0_u64;
     let mut max = 0_u64;
-    for entry in std::fs::read_dir(metrics_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let metrics: Value = read_json(&entry.path())?;
-        frames_total += metrics
-            .get("continuation_frames_total")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        p50 = p50.max(
-            metrics
-                .get("continuation_frame_bytes_p50")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-        );
-        p95 = p95.max(
-            metrics
-                .get("continuation_frame_bytes_p95")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-        );
-        max = max.max(
-            metrics
-                .get("continuation_frame_bytes_max")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-        );
+    for metrics in metrics {
+        frames_total += metrics.continuation_frames_total;
+        p50 = p50.max(metrics.continuation_frame_bytes_p50);
+        p95 = p95.max(metrics.continuation_frame_bytes_p95);
+        max = max.max(metrics.continuation_frame_bytes_max);
     }
     Ok(Some(json!({
         "frames_total": frames_total,
@@ -2965,26 +3078,38 @@ fn variant_for_model_call(record: &ModelCallRecord) -> Option<&str> {
     }
 }
 
-fn workflow_continuation_frame_p95(state_dir: &StateDir, workflow_id: &str) -> Result<Option<u64>> {
+fn workflow_continuation_frame_p95(
+    state_dir: &StateDir,
+    workflow_id: &str,
+    run_ids: &BTreeSet<String>,
+) -> Result<Option<u64>> {
+    Ok(
+        workflow_continuation_metrics_for_runs(state_dir, workflow_id, run_ids)?
+            .into_iter()
+            .map(|metrics| metrics.continuation_frame_bytes_p95)
+            .max(),
+    )
+}
+
+fn workflow_continuation_metrics_for_runs(
+    state_dir: &StateDir,
+    workflow_id: &str,
+    run_ids: &BTreeSet<String>,
+) -> Result<Vec<RunMetrics>> {
     let metrics_dir = state_dir.workflow_dir(workflow_id)?.join("metrics");
-    if !metrics_dir.exists() {
-        return Ok(None);
+    if !metrics_dir.exists() || run_ids.is_empty() {
+        return Ok(Vec::new());
     }
-    let mut p95 = None;
-    for entry in std::fs::read_dir(metrics_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
+    let metrics_store = FileMetricsStore::new(state_dir.clone());
+    let mut metrics = Vec::new();
+    for run_id in run_ids {
+        validate_path_component("run_id", run_id)?;
+        if !metrics_dir.join(format!("{run_id}.json")).exists() {
             continue;
         }
-        let metrics: Value = read_json(&entry.path())?;
-        if let Some(value) = metrics
-            .get("continuation_frame_bytes_p95")
-            .and_then(Value::as_u64)
-        {
-            p95 = Some(p95.unwrap_or(0).max(value));
-        }
+        metrics.push(metrics_store.read(workflow_id, run_id)?);
     }
-    Ok(p95)
+    Ok(metrics)
 }
 
 fn false_fast_path_rate(predictions: &[PredictionRecord], gold: &[GoldLabel]) -> f64 {

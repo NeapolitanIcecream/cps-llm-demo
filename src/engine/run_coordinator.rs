@@ -35,6 +35,7 @@ pub struct RunSummary {
 
 #[derive(Debug, Clone)]
 pub struct RunStreamOptions {
+    pub run_id: Option<String>,
     pub predictions: Option<PredictionWriteOptions>,
 }
 
@@ -63,7 +64,10 @@ where
         weak,
         strong,
         trace_json,
-        RunStreamOptions { predictions: None },
+        RunStreamOptions {
+            run_id: None,
+            predictions: None,
+        },
     )
     .await
 }
@@ -86,7 +90,10 @@ where
     let profiles = FileProfileStore::new(state.clone());
     let patch_registry = FilePatchRegistry::new(state.clone());
     let program = programs.load_latest(workflow_id)?;
-    let run_id = uuid::Uuid::new_v4().to_string();
+    let run_id = options
+        .run_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let mut metrics = RunMetrics::new(
         run_id.clone(),
         workflow_id.to_owned(),
