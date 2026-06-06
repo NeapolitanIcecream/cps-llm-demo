@@ -582,6 +582,54 @@ async fn run_experiment_rejects_unloadable_price_catalog_without_locking_default
 }
 
 #[tokio::test]
+async fn run_experiment_rejects_missing_optimizer_hard_negative_evidence() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_events_and_gold(&dir, 1, 0);
+    let splits_dir = dir.join("splits");
+    fs::create_dir_all(&splits_dir).unwrap();
+    let profile = event("e0", "message 0", "t0");
+    write_jsonl(&splits_dir.join("profile_train.events.jsonl"), &[profile]);
+    write_jsonl(
+        &splits_dir.join("profile_train.gold.jsonl"),
+        &[gold("e0", "create_task", true, false)],
+    );
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.phases = vec!["optimize".to_owned()];
+    config.data.optimizer_hard_negative_evidence =
+        Some(dir.join("missing_hard_negative_evidence.jsonl"));
+    let state = StateDir::new(dir.join("state"));
+
+    let error = run_experiment(config, state.clone(), false)
+        .await
+        .unwrap_err();
+
+    let error_chain = format!("{error:#}");
+    assert!(
+        error_chain.contains("failed to read"),
+        "missing evidence error chain was {error_chain}"
+    );
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    assert!(
+        !experiment_dir
+            .join("artifacts")
+            .join("optimizer")
+            .join("optimizer_request.json")
+            .exists()
+    );
+    assert!(
+        !experiment_dir
+            .join("artifacts")
+            .join("semantic_patch_plan.json")
+            .exists()
+    );
+}
+
+#[tokio::test]
 async fn run_experiment_rejects_unsafe_experiment_id_before_writing_state() {
     let dir = temp_dir();
     let price = dir.join("prices.yaml");
@@ -1675,7 +1723,8 @@ async fn experiment_report_scopes_spend_and_frame_metrics_to_manifest_runs() {
     fs::create_dir_all(experiment_dir.join("quality")).unwrap();
     write_locked_config(&config, &experiment_dir.join("config.lock.yaml")).unwrap();
 
-    let prediction = prediction("e0", "create_task", true);
+    let mut prediction = prediction("e0", "create_task", true);
+    prediction.trace_run_id = Some("current-run".to_owned());
     let predictions = vec![prediction.clone()];
     let quality = evaluate_quality(&predictions, &gold).unwrap();
     let prediction_store = PredictionStore::new(experiment_dir.join("predictions"));
@@ -1699,6 +1748,10 @@ async fn experiment_report_scopes_spend_and_frame_metrics_to_manifest_runs() {
             "workflow_id": "notification_triage",
             "started_at": now_string(),
             "runs": [
+                {
+                    "phase": "cps_unoptimized_profile",
+                    "run_id": "current-baseline-run"
+                },
                 {
                     "phase": "cps_generalized_patch_heldout",
                     "run_id": "current-run"
@@ -1739,7 +1792,14 @@ async fn experiment_report_scopes_spend_and_frame_metrics_to_manifest_runs() {
         .write(&run_metrics("current-run", "notification_triage", 2_222))
         .unwrap();
     metrics_store
-        .write(&run_metrics("stale-run", "notification_triage", 99_999))
+        .write(&run_metrics(
+            "current-baseline-run",
+            "notification_triage",
+            99_999,
+        ))
+        .unwrap();
+    metrics_store
+        .write(&run_metrics("stale-run", "notification_triage", 123_456))
         .unwrap();
 
     run_experiment(config, state.clone(), false).await.unwrap();
@@ -1754,7 +1814,7 @@ async fn experiment_report_scopes_spend_and_frame_metrics_to_manifest_runs() {
         .unwrap();
     assert_eq!(generalized_row["api_spend_usd"], json!(1.25));
     assert_eq!(generalized_row["p95_frame_bytes"], json!(2_222));
-    assert_eq!(report["continuation_frames"]["p95_bytes"], json!(2_222));
+    assert_eq!(report["continuation_frames"]["p95_bytes"], json!(99_999));
     assert_eq!(report["budget"]["spent_usd"], json!(1.25));
     assert_eq!(report["budget"]["calls_total"], json!(1));
 }

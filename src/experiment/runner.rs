@@ -1051,9 +1051,6 @@ fn read_optimizer_hard_negative_evidence(config: &ExperimentConfig) -> Result<Ve
     let Some(path) = &config.data.optimizer_hard_negative_evidence else {
         return Ok(Vec::new());
     };
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
     read_jsonl_values(path)
 }
 
@@ -2526,11 +2523,14 @@ fn write_experiment_report(
         &current_run_ids,
     )?;
     let api_spend = api_spend_by_variant(&model_calls);
-    let continuation_frame_p95 =
-        workflow_continuation_frame_p95(state_dir, &config.workflow_id, &current_run_ids)?;
     let quality_dir = experiment_dir.join("quality");
     let mut quality = BTreeMap::new();
     let mut variants = Vec::new();
+    let frame_scope = ReportFrameScope {
+        state_dir,
+        workflow_id: &config.workflow_id,
+        current_run_ids: &current_run_ids,
+    };
     if quality_dir.exists() {
         for entry in std::fs::read_dir(&quality_dir)? {
             let entry = entry?;
@@ -2548,9 +2548,9 @@ fn write_experiment_report(
             variants.push(variant_row_from_artifacts(
                 experiment_dir,
                 &config.data.splits_dir,
+                &frame_scope,
                 &variant,
                 &metrics,
-                continuation_frame_p95,
                 api_spend.get(&variant).copied().unwrap_or(0.0),
             )?);
         }
@@ -3307,12 +3307,18 @@ fn workflow_continuation_frame_summary(
     })))
 }
 
+struct ReportFrameScope<'a> {
+    state_dir: &'a StateDir,
+    workflow_id: &'a str,
+    current_run_ids: &'a BTreeSet<String>,
+}
+
 fn variant_row_from_artifacts(
     experiment_dir: &Path,
     splits_dir: &Path,
+    frame_scope: &ReportFrameScope<'_>,
     variant: &str,
     metrics: &crate::experiment::quality::QualityMetrics,
-    continuation_frame_p95: Option<u64>,
     api_spend_usd: f64,
 ) -> Result<VariantReportRow> {
     let (predictions_file, gold_file) = variant
@@ -3331,6 +3337,8 @@ fn variant_row_from_artifacts(
         });
     let predictions_path = experiment_dir.join("predictions").join(predictions_file);
     let predictions = PredictionStore::read(&predictions_path)?;
+    let continuation_frame_p95 =
+        report_variant_continuation_frame_p95(frame_scope, variant, &predictions)?;
     let gold = read_gold_labels(&splits_dir.join(gold_file))?;
     let shadow_disagreement_rate = if variant == "cps_generalized_patch" {
         let metrics_path = experiment_dir.join("shadow").join("shadow_metrics.json");
@@ -3357,6 +3365,34 @@ fn variant_row_from_artifacts(
     );
     row.shadow_disagreement_rate = shadow_disagreement_rate;
     Ok(row)
+}
+
+fn report_variant_continuation_frame_p95(
+    frame_scope: &ReportFrameScope<'_>,
+    variant: &str,
+    predictions: &[PredictionRecord],
+) -> Result<Option<u64>> {
+    if !variant.starts_with("cps_") {
+        return Ok(None);
+    }
+    let mut run_ids = predictions
+        .iter()
+        .filter_map(|prediction| prediction.trace_run_id.as_ref())
+        .filter(|run_id| frame_scope.current_run_ids.contains(run_id.as_str()))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if variant == "cps_generalized_patch" {
+        for metrics in workflow_continuation_metrics_for_runs(
+            frame_scope.state_dir,
+            frame_scope.workflow_id,
+            frame_scope.current_run_ids,
+        )? {
+            if metrics.mode == "cps_generalized_patch.patch_validation" {
+                run_ids.insert(metrics.run_id);
+            }
+        }
+    }
+    workflow_continuation_frame_p95(frame_scope.state_dir, frame_scope.workflow_id, &run_ids)
 }
 
 fn row_from_prediction_file(
