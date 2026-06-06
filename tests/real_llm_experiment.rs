@@ -582,6 +582,37 @@ async fn run_experiment_rejects_unloadable_price_catalog_without_locking_default
 }
 
 #[tokio::test]
+async fn run_experiment_requires_api_key_when_responses_api_enabled() {
+    let dir = temp_dir();
+    let price = dir.join("prices.yaml");
+    default_catalog().write_yaml(&price).unwrap();
+    write_events_and_gold(&dir, 1, 0);
+    let mut config = experiment_config(&dir, &price, 100.0);
+    config.models.use_responses_api = true;
+    config.models.api_key_env = "CPS_TEST_OPENAI_API_KEY_MISSING_FOR_REAL_MODE".to_owned();
+    let state = StateDir::new(dir.join("state"));
+
+    let error = run_experiment(config, state.clone(), false)
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains(
+            "CPS_TEST_OPENAI_API_KEY_MISSING_FOR_REAL_MODE is required when models.use_responses_api is true"
+        ),
+        "missing API key error was {error}"
+    );
+    let experiment_dir = state
+        .root()
+        .join("experiments")
+        .join("notification_triage_real_v1");
+    assert!(
+        !experiment_dir.join("run_manifest.json").exists(),
+        "real-mode experiment should fail before writing a successful manifest"
+    );
+}
+
+#[tokio::test]
 async fn run_experiment_rejects_missing_optimizer_hard_negative_evidence() {
     let dir = temp_dir();
     let price = dir.join("prices.yaml");
@@ -2561,7 +2592,7 @@ fn experiment_config(dir: &Path, price: &Path, hard_cap: f64) -> ExperimentConfi
             strong_model: "gpt-5.5".to_owned(),
             base_url_env: "CPS_TEST_OPENAI_BASE_URL_MISSING".to_owned(),
             api_key_env: "CPS_TEST_OPENAI_API_KEY_MISSING".to_owned(),
-            use_responses_api: true,
+            use_responses_api: false,
             structured_outputs: true,
         },
         budget: ExperimentBudget {

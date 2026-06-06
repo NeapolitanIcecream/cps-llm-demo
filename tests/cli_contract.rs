@@ -456,12 +456,12 @@ fn cli_run_experiment_state_dir_flag_overrides_config_state_dir() {
 }
 
 #[test]
-fn cli_init_workflow_from_task_records_strong_compile_metric() {
+fn cli_init_workflow_from_task_allows_custom_model_and_records_compile_metric() {
     let server = MockServer::start();
     let compile_mock = server.mock(|when, then| {
-        when.method(POST)
-            .path("/v1/responses")
-            .json_body_includes(r#"{"model":"gpt-5.5","text":{"format":{"name":"program"}}}"#);
+        when.method(POST).path("/v1/responses").json_body_includes(
+            r#"{"model":"custom-strong-model","text":{"format":{"name":"program"}}}"#,
+        );
         then.status(200).json_body(json!({
             "output_text": include_str!("../examples/message_action.v2.program.json")
         }));
@@ -482,9 +482,9 @@ fn cli_init_workflow_from_task_records_strong_compile_metric() {
         .arg("--api-key")
         .arg("test-key")
         .arg("--weak-model")
-        .arg("gpt-5.4-mini")
+        .arg("custom-weak-model")
         .arg("--strong-model")
-        .arg("gpt-5.5")
+        .arg("custom-strong-model")
         .assert()
         .success()
         .stdout(predicate::str::contains(

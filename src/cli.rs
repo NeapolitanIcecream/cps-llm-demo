@@ -17,19 +17,16 @@ use crate::experiment::runner::{
     DEFAULT_EXPERIMENT_STATE_DIR, experiment_dir, run_experiment_from_file,
 };
 use crate::experiment::split::{SplitCounts, SplitStrategy, split_events_files};
-use crate::model_cache::{ModelCache, ModelCacheMode};
 use crate::models::{EffectHandler, FixtureModelHandler, ResponsesStrongModel, ResponsesWeakModel};
 use crate::observability::report::build_metrics_report;
 use crate::optimizer::patch_installer::install_fixture_patch;
 use crate::optimizer::patch_optimizer::{OptimizerContext, optimize_from_profile};
-use crate::pricing::price_catalog::PriceCatalog;
 use crate::program::{EffectCall, ModelStrength, ModelTaskSpec, Program, ProgramPatch};
-use crate::responses_client::{ModelCallRuntime, ResponsesClient, ResponsesClientConfig};
+use crate::responses_client::ResponsesClient;
 use crate::runtime::Runtime;
 use crate::schema::{action_drafts_schema, message_events_schema, program_schema, schema_bundle};
 use crate::store::budget_store::FileBudgetStore;
 use crate::store::metrics_store::{FileMetricsStore, RunMetrics};
-use crate::store::model_call_store::FileModelCallStore;
 use crate::store::program_registry::{
     FileProgramRegistry, ProgramMetadata, ProgramSource, fixture_program_metadata,
 };
@@ -883,20 +880,6 @@ fn strong_handler_for_state(
     }
 }
 
-fn responses_client_for_state(config: &ModelConfig, state: &StateDir) -> ResponsesClient {
-    let call_store = FileModelCallStore::new(state.clone());
-    let budget_store = FileBudgetStore::new(state.clone());
-    let budget_config = budget_store.read_config().unwrap_or_default();
-    let catalog = PriceCatalog::default_openai();
-    let runtime = ModelCallRuntime::new(call_store, catalog)
-        .with_budget(budget_store, budget_config)
-        .with_cache(ModelCache::new(
-            state.root().join("model_cache"),
-            ModelCacheMode::ReadWrite,
-        ));
-    ResponsesClient::new(ResponsesClientConfig {
-        base_url: config.base_url.clone(),
-        api_key: config.api_key.clone(),
-        runtime: Some(Arc::new(runtime)),
-    })
+fn responses_client_for_state(config: &ModelConfig, _state: &StateDir) -> ResponsesClient {
+    config.responses_client()
 }

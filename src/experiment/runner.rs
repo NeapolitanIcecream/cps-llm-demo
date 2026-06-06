@@ -648,13 +648,20 @@ fn handler_pair_for_experiment(
     state_dir: &StateDir,
     catalog: &PriceCatalog,
 ) -> Result<(Arc<dyn EffectHandler>, Arc<dyn EffectHandler>)> {
+    if !config.models.use_responses_api {
+        return Ok((
+            Arc::new(FixtureModelHandler::weak()),
+            Arc::new(FixtureModelHandler::strong()),
+        ));
+    }
+
     let api_key = env::var(&config.models.api_key_env)
         .ok()
         .filter(|value| !value.trim().is_empty());
     let Some(api_key) = api_key else {
-        return Ok((
-            Arc::new(FixtureModelHandler::weak()),
-            Arc::new(FixtureModelHandler::strong()),
+        return Err(anyhow!(
+            "{} is required when models.use_responses_api is true",
+            config.models.api_key_env
         ));
     };
     let base_url =
