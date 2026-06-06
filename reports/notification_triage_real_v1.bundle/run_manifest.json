@@ -1,0 +1,93 @@
+{
+  "experiment_id": "notification_triage_real_v1",
+  "workflow_id": "notification_triage",
+  "started_at": "unix:1780664632",
+  "runs": [
+    {
+      "phase": "weak_only",
+      "run_id": "129d7404-1e38-4ca2-98eb-94bcc2ea6b90"
+    },
+    {
+      "phase": "strong_direct",
+      "run_id": "573bd454-8307-48ec-82cc-6bd10057a1d7"
+    },
+    {
+      "phase": "cps_unoptimized_profile",
+      "run_id": "746433ce-c54a-4b79-8695-080fc45c1481"
+    },
+    {
+      "phase": "cps_unoptimized_profile",
+      "run_id": "eb88877a-a499-49b5-8cbb-4080feabc584"
+    },
+    {
+      "phase": "optimize",
+      "run_id": "82d9eefe-e3b1-4d00-b436-96cea08061c8"
+    },
+    {
+      "phase": "cps_unoptimized_heldout",
+      "run_id": "8f9f9224-5b1f-4485-a6e5-6e4ca5c0798b"
+    },
+    {
+      "phase": "cps_unoptimized_heldout",
+      "run_id": "1b4d89b7-be1a-4fc6-8735-797e904f53fc"
+    },
+    {
+      "phase": "patch_validation",
+      "run_id": "8aed38f1-04e5-4ac6-b4fa-c2a9fd3cf41b"
+    },
+    {
+      "phase": "patch_validation",
+      "run_id": "ba3190ca-7ce3-4c57-a816-f59969e57700"
+    },
+    {
+      "phase": "patch_validation",
+      "run_id": "e501fa65-8393-4e27-9695-f0fa2052625c"
+    },
+    {
+      "phase": "cps_exact_memo_heldout",
+      "run_id": "3700b10a-c1af-4457-a55b-79c9b157f250"
+    },
+    {
+      "phase": "cps_generalized_patch_heldout",
+      "run_id": "e5f501a4-5ea5-4f11-8650-1e45eb389a56"
+    },
+    {
+      "phase": "cps_generalized_patch_heldout",
+      "run_id": "bd03b944-4fd1-4908-bed8-1ba2383a7890"
+    },
+    {
+      "phase": "cps_generalized_patch_no_semantic_weak",
+      "run_id": "34c343e3-bbeb-4b67-b3d6-000799d29b6c"
+    },
+    {
+      "phase": "adversarial_audit",
+      "run_id": "858da31a-30be-4e95-af2c-672a52cb6c90"
+    },
+    {
+      "phase": "adversarial_audit",
+      "run_id": "599b572c-aba8-4f93-881f-90d6f64ca4de"
+    },
+    {
+      "phase": "shadow_audit",
+      "run_id": "1573c1db-aea2-4be3-b947-05aace1774a4"
+    }
+  ],
+  "completed_phases": [
+    "split_events",
+    "weak_only",
+    "strong_direct",
+    "cps_unoptimized_profile",
+    "optimize",
+    "cps_unoptimized_heldout",
+    "patch_validation",
+    "cps_exact_memo_heldout",
+    "cps_generalized_patch_heldout",
+    "cps_generalized_patch_no_semantic_weak",
+    "adversarial_audit",
+    "shadow_audit",
+    "quality_eval",
+    "report"
+  ],
+  "skipped_phases": [],
+  "dry_run_cost": false
+}

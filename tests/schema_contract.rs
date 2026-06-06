@@ -2,8 +2,9 @@ use cps_llm_demo::effects::{Continuation, HandlerDecision, ReturnSlot, RuntimeFr
 use cps_llm_demo::models::WEAK_HANDLER_INSTRUCTIONS;
 use cps_llm_demo::program::Program;
 use cps_llm_demo::schema::{
-    action_draft_schema, continuation_schema, handler_decision_schema, program_schema,
-    schema_bundle, validate_value, weak_task_result_schema,
+    action_draft_schema, continuation_schema, handler_decision_schema,
+    handler_decision_value_schema, program_schema, schema_bundle, validate_value,
+    weak_task_result_schema,
 };
 use serde_json::Map;
 use serde_json::{Value, json};
@@ -148,6 +149,82 @@ fn handler_decision_schema_binds_decision_to_payload_shape() {
         .decision_name(),
         "request_effect"
     );
+}
+
+#[test]
+fn handler_decision_value_schema_preserves_control_decisions() {
+    let schema = handler_decision_value_schema(action_draft_schema());
+
+    let return_value = json!({
+        "handler_decision": {
+            "decision": "return_value",
+            "value": {
+                "event_id": "m1",
+                "kind": "create_task",
+                "title": "send proposal",
+                "datetime_hint": null
+            },
+            "confidence": 0.88,
+            "rationale": "resolved directly"
+        }
+    });
+    validate_value(&schema, &return_value).unwrap();
+
+    let invalid_return_value = json!({
+        "handler_decision": {
+            "decision": "return_value",
+            "value": {
+                "event_id": "m1",
+                "kind": "create_task"
+            },
+            "confidence": 0.88,
+            "rationale": "missing fields"
+        }
+    });
+    assert!(validate_value(&schema, &invalid_return_value).is_err());
+
+    let request_effect = json!({
+        "handler_decision": {
+            "decision": "request_effect",
+            "effect": {
+                "kind": "think",
+                "reason": "need stronger reasoning"
+            },
+            "input": {
+                "partial": "ambiguous"
+            },
+            "expected_schema": action_draft_schema(),
+            "mode": {
+                "mode": "reenter_handler",
+                "observation_name": "strong_think"
+            },
+            "rationale": "escalate and re-enter"
+        }
+    });
+    validate_value(&schema, &request_effect).unwrap();
+
+    let return_program_patch = json!({
+        "handler_decision": {
+            "decision": "return_program_patch",
+            "patch": {
+                "target_program_id": "notification_triage",
+                "patch_id": "patch_1",
+                "operations": [],
+                "rationale": "no-op schema probe",
+                "generalization": null
+            },
+            "rationale": "proposed patch"
+        }
+    });
+    validate_value(&schema, &return_program_patch).unwrap();
+
+    let abort = json!({
+        "handler_decision": {
+            "decision": "abort",
+            "reason": "underspecified"
+        }
+    });
+    validate_value(&schema, &abort).unwrap();
 }
 
 #[test]

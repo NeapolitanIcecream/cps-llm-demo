@@ -1,0 +1,23 @@
+{
+  "a1b21beab7632a1f": {
+    "fingerprint": {
+      "fingerprint_id": "a1b21beab7632a1f",
+      "program_id": "notification_triage",
+      "program_version": "v0001",
+      "function": "main",
+      "pc": 0,
+      "failed_effect_kind": "model_task",
+      "failed_task_name": "draft_action_from_event",
+      "expected_schema_hash": "d4b7855f9f978597",
+      "observation_shape_hash": "0b6783e448064031"
+    },
+    "count": 1,
+    "sample_continuation_refs": [
+      "4100237e-1d78-4842-9ea0-f69e99ee7829"
+    ],
+    "sample_event_refs": [
+      "e_048"
+    ],
+    "successful_probes": []
+  }
+}

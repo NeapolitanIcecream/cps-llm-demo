@@ -1,0 +1,176 @@
+{
+  "program_id": "notification_triage",
+  "version": "v0001",
+  "entry": "main",
+  "input_schema": {
+    "type": "object"
+  },
+  "output_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "datetime_hint": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "event_id": {
+        "type": "string"
+      },
+      "kind": {
+        "enum": [
+          "ignore",
+          "create_task",
+          "create_calendar_event",
+          "draft_reply"
+        ],
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "event_id",
+      "kind",
+      "title",
+      "datetime_hint"
+    ],
+    "type": "object"
+  },
+  "functions": {
+    "main": {
+      "params": [
+        "event"
+      ],
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "datetime_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "ignore",
+              "create_task",
+              "create_calendar_event",
+              "draft_reply"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "kind",
+          "title",
+          "datetime_hint"
+        ],
+        "type": "object"
+      },
+      "body": [
+        {
+          "op": "perform",
+          "out": "draft",
+          "effect": {
+            "kind": "model_task",
+            "strength": "weak",
+            "task": {
+              "name": "draft_action_from_event",
+              "instructions": "Return one action draft for the event."
+            }
+          },
+          "input": {
+            "kind": "var",
+            "name": "event"
+          },
+          "expected_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "datetime_hint": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "event_id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "ignore",
+                  "create_task",
+                  "create_calendar_event",
+                  "draft_reply"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event_id",
+              "kind",
+              "title",
+              "datetime_hint"
+            ],
+            "type": "object"
+          },
+          "acceptance": {
+            "min_confidence": 0.8,
+            "require_schema_valid": true,
+            "on_failure": {
+              "kind": "capture_to_think",
+              "reason": "weak result needs repair"
+            }
+          }
+        },
+        {
+          "op": "return",
+          "value": {
+            "kind": "var",
+            "name": "draft"
+          }
+        }
+      ]
+    }
+  },
+  "allowed_effects": [
+    {
+      "kind": "model_task",
+      "strength": "weak"
+    },
+    {
+      "kind": "think"
+    },
+    {
+      "kind": "local_tool",
+      "tool_name": "fast_path_apply"
+    },
+    {
+      "kind": "local_tool",
+      "tool_name": "validator_apply"
+    }
+  ]
+}

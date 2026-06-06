@@ -21,6 +21,7 @@ pub enum PatchStatus {
 pub enum PatchSource {
     RuntimeStrongThink,
     OptimizerStrongThink,
+    OptimizerStrongModel,
     Fixture,
 }
 

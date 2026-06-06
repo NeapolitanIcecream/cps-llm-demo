@@ -1,0 +1,72 @@
+{
+  "cps_exact_memo": {
+    "events_total": 160,
+    "schema_validity": 1.0,
+    "intent_accuracy": 0.71875,
+    "actionable_precision": 0.7954545454545454,
+    "actionable_recall": 0.8641975308641975,
+    "datetime_accuracy": 0.5,
+    "critical_miss_rate": 0.0,
+    "hard_negative_false_action_rate": 0.0
+  },
+  "cps_generalized_patch": {
+    "events_total": 160,
+    "schema_validity": 1.0,
+    "intent_accuracy": 0.8375,
+    "actionable_precision": 0.971830985915493,
+    "actionable_recall": 0.8518518518518519,
+    "datetime_accuracy": 0.6764705882352942,
+    "critical_miss_rate": 0.0,
+    "hard_negative_false_action_rate": 0.0
+  },
+  "cps_generalized_patch.adversarial": {
+    "events_total": 40,
+    "schema_validity": 1.0,
+    "intent_accuracy": 0.675,
+    "actionable_precision": 0.0,
+    "actionable_recall": 0.0,
+    "datetime_accuracy": 0.0,
+    "critical_miss_rate": 0.0,
+    "hard_negative_false_action_rate": 0.325
+  },
+  "cps_generalized_patch_no_semantic_weak": {
+    "events_total": 160,
+    "schema_validity": 1.0,
+    "intent_accuracy": 0.725,
+    "actionable_precision": 0.8333333333333334,
+    "actionable_recall": 0.8641975308641975,
+    "datetime_accuracy": 0.3235294117647059,
+    "critical_miss_rate": 0.0,
+    "hard_negative_false_action_rate": 0.0
+  },
+  "cps_unoptimized": {
+    "events_total": 160,
+    "schema_validity": 1.0,
+    "intent_accuracy": 0.775,
+    "actionable_precision": 0.8641975308641975,
+    "actionable_recall": 0.8641975308641975,
+    "datetime_accuracy": 0.14705882352941177,
+    "critical_miss_rate": 0.0,
+    "hard_negative_false_action_rate": 0.0
+  },
+  "strong_direct": {
+    "events_total": 160,
+    "schema_validity": 1.0,
+    "intent_accuracy": 0.725,
+    "actionable_precision": 0.8160919540229885,
+    "actionable_recall": 0.8765432098765432,
+    "datetime_accuracy": 0.35294117647058826,
+    "critical_miss_rate": 0.0,
+    "hard_negative_false_action_rate": 0.0
+  },
+  "weak_only": {
+    "events_total": 160,
+    "schema_validity": 1.0,
+    "intent_accuracy": 0.80625,
+    "actionable_precision": 0.9696969696969696,
+    "actionable_recall": 0.7901234567901234,
+    "datetime_accuracy": 0.0,
+    "critical_miss_rate": 0.3333333333333333,
+    "hard_negative_false_action_rate": 0.0
+  }
+}

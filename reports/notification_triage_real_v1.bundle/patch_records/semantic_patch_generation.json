@@ -1,0 +1,8 @@
+{
+  "generation_source": "optimizer_strong_model",
+  "generator_model": "gpt-5.5",
+  "phase": "optimize",
+  "plan_optimizer_source": "strong_model_generated_semantic_patch_plan",
+  "raw_optimizer_response_is_final_plan": true,
+  "task_name": "optimize_semantic_patch_plan"
+}

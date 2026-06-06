@@ -1,0 +1,72 @@
+experiment_id: notification_triage_pilot_v1
+workflow_id: notification_triage
+state_dir: .cps-real-exp
+
+workflow:
+  program: examples/notification_triage.v1.program.json
+  task: examples/notification_triage.task.md
+
+models:
+  weak_model: gpt-5.4-mini
+  strong_model: gpt-5.5
+  base_url_env: OPENAI_BASE_URL
+  api_key_env: OPENAI_API_KEY
+  use_responses_api: true
+  structured_outputs: true
+
+budget:
+  price_catalog: experiments/price_catalog.openai.yaml
+  soft_cap_usd: 8.0
+  hard_cap_usd: 100.0
+  projection_multiplier: 1.5
+
+cache:
+  dir: .cps-real-exp/model_cache
+  mode: read_write
+
+schemas:
+  event_schema: experiments/schemas/notification_event.schema.json
+  output_schema: experiments/schemas/action_draft.schema.json
+  gold_schema: experiments/schemas/action_gold.schema.json
+
+data:
+  all_events: data/notification/all_events.jsonl
+  gold_labels: data/notification/gold_labels.jsonl
+  splits_dir: data/notification/splits
+  optimizer_hard_negative_evidence: data/notification/optimizer_hard_negative_evidence.jsonl
+
+split_counts:
+  profile_train: 12
+  patch_validation: 8
+  heldout_test: 16
+  adversarial_test: 4
+
+phases:
+  - split_events
+  - weak_only
+  - strong_direct
+  - cps_unoptimized_profile
+  - optimize
+  - cps_unoptimized_heldout
+  - patch_validation
+  - cps_exact_memo_heldout
+  - cps_generalized_patch_heldout
+  - cps_generalized_patch_no_semantic_weak
+  - adversarial_audit
+  - shadow_audit
+  - quality_eval
+  - report
+
+shadow:
+  mode: strong_direct
+  sample_rate: 1.0
+  only_when_fast_path_hit: true
+
+patch_gate:
+  max_quality_drop: 0.02
+  max_critical_miss_delta: 0.005
+  max_false_fast_path_rate: 0.01
+  min_fast_path_hit_rate_lift: 0.10
+  min_strong_think_rate_reduction: 0.20
+  max_continuation_frame_p95_bytes: 16384
+  require_non_exact_generalization: true

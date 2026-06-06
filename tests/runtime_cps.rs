@@ -993,6 +993,24 @@ async fn weak_model_only_runs_when_program_performs_weak_effect() {
 }
 
 #[tokio::test]
+async fn runtime_leaves_run_attribution_to_outer_handler_context() {
+    let weak = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.91))]);
+    let strong = SequenceHandler::empty();
+    let runtime = Runtime::new(weak.clone(), strong, TraceCollector::default());
+
+    runtime
+        .run_program(single_weak_program(), message("m1", "send proposal"))
+        .await
+        .unwrap();
+
+    let calls = weak.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].run_id, None);
+    assert_eq!(calls[0].workflow_id, None);
+    assert_eq!(calls[0].phase, None);
+}
+
+#[tokio::test]
 async fn runtime_does_not_inject_source_into_plain_handler_payload() {
     let weak = SequenceHandler::new(vec![Ok(return_value(action_value("m1"), 0.91))]);
     let strong = SequenceHandler::empty();
@@ -1819,6 +1837,7 @@ async fn dynamic_fragment_patch_must_validate_against_host_program() {
                 acceptance: accept(0.1),
             }],
             rationale: "patch should target future host runs only".to_owned(),
+            generalization: None,
         },
         rationale: "propose patch from generated code".to_owned(),
     })]);
@@ -1876,6 +1895,7 @@ async fn program_patch_is_validated_and_recorded_without_mutating_active_stack()
                 acceptance: accept(0.1),
             }],
             rationale: "future runs can lower confidence threshold".to_owned(),
+            generalization: None,
         },
         rationale: "propose patch".to_owned(),
     })]);
@@ -1916,6 +1936,7 @@ async fn weak_model_patch_decision_is_rejected_for_direct_requests() {
                 acceptance: accept(0.1),
             }],
             rationale: "weak handler should not be able to propose host patches".to_owned(),
+            generalization: None,
         },
         rationale: "try to propose patch from direct weak task".to_owned(),
     })]);
@@ -2105,6 +2126,7 @@ async fn program_patch_cannot_resume_non_null_captured_continuation() {
                 acceptance: accept(0.1),
             }],
             rationale: "future runs can lower confidence threshold".to_owned(),
+            generalization: None,
         },
         rationale: "propose patch".to_owned(),
     })]);

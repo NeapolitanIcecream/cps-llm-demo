@@ -1,0 +1,289 @@
+{
+  "experiment_id": "notification_triage_real_v1",
+  "budget": {
+    "hard_cap_usd": 100.0,
+    "soft_cap_usd": 60.0,
+    "spent_usd": 0.9237334999999997,
+    "remaining_usd": 99.0762665,
+    "calls_total": 1586,
+    "cache_hit_rate": 0.8058007566204287,
+    "by_model": {
+      "gpt-5.4-mini": 0.7449735,
+      "gpt-5.5": 0.17876
+    },
+    "by_phase": {
+      "cps_exact_memo": 0.0,
+      "cps_exact_memo.patch_validation": 0.0,
+      "cps_generalized_patch": 0.4189725000000001,
+      "cps_generalized_patch.adversarial": 0.10848375000000002,
+      "cps_generalized_patch.patch_validation": 0.21751724999999997,
+      "cps_generalized_patch_no_semantic_weak": 0.0,
+      "cps_unoptimized_heldout": 0.0,
+      "cps_unoptimized_profile": 0.02104,
+      "optimize": 0.105235,
+      "shadow_audit": 0.052485000000000004,
+      "strong_direct": 0.0,
+      "strong_direct.patch_validation": 0.0,
+      "weak_only": 0.0
+    }
+  },
+  "variants": [
+    {
+      "variant": "cps_exact_memo",
+      "quality": 0.71875,
+      "critical_miss": 0.0,
+      "strong_calls_per_event": 1.0,
+      "weak_calls_per_event": 0.0,
+      "fast_path_hit_rate": 0.0,
+      "false_fast_path_rate": 0.0,
+      "shadow_disagreement_rate": null,
+      "p95_frame_bytes": 2339,
+      "api_spend_usd": 0.0
+    },
+    {
+      "variant": "cps_generalized_patch",
+      "quality": 0.8375,
+      "critical_miss": 0.0,
+      "strong_calls_per_event": 0.0,
+      "weak_calls_per_event": 1.46875,
+      "fast_path_hit_rate": 0.53125,
+      "false_fast_path_rate": 0.0,
+      "shadow_disagreement_rate": 0.3118279569892473,
+      "p95_frame_bytes": 2339,
+      "api_spend_usd": 0.4189725000000001
+    },
+    {
+      "variant": "cps_generalized_patch.adversarial",
+      "quality": 0.675,
+      "critical_miss": 0.0,
+      "strong_calls_per_event": 0.0,
+      "weak_calls_per_event": 1.8,
+      "fast_path_hit_rate": 0.2,
+      "false_fast_path_rate": 0.0,
+      "shadow_disagreement_rate": null,
+      "p95_frame_bytes": 2339,
+      "api_spend_usd": 0.10848375000000002
+    },
+    {
+      "variant": "cps_generalized_patch_no_semantic_weak",
+      "quality": 0.725,
+      "critical_miss": 0.0,
+      "strong_calls_per_event": 1.0,
+      "weak_calls_per_event": 0.0,
+      "fast_path_hit_rate": 0.0,
+      "false_fast_path_rate": 0.0,
+      "shadow_disagreement_rate": null,
+      "p95_frame_bytes": 2339,
+      "api_spend_usd": 0.0
+    },
+    {
+      "variant": "cps_unoptimized",
+      "quality": 0.775,
+      "critical_miss": 0.0,
+      "strong_calls_per_event": 0.0,
+      "weak_calls_per_event": 1.0,
+      "fast_path_hit_rate": 0.0,
+      "false_fast_path_rate": 0.0,
+      "shadow_disagreement_rate": null,
+      "p95_frame_bytes": 2339,
+      "api_spend_usd": 0.02104
+    },
+    {
+      "variant": "strong_direct",
+      "quality": 0.725,
+      "critical_miss": 0.0,
+      "strong_calls_per_event": 1.0,
+      "weak_calls_per_event": 0.0,
+      "fast_path_hit_rate": 0.0,
+      "false_fast_path_rate": 0.0,
+      "shadow_disagreement_rate": null,
+      "p95_frame_bytes": null,
+      "api_spend_usd": 0.0
+    },
+    {
+      "variant": "weak_only",
+      "quality": 0.80625,
+      "critical_miss": 0.3333333333333333,
+      "strong_calls_per_event": 0.0,
+      "weak_calls_per_event": 1.0,
+      "fast_path_hit_rate": 0.0,
+      "false_fast_path_rate": 0.0,
+      "shadow_disagreement_rate": null,
+      "p95_frame_bytes": null,
+      "api_spend_usd": 0.0
+    }
+  ],
+  "quality": {
+    "cps_exact_memo": {
+      "events_total": 160,
+      "schema_validity": 1.0,
+      "intent_accuracy": 0.71875,
+      "actionable_precision": 0.7954545454545454,
+      "actionable_recall": 0.8641975308641975,
+      "datetime_accuracy": 0.5,
+      "critical_miss_rate": 0.0,
+      "hard_negative_false_action_rate": 0.0
+    },
+    "cps_generalized_patch": {
+      "events_total": 160,
+      "schema_validity": 1.0,
+      "intent_accuracy": 0.8375,
+      "actionable_precision": 0.971830985915493,
+      "actionable_recall": 0.8518518518518519,
+      "datetime_accuracy": 0.6764705882352942,
+      "critical_miss_rate": 0.0,
+      "hard_negative_false_action_rate": 0.0
+    },
+    "cps_generalized_patch.adversarial": {
+      "events_total": 40,
+      "schema_validity": 1.0,
+      "intent_accuracy": 0.675,
+      "actionable_precision": 0.0,
+      "actionable_recall": 0.0,
+      "datetime_accuracy": 0.0,
+      "critical_miss_rate": 0.0,
+      "hard_negative_false_action_rate": 0.325
+    },
+    "cps_generalized_patch_no_semantic_weak": {
+      "events_total": 160,
+      "schema_validity": 1.0,
+      "intent_accuracy": 0.725,
+      "actionable_precision": 0.8333333333333334,
+      "actionable_recall": 0.8641975308641975,
+      "datetime_accuracy": 0.3235294117647059,
+      "critical_miss_rate": 0.0,
+      "hard_negative_false_action_rate": 0.0
+    },
+    "cps_unoptimized": {
+      "events_total": 160,
+      "schema_validity": 1.0,
+      "intent_accuracy": 0.775,
+      "actionable_precision": 0.8641975308641975,
+      "actionable_recall": 0.8641975308641975,
+      "datetime_accuracy": 0.14705882352941177,
+      "critical_miss_rate": 0.0,
+      "hard_negative_false_action_rate": 0.0
+    },
+    "strong_direct": {
+      "events_total": 160,
+      "schema_validity": 1.0,
+      "intent_accuracy": 0.725,
+      "actionable_precision": 0.8160919540229885,
+      "actionable_recall": 0.8765432098765432,
+      "datetime_accuracy": 0.35294117647058826,
+      "critical_miss_rate": 0.0,
+      "hard_negative_false_action_rate": 0.0
+    },
+    "weak_only": {
+      "events_total": 160,
+      "schema_validity": 1.0,
+      "intent_accuracy": 0.80625,
+      "actionable_precision": 0.9696969696969696,
+      "actionable_recall": 0.7901234567901234,
+      "datetime_accuracy": 0.0,
+      "critical_miss_rate": 0.3333333333333333,
+      "hard_negative_false_action_rate": 0.0
+    }
+  },
+  "generalization_breakdown": [
+    {
+      "events": 23,
+      "exact_memo_hits": 0,
+      "false_fast_path_hits": 0,
+      "generalized_patch_hits": 2,
+      "semantic_cluster": "ambiguous_requires_strong_think"
+    },
+    {
+      "events": 11,
+      "exact_memo_hits": 0,
+      "false_fast_path_hits": 0,
+      "generalized_patch_hits": 11,
+      "semantic_cluster": "deadline_request_without_document"
+    },
+    {
+      "events": 11,
+      "exact_memo_hits": 0,
+      "false_fast_path_hits": 0,
+      "generalized_patch_hits": 10,
+      "semantic_cluster": "fyi_no_action"
+    },
+    {
+      "events": 45,
+      "exact_memo_hits": 0,
+      "false_fast_path_hits": 0,
+      "generalized_patch_hits": 5,
+      "semantic_cluster": "low_value_system_code"
+    },
+    {
+      "events": 12,
+      "exact_memo_hits": 0,
+      "false_fast_path_hits": 0,
+      "generalized_patch_hits": 11,
+      "semantic_cluster": "meeting_invitation"
+    },
+    {
+      "events": 24,
+      "exact_memo_hits": 0,
+      "false_fast_path_hits": 0,
+      "generalized_patch_hits": 22,
+      "semantic_cluster": "reply_needed_opinion_request"
+    },
+    {
+      "events": 11,
+      "exact_memo_hits": 0,
+      "false_fast_path_hits": 0,
+      "generalized_patch_hits": 11,
+      "semantic_cluster": "request_send_document_before_deadline"
+    },
+    {
+      "events": 23,
+      "exact_memo_hits": 0,
+      "false_fast_path_hits": 0,
+      "generalized_patch_hits": 13,
+      "semantic_cluster": "shipping_or_booking_update"
+    }
+  ],
+  "patch": {
+    "installed": true,
+    "installed_program_version": "v0002",
+    "negative_guards": 5,
+    "optimizer_source": "strong_model_generated_semantic_patch_plan",
+    "patch_id": "semantic_patch_v1",
+    "positive_clusters": [
+      "deadline_request_without_document",
+      "fyi_no_action",
+      "meeting_invitation",
+      "reply_needed_opinion_request",
+      "request_send_document_before_deadline",
+      "shipping_or_booking_update"
+    ],
+    "raw_optimizer_response_is_final_plan": true,
+    "source": "optimizer_strong_model"
+  },
+  "patch_gate": {
+    "accepted": true,
+    "reasons": []
+  },
+  "continuation_frames": {
+    "frames_total": 1,
+    "limit_bytes": 16384,
+    "max_bytes": 2339,
+    "over_limit": 0,
+    "p50_bytes": 2339,
+    "p95_bytes": 2339
+  },
+  "pass_fail": {
+    "quality_noninferior": true,
+    "critical_miss_not_worse": true,
+    "strong_calls_reduced_by_50_percent": true,
+    "generalized_patch_beats_exact_memo": true,
+    "false_fast_path_under_1_percent": true,
+    "adversarial_false_fast_path_under_2_percent": true,
+    "continuation_frame_p95_under_limit": true,
+    "program_version_advanced": true,
+    "multi_cluster_improvement": true,
+    "patch_gate_accepted": true,
+    "within_100_usd_budget": true,
+    "experiment_passed": true
+  }
+}

@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::program::Program;
 use crate::store::state_dir::{
-    StateDir, now_string, read_json, read_text, stable_hash_bytes, write_json_pretty, write_text,
+    StateDir, now_string, read_json, read_text, stable_hash_bytes, validate_path_component,
+    write_json_pretty, write_text,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -104,6 +105,54 @@ impl FileProgramRegistry {
         )
     }
 
+    pub fn set_latest_version(&self, workflow_id: &str, version: &str) -> Result<()> {
+        validate_path_component("program version", version)?;
+        let program_path = self
+            .state
+            .workflow_dir(workflow_id)?
+            .join("programs")
+            .join(version)
+            .join("program.json");
+        if !program_path.exists() {
+            return Err(anyhow!(
+                "program version {version:?} does not exist for workflow {workflow_id:?}"
+            ));
+        }
+        write_text(
+            &self
+                .state
+                .workflow_dir(workflow_id)?
+                .join("programs")
+                .join("latest"),
+            &format!("{version}\n"),
+        )
+    }
+
+    pub fn ensure_configured_baseline(
+        &self,
+        workflow_id: &str,
+        program: Program,
+        metadata: ProgramMetadata,
+    ) -> Result<String> {
+        let workflow_dir = self.state.workflow_dir(workflow_id)?;
+        if !workflow_dir.exists() {
+            self.init_workflow(workflow_id, program, metadata)?;
+            return Ok("v0001".to_owned());
+        }
+
+        self.state.ensure_workflow_layout(workflow_id)?;
+        for version in self.list_versions(workflow_id)? {
+            if version.patch_id.is_none()
+                && self.version_matches_program(workflow_id, &version.version, &program)?
+            {
+                self.set_latest_version(workflow_id, &version.version)?;
+                return Ok(version.version);
+            }
+        }
+
+        self.install_version(workflow_id, program, metadata)
+    }
+
     pub fn install_version(
         &self,
         workflow_id: &str,
@@ -165,12 +214,33 @@ impl FileProgramRegistry {
     }
 
     fn next_version(&self, workflow_id: &str) -> Result<String> {
-        let latest = self.latest_version(workflow_id)?;
-        let number = latest
-            .strip_prefix('v')
-            .ok_or_else(|| anyhow!("latest program version {latest} does not start with v"))?
-            .parse::<u32>()?;
-        Ok(format!("v{:04}", number + 1))
+        let mut max_number = 0;
+        for version in self.list_versions(workflow_id)? {
+            let number = version
+                .version
+                .strip_prefix('v')
+                .ok_or_else(|| {
+                    anyhow!(
+                        "program version {} for workflow {workflow_id:?} does not start with v",
+                        version.version
+                    )
+                })?
+                .parse::<u32>()?;
+            max_number = max_number.max(number);
+        }
+        Ok(format!("v{:04}", max_number + 1))
+    }
+
+    fn version_matches_program(
+        &self,
+        workflow_id: &str,
+        version: &str,
+        program: &Program,
+    ) -> Result<bool> {
+        let stored = self.load_version(workflow_id, version)?;
+        let mut expected = program.clone();
+        expected.version = stored.version.clone();
+        Ok(stored == expected)
     }
 }
 

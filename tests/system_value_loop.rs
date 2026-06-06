@@ -552,6 +552,66 @@ fn init_workflow_rejects_existing_workflow_without_mixing_stale_state() {
 }
 
 #[test]
+fn install_version_allocates_after_highest_version_when_latest_was_reset() {
+    let state_path = temp_state_dir();
+    let state = StateDir::new(state_path.clone());
+    let workflow_id = "version_counter_after_reset";
+    let program: Program = serde_json::from_str(include_str!(
+        "../examples/notification_triage.v1.program.json"
+    ))
+    .unwrap();
+    let programs = FileProgramRegistry::new(state);
+    programs
+        .init_workflow(
+            workflow_id,
+            program.clone(),
+            fixture_program_metadata(workflow_id, &program),
+        )
+        .unwrap();
+    let first_patch = programs
+        .install_version(
+            workflow_id,
+            program.clone(),
+            ProgramMetadata {
+                workflow_id: workflow_id.to_owned(),
+                program_id: program.program_id.clone(),
+                version: String::new(),
+                created_at: String::new(),
+                source: ProgramSource::PatchInstall,
+                parent_version: Some("v0001".to_owned()),
+                patch_id: Some("first_patch".to_owned()),
+                task_hash: "first_patch".to_owned(),
+            },
+        )
+        .unwrap();
+    assert_eq!(first_patch, "v0002");
+
+    programs.set_latest_version(workflow_id, "v0001").unwrap();
+    let second_patch = programs
+        .install_version(
+            workflow_id,
+            program.clone(),
+            ProgramMetadata {
+                workflow_id: workflow_id.to_owned(),
+                program_id: program.program_id.clone(),
+                version: String::new(),
+                created_at: String::new(),
+                source: ProgramSource::PatchInstall,
+                parent_version: Some("v0001".to_owned()),
+                patch_id: Some("second_patch".to_owned()),
+                task_hash: "second_patch".to_owned(),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(second_patch, "v0003");
+    assert_eq!(programs.latest_version(workflow_id).unwrap(), "v0003");
+    assert!(programs.load_version(workflow_id, "v0002").is_ok());
+
+    let _ = fs::remove_dir_all(state_path);
+}
+
+#[test]
 fn profile_store_records_successful_probe_for_failure_fingerprint() {
     let state_path = temp_state_dir();
     let store = FileProfileStore::new(StateDir::new(state_path.clone()));
@@ -1156,6 +1216,7 @@ fn validate_patch_rejects_insert_at_existing_branch_target() {
                 },
             },
         }],
+        generalization: None,
     };
 
     let err = validate_patch(&base, &patch).unwrap_err();
@@ -1212,6 +1273,7 @@ fn validate_patch_rejects_insert_at_existing_jump_target() {
                 },
             },
         }],
+        generalization: None,
     };
 
     let err = validate_patch(&base, &patch).unwrap_err();
@@ -1239,6 +1301,7 @@ fn validate_patch_allows_insert_after_existing_branch_targets() {
                 },
             },
         }],
+        generalization: None,
     };
 
     let patched = validate_patch(&base, &patch).unwrap();
@@ -1274,6 +1337,7 @@ fn validate_patch_rejects_later_insert_that_shifts_existing_branch_target() {
                 },
             },
         ],
+        generalization: None,
     };
 
     let err = validate_patch(&base, &patch).unwrap_err();
@@ -1643,6 +1707,7 @@ async fn run_stream_rejects_malformed_runtime_patch_id_without_aborting_later_ev
                 patch_id: "bad/id".to_owned(),
                 operations: Vec::new(),
                 rationale: "malformed patch id should be rejected".to_owned(),
+                generalization: None,
             },
             rationale: "propose malformed runtime patch".to_owned(),
         },
@@ -2072,6 +2137,7 @@ fn schema_valid_wrong_fast_path_patch() -> ProgramPatch {
                 },
             },
         ],
+        generalization: None,
     }
 }
 
@@ -2304,6 +2370,7 @@ async fn patch_can_insert_validator_apply() {
                 },
             },
         ],
+        generalization: None,
     };
     let patched = validate_patch(&base, &patch).unwrap();
     let runtime = Runtime::new(
@@ -2327,6 +2394,7 @@ fn validate_patch_rejects_unsafe_patch_id() {
         patch_id: "bad patch/id".to_owned(),
         operations: Vec::new(),
         rationale: "unsafe IDs must not become version or registry path components".to_owned(),
+        generalization: None,
     };
 
     let err = validate_patch(&base, &patch).unwrap_err();
@@ -2451,6 +2519,7 @@ fn registry_test_patch(patch_id: &str) -> ProgramPatch {
         patch_id: patch_id.to_owned(),
         operations: Vec::new(),
         rationale: "registry path safety test".to_owned(),
+        generalization: None,
     }
 }
 

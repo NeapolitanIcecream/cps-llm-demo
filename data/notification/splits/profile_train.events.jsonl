@@ -1,0 +1,120 @@
+{"event_id":"e_026","sender_hint":"coworker","source":"chat","text":"Calendar hold for design critique tomorrow afternoon. [case 03]","timestamp":"2026-06-05T09:25:00+08:00"}
+{"event_id":"e_058","sender_hint":"coworker","source":"email","text":"Calendar hold for design critique tomorrow afternoon. [case 07]","timestamp":"2026-06-05T09:57:00+08:00"}
+{"event_id":"e_090","sender_hint":"coworker","source":"chat","text":"Calendar hold for design critique tomorrow afternoon. [case 11]","timestamp":"2026-06-05T10:29:00+08:00"}
+{"event_id":"e_122","sender_hint":"coworker","source":"chat","text":"Calendar hold for design critique tomorrow afternoon. [case 15]","timestamp":"2026-06-05T11:01:00+08:00"}
+{"event_id":"e_154","sender_hint":"coworker","source":"email","text":"Calendar hold for design critique tomorrow afternoon. [case 19]","timestamp":"2026-06-05T11:33:00+08:00"}
+{"event_id":"e_186","sender_hint":"coworker","source":"chat","text":"Calendar hold for design critique tomorrow afternoon. [case 23]","timestamp":"2026-06-05T12:05:00+08:00"}
+{"event_id":"e_218","sender_hint":"coworker","source":"chat","text":"Calendar hold for design critique tomorrow afternoon. [case 27]","timestamp":"2026-06-05T12:37:00+08:00"}
+{"event_id":"e_250","sender_hint":"coworker","source":"email","text":"Calendar hold for design critique tomorrow afternoon. [case 31]","timestamp":"2026-06-05T13:09:00+08:00"}
+{"event_id":"e_282","sender_hint":"coworker","source":"chat","text":"Calendar hold for design critique tomorrow afternoon. [case 35]","timestamp":"2026-06-05T13:41:00+08:00"}
+{"event_id":"e_314","sender_hint":"coworker","source":"chat","text":"Calendar hold for design critique tomorrow afternoon. [case 39]","timestamp":"2026-06-05T14:13:00+08:00"}
+{"event_id":"e_346","sender_hint":"coworker","source":"email","text":"Calendar hold for design critique tomorrow afternoon. [case 43]","timestamp":"2026-06-05T14:45:00+08:00"}
+{"event_id":"e_016","sender_hint":"coworker","source":"email","text":"Can someone handle the thing we discussed? [case 01]","timestamp":"2026-06-05T09:15:00+08:00"}
+{"event_id":"e_048","sender_hint":"coworker","source":"chat","text":"Can someone handle the thing we discussed? [case 05]","timestamp":"2026-06-05T09:47:00+08:00"}
+{"event_id":"e_080","sender_hint":"coworker","source":"chat","text":"Can someone handle the thing we discussed? [case 09]","timestamp":"2026-06-05T10:19:00+08:00"}
+{"event_id":"e_112","sender_hint":"coworker","source":"email","text":"Can someone handle the thing we discussed? [case 13]","timestamp":"2026-06-05T10:51:00+08:00"}
+{"event_id":"e_144","sender_hint":"coworker","source":"chat","text":"Can someone handle the thing we discussed? [case 17]","timestamp":"2026-06-05T11:23:00+08:00"}
+{"event_id":"e_176","sender_hint":"coworker","source":"chat","text":"Can someone handle the thing we discussed? [case 21]","timestamp":"2026-06-05T11:55:00+08:00"}
+{"event_id":"e_208","sender_hint":"coworker","source":"email","text":"Can someone handle the thing we discussed? [case 25]","timestamp":"2026-06-05T12:27:00+08:00"}
+{"event_id":"e_240","sender_hint":"coworker","source":"chat","text":"Can someone handle the thing we discussed? [case 29]","timestamp":"2026-06-05T12:59:00+08:00"}
+{"event_id":"e_272","sender_hint":"coworker","source":"chat","text":"Can someone handle the thing we discussed? [case 33]","timestamp":"2026-06-05T13:31:00+08:00"}
+{"event_id":"e_304","sender_hint":"coworker","source":"email","text":"Can someone handle the thing we discussed? [case 37]","timestamp":"2026-06-05T14:03:00+08:00"}
+{"event_id":"e_336","sender_hint":"coworker","source":"chat","text":"Can someone handle the thing we discussed? [case 41]","timestamp":"2026-06-05T14:35:00+08:00"}
+{"event_id":"e_003","sender_hint":"system","source":"chat","text":"Can this be finished by Sunday evening? [case 00]","timestamp":"2026-06-05T09:02:00+08:00"}
+{"event_id":"e_035","sender_hint":"system","source":"chat","text":"Can this be finished by Sunday evening? [case 04]","timestamp":"2026-06-05T09:34:00+08:00"}
+{"event_id":"e_067","sender_hint":"system","source":"email","text":"Can this be finished by Sunday evening? [case 08]","timestamp":"2026-06-05T10:06:00+08:00"}
+{"event_id":"e_099","sender_hint":"system","source":"chat","text":"Can this be finished by Sunday evening? [case 12]","timestamp":"2026-06-05T10:38:00+08:00"}
+{"event_id":"e_131","sender_hint":"system","source":"chat","text":"Can this be finished by Sunday evening? [case 16]","timestamp":"2026-06-05T11:10:00+08:00"}
+{"event_id":"e_163","sender_hint":"system","source":"email","text":"Can this be finished by Sunday evening? [case 20]","timestamp":"2026-06-05T11:42:00+08:00"}
+{"event_id":"e_195","sender_hint":"system","source":"chat","text":"Can this be finished by Sunday evening? [case 24]","timestamp":"2026-06-05T12:14:00+08:00"}
+{"event_id":"e_227","sender_hint":"system","source":"chat","text":"Can this be finished by Sunday evening? [case 28]","timestamp":"2026-06-05T12:46:00+08:00"}
+{"event_id":"e_259","sender_hint":"system","source":"email","text":"Can this be finished by Sunday evening? [case 32]","timestamp":"2026-06-05T13:18:00+08:00"}
+{"event_id":"e_291","sender_hint":"system","source":"chat","text":"Can this be finished by Sunday evening? [case 36]","timestamp":"2026-06-05T13:50:00+08:00"}
+{"event_id":"e_323","sender_hint":"system","source":"chat","text":"Can this be finished by Sunday evening? [case 40]","timestamp":"2026-06-05T14:22:00+08:00"}
+{"event_id":"e_355","sender_hint":"system","source":"email","text":"Can this be finished by Sunday evening? [case 44]","timestamp":"2026-06-05T14:54:00+08:00"}
+{"event_id":"e_025","sender_hint":"system","source":"email","text":"Can you forward the revised document before the deadline? [case 03]","timestamp":"2026-06-05T09:24:00+08:00"}
+{"event_id":"e_057","sender_hint":"system","source":"chat","text":"Can you forward the revised document before the deadline? [case 07]","timestamp":"2026-06-05T09:56:00+08:00"}
+{"event_id":"e_089","sender_hint":"system","source":"chat","text":"Can you forward the revised document before the deadline? [case 11]","timestamp":"2026-06-05T10:28:00+08:00"}
+{"event_id":"e_121","sender_hint":"system","source":"email","text":"Can you forward the revised document before the deadline? [case 15]","timestamp":"2026-06-05T11:00:00+08:00"}
+{"event_id":"e_153","sender_hint":"system","source":"chat","text":"Can you forward the revised document before the deadline? [case 19]","timestamp":"2026-06-05T11:32:00+08:00"}
+{"event_id":"e_185","sender_hint":"system","source":"chat","text":"Can you forward the revised document before the deadline? [case 23]","timestamp":"2026-06-05T12:04:00+08:00"}
+{"event_id":"e_217","sender_hint":"system","source":"email","text":"Can you forward the revised document before the deadline? [case 27]","timestamp":"2026-06-05T12:36:00+08:00"}
+{"event_id":"e_249","sender_hint":"system","source":"chat","text":"Can you forward the revised document before the deadline? [case 31]","timestamp":"2026-06-05T13:08:00+08:00"}
+{"event_id":"e_281","sender_hint":"system","source":"chat","text":"Can you forward the revised document before the deadline? [case 35]","timestamp":"2026-06-05T13:40:00+08:00"}
+{"event_id":"e_313","sender_hint":"system","source":"email","text":"Can you forward the revised document before the deadline? [case 39]","timestamp":"2026-06-05T14:12:00+08:00"}
+{"event_id":"e_345","sender_hint":"system","source":"chat","text":"Can you forward the revised document before the deadline? [case 43]","timestamp":"2026-06-05T14:44:00+08:00"}
+{"event_id":"e_012","sender_hint":"coworker","source":"chat","text":"Can you reply with your view on the new plan? [case 01]","timestamp":"2026-06-05T09:11:00+08:00"}
+{"event_id":"e_044","sender_hint":"coworker","source":"chat","text":"Can you reply with your view on the new plan? [case 05]","timestamp":"2026-06-05T09:43:00+08:00"}
+{"event_id":"e_076","sender_hint":"coworker","source":"email","text":"Can you reply with your view on the new plan? [case 09]","timestamp":"2026-06-05T10:15:00+08:00"}
+{"event_id":"e_108","sender_hint":"coworker","source":"chat","text":"Can you reply with your view on the new plan? [case 13]","timestamp":"2026-06-05T10:47:00+08:00"}
+{"event_id":"e_140","sender_hint":"coworker","source":"chat","text":"Can you reply with your view on the new plan? [case 17]","timestamp":"2026-06-05T11:19:00+08:00"}
+{"event_id":"e_172","sender_hint":"coworker","source":"email","text":"Can you reply with your view on the new plan? [case 21]","timestamp":"2026-06-05T11:51:00+08:00"}
+{"event_id":"e_204","sender_hint":"coworker","source":"chat","text":"Can you reply with your view on the new plan? [case 25]","timestamp":"2026-06-05T12:23:00+08:00"}
+{"event_id":"e_236","sender_hint":"coworker","source":"chat","text":"Can you reply with your view on the new plan? [case 29]","timestamp":"2026-06-05T12:55:00+08:00"}
+{"event_id":"e_268","sender_hint":"coworker","source":"email","text":"Can you reply with your view on the new plan? [case 33]","timestamp":"2026-06-05T13:27:00+08:00"}
+{"event_id":"e_300","sender_hint":"coworker","source":"chat","text":"Can you reply with your view on the new plan? [case 37]","timestamp":"2026-06-05T13:59:00+08:00"}
+{"event_id":"e_332","sender_hint":"coworker","source":"chat","text":"Can you reply with your view on the new plan? [case 41]","timestamp":"2026-06-05T14:31:00+08:00"}
+{"event_id":"e_027","sender_hint":"system","source":"chat","text":"Could you close the loop by the deadline? [case 03]","timestamp":"2026-06-05T09:26:00+08:00"}
+{"event_id":"e_059","sender_hint":"system","source":"chat","text":"Could you close the loop by the deadline? [case 07]","timestamp":"2026-06-05T09:58:00+08:00"}
+{"event_id":"e_091","sender_hint":"system","source":"email","text":"Could you close the loop by the deadline? [case 11]","timestamp":"2026-06-05T10:30:00+08:00"}
+{"event_id":"e_123","sender_hint":"system","source":"chat","text":"Could you close the loop by the deadline? [case 15]","timestamp":"2026-06-05T11:02:00+08:00"}
+{"event_id":"e_155","sender_hint":"system","source":"chat","text":"Could you close the loop by the deadline? [case 19]","timestamp":"2026-06-05T11:34:00+08:00"}
+{"event_id":"e_187","sender_hint":"system","source":"email","text":"Could you close the loop by the deadline? [case 23]","timestamp":"2026-06-05T12:06:00+08:00"}
+{"event_id":"e_219","sender_hint":"system","source":"chat","text":"Could you close the loop by the deadline? [case 27]","timestamp":"2026-06-05T12:38:00+08:00"}
+{"event_id":"e_251","sender_hint":"system","source":"chat","text":"Could you close the loop by the deadline? [case 31]","timestamp":"2026-06-05T13:10:00+08:00"}
+{"event_id":"e_283","sender_hint":"system","source":"email","text":"Could you close the loop by the deadline? [case 35]","timestamp":"2026-06-05T13:42:00+08:00"}
+{"event_id":"e_315","sender_hint":"system","source":"chat","text":"Could you close the loop by the deadline? [case 39]","timestamp":"2026-06-05T14:14:00+08:00"}
+{"event_id":"e_347","sender_hint":"system","source":"chat","text":"Could you close the loop by the deadline? [case 43]","timestamp":"2026-06-05T14:46:00+08:00"}
+{"event_id":"e_001","sender_hint":"system","source":"email","text":"Could you send the revised proposal before tomorrow 10? [case 00]","timestamp":"2026-06-05T09:00:00+08:00"}
+{"event_id":"e_033","sender_hint":"system","source":"chat","text":"Could you send the revised proposal before tomorrow 10? [case 04]","timestamp":"2026-06-05T09:32:00+08:00"}
+{"event_id":"e_065","sender_hint":"system","source":"chat","text":"Could you send the revised proposal before tomorrow 10? [case 08]","timestamp":"2026-06-05T10:04:00+08:00"}
+{"event_id":"e_097","sender_hint":"system","source":"email","text":"Could you send the revised proposal before tomorrow 10? [case 12]","timestamp":"2026-06-05T10:36:00+08:00"}
+{"event_id":"e_129","sender_hint":"system","source":"chat","text":"Could you send the revised proposal before tomorrow 10? [case 16]","timestamp":"2026-06-05T11:08:00+08:00"}
+{"event_id":"e_161","sender_hint":"system","source":"chat","text":"Could you send the revised proposal before tomorrow 10? [case 20]","timestamp":"2026-06-05T11:40:00+08:00"}
+{"event_id":"e_193","sender_hint":"system","source":"email","text":"Could you send the revised proposal before tomorrow 10? [case 24]","timestamp":"2026-06-05T12:12:00+08:00"}
+{"event_id":"e_225","sender_hint":"system","source":"chat","text":"Could you send the revised proposal before tomorrow 10? [case 28]","timestamp":"2026-06-05T12:44:00+08:00"}
+{"event_id":"e_257","sender_hint":"system","source":"chat","text":"Could you send the revised proposal before tomorrow 10? [case 32]","timestamp":"2026-06-05T13:16:00+08:00"}
+{"event_id":"e_289","sender_hint":"system","source":"email","text":"Could you send the revised proposal before tomorrow 10? [case 36]","timestamp":"2026-06-05T13:48:00+08:00"}
+{"event_id":"e_321","sender_hint":"system","source":"chat","text":"Could you send the revised proposal before tomorrow 10? [case 40]","timestamp":"2026-06-05T14:20:00+08:00"}
+{"event_id":"e_353","sender_hint":"system","source":"chat","text":"Could you send the revised proposal before tomorrow 10? [case 44]","timestamp":"2026-06-05T14:52:00+08:00"}
+{"event_id":"e_030","sender_hint":"coworker","source":"chat","text":"Delivery update: driver is nearby. [case 03]","timestamp":"2026-06-05T09:29:00+08:00"}
+{"event_id":"e_062","sender_hint":"coworker","source":"chat","text":"Delivery update: driver is nearby. [case 07]","timestamp":"2026-06-05T10:01:00+08:00"}
+{"event_id":"e_094","sender_hint":"coworker","source":"email","text":"Delivery update: driver is nearby. [case 11]","timestamp":"2026-06-05T10:33:00+08:00"}
+{"event_id":"e_126","sender_hint":"coworker","source":"chat","text":"Delivery update: driver is nearby. [case 15]","timestamp":"2026-06-05T11:05:00+08:00"}
+{"event_id":"e_158","sender_hint":"coworker","source":"chat","text":"Delivery update: driver is nearby. [case 19]","timestamp":"2026-06-05T11:37:00+08:00"}
+{"event_id":"e_190","sender_hint":"coworker","source":"email","text":"Delivery update: driver is nearby. [case 23]","timestamp":"2026-06-05T12:09:00+08:00"}
+{"event_id":"e_222","sender_hint":"coworker","source":"chat","text":"Delivery update: driver is nearby. [case 27]","timestamp":"2026-06-05T12:41:00+08:00"}
+{"event_id":"e_254","sender_hint":"coworker","source":"chat","text":"Delivery update: driver is nearby. [case 31]","timestamp":"2026-06-05T13:13:00+08:00"}
+{"event_id":"e_286","sender_hint":"coworker","source":"email","text":"Delivery update: driver is nearby. [case 35]","timestamp":"2026-06-05T13:45:00+08:00"}
+{"event_id":"e_318","sender_hint":"coworker","source":"chat","text":"Delivery update: driver is nearby. [case 39]","timestamp":"2026-06-05T14:17:00+08:00"}
+{"event_id":"e_350","sender_hint":"coworker","source":"chat","text":"Delivery update: driver is nearby. [case 43]","timestamp":"2026-06-05T14:49:00+08:00"}
+{"event_id":"e_022","sender_hint":"coworker","source":"email","text":"Flight gate changed to C12. [case 02]","timestamp":"2026-06-05T09:21:00+08:00"}
+{"event_id":"e_054","sender_hint":"coworker","source":"chat","text":"Flight gate changed to C12. [case 06]","timestamp":"2026-06-05T09:53:00+08:00"}
+{"event_id":"e_086","sender_hint":"coworker","source":"chat","text":"Flight gate changed to C12. [case 10]","timestamp":"2026-06-05T10:25:00+08:00"}
+{"event_id":"e_118","sender_hint":"coworker","source":"email","text":"Flight gate changed to C12. [case 14]","timestamp":"2026-06-05T10:57:00+08:00"}
+{"event_id":"e_150","sender_hint":"coworker","source":"chat","text":"Flight gate changed to C12. [case 18]","timestamp":"2026-06-05T11:29:00+08:00"}
+{"event_id":"e_182","sender_hint":"coworker","source":"chat","text":"Flight gate changed to C12. [case 22]","timestamp":"2026-06-05T12:01:00+08:00"}
+{"event_id":"e_214","sender_hint":"coworker","source":"email","text":"Flight gate changed to C12. [case 26]","timestamp":"2026-06-05T12:33:00+08:00"}
+{"event_id":"e_246","sender_hint":"coworker","source":"chat","text":"Flight gate changed to C12. [case 30]","timestamp":"2026-06-05T13:05:00+08:00"}
+{"event_id":"e_278","sender_hint":"coworker","source":"chat","text":"Flight gate changed to C12. [case 34]","timestamp":"2026-06-05T13:37:00+08:00"}
+{"event_id":"e_310","sender_hint":"coworker","source":"email","text":"Flight gate changed to C12. [case 38]","timestamp":"2026-06-05T14:09:00+08:00"}
+{"event_id":"e_342","sender_hint":"coworker","source":"chat","text":"Flight gate changed to C12. [case 42]","timestamp":"2026-06-05T14:41:00+08:00"}
+{"event_id":"e_031","sender_hint":"system","source":"email","text":"For awareness: metrics were refreshed. [case 03]","timestamp":"2026-06-05T09:30:00+08:00"}
+{"event_id":"e_063","sender_hint":"system","source":"chat","text":"For awareness: metrics were refreshed. [case 07]","timestamp":"2026-06-05T10:02:00+08:00"}
+{"event_id":"e_095","sender_hint":"system","source":"chat","text":"For awareness: metrics were refreshed. [case 11]","timestamp":"2026-06-05T10:34:00+08:00"}
+{"event_id":"e_127","sender_hint":"system","source":"email","text":"For awareness: metrics were refreshed. [case 15]","timestamp":"2026-06-05T11:06:00+08:00"}
+{"event_id":"e_159","sender_hint":"system","source":"chat","text":"For awareness: metrics were refreshed. [case 19]","timestamp":"2026-06-05T11:38:00+08:00"}
+{"event_id":"e_191","sender_hint":"system","source":"chat","text":"For awareness: metrics were refreshed. [case 23]","timestamp":"2026-06-05T12:10:00+08:00"}
+{"event_id":"e_223","sender_hint":"system","source":"email","text":"For awareness: metrics were refreshed. [case 27]","timestamp":"2026-06-05T12:42:00+08:00"}
+{"event_id":"e_255","sender_hint":"system","source":"chat","text":"For awareness: metrics were refreshed. [case 31]","timestamp":"2026-06-05T13:14:00+08:00"}
+{"event_id":"e_287","sender_hint":"system","source":"chat","text":"For awareness: metrics were refreshed. [case 35]","timestamp":"2026-06-05T13:46:00+08:00"}
+{"event_id":"e_319","sender_hint":"system","source":"email","text":"For awareness: metrics were refreshed. [case 39]","timestamp":"2026-06-05T14:18:00+08:00"}
+{"event_id":"e_351","sender_hint":"system","source":"chat","text":"For awareness: metrics were refreshed. [case 43]","timestamp":"2026-06-05T14:50:00+08:00"}
+{"event_id":"e_007","sender_hint":"system","source":"email","text":"FYI the release note is posted. [case 00]","timestamp":"2026-06-05T09:06:00+08:00"}
+{"event_id":"e_039","sender_hint":"system","source":"chat","text":"FYI the release note is posted. [case 04]","timestamp":"2026-06-05T09:38:00+08:00"}
+{"event_id":"e_071","sender_hint":"system","source":"chat","text":"FYI the release note is posted. [case 08]","timestamp":"2026-06-05T10:10:00+08:00"}
+{"event_id":"e_103","sender_hint":"system","source":"email","text":"FYI the release note is posted. [case 12]","timestamp":"2026-06-05T10:42:00+08:00"}
+{"event_id":"e_135","sender_hint":"system","source":"chat","text":"FYI the release note is posted. [case 16]","timestamp":"2026-06-05T11:14:00+08:00"}
+{"event_id":"e_167","sender_hint":"system","source":"chat","text":"FYI the release note is posted. [case 20]","timestamp":"2026-06-05T11:46:00+08:00"}
+{"event_id":"e_199","sender_hint":"system","source":"email","text":"FYI the release note is posted. [case 24]","timestamp":"2026-06-05T12:18:00+08:00"}
+{"event_id":"e_231","sender_hint":"system","source":"chat","text":"FYI the release note is posted. [case 28]","timestamp":"2026-06-05T12:50:00+08:00"}

@@ -1,0 +1,14 @@
+{
+  "local_tool": {
+    "effect_key": "local_tool",
+    "calls": 195,
+    "captures": 0,
+    "accepted": 195
+  },
+  "model_task": {
+    "effect_key": "model_task",
+    "calls": 587,
+    "captures": 1,
+    "accepted": 587
+  }
+}

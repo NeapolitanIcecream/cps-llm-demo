@@ -1,0 +1,40 @@
+{"event_id":"e_361","sender_hint":"product","source":"chat","text":"The UX review says the verification code flow is confusing. [adv 00]","timestamp":"2026-06-05T15:00:00+08:00"}
+{"event_id":"e_362","sender_hint":"product","source":"chat","text":"Review the unsubscribe flow wording in the prototype. [adv 00]","timestamp":"2026-06-05T15:01:00+08:00"}
+{"event_id":"e_363","sender_hint":"product","source":"chat","text":"The proposal naming discussion is getting long. [adv 00]","timestamp":"2026-06-05T15:02:00+08:00"}
+{"event_id":"e_364","sender_hint":"product","source":"chat","text":"The hotpot restaurant name contains OTP in the menu tag. [adv 00]","timestamp":"2026-06-05T15:03:00+08:00"}
+{"event_id":"e_365","sender_hint":"product","source":"chat","text":"I already sent the revised proposal yesterday. [adv 00]","timestamp":"2026-06-05T15:04:00+08:00"}
+{"event_id":"e_366","sender_hint":"product","source":"chat","text":"Discussing OTP screen copy; no real code was sent. [adv 01]","timestamp":"2026-06-05T15:05:00+08:00"}
+{"event_id":"e_367","sender_hint":"product","source":"chat","text":"The email settings screen mentions unsubscribe as a label. [adv 01]","timestamp":"2026-06-05T15:06:00+08:00"}
+{"event_id":"e_368","sender_hint":"product","source":"chat","text":"We should rename the proposal section someday. [adv 01]","timestamp":"2026-06-05T15:07:00+08:00"}
+{"event_id":"e_369","sender_hint":"product","source":"chat","text":"Our team joked that hotpot sounds like OTP. [adv 01]","timestamp":"2026-06-05T15:08:00+08:00"}
+{"event_id":"e_370","sender_hint":"product","source":"chat","text":"Meeting happened this morning, no need to schedule. [adv 01]","timestamp":"2026-06-05T15:09:00+08:00"}
+{"event_id":"e_371","sender_hint":"product","source":"chat","text":"Can we redesign the verification code error state? [adv 02]","timestamp":"2026-06-05T15:10:00+08:00"}
+{"event_id":"e_372","sender_hint":"product","source":"chat","text":"Need copy edits for the unsubscribe preference page. [adv 02]","timestamp":"2026-06-05T15:11:00+08:00"}
+{"event_id":"e_373","sender_hint":"product","source":"chat","text":"I like proposal B more than proposal A. [adv 02]","timestamp":"2026-06-05T15:12:00+08:00"}
+{"event_id":"e_374","sender_hint":"product","source":"chat","text":"Hotpot order code word is not a login code. [adv 02]","timestamp":"2026-06-05T15:13:00+08:00"}
+{"event_id":"e_375","sender_hint":"product","source":"chat","text":"The deadline passed and the work is complete. [adv 02]","timestamp":"2026-06-05T15:14:00+08:00"}
+{"event_id":"e_376","sender_hint":"product","source":"chat","text":"The mock contains 123456 as placeholder text only. [adv 03]","timestamp":"2026-06-05T15:15:00+08:00"}
+{"event_id":"e_377","sender_hint":"product","source":"chat","text":"This is a product review, not an unsubscribe request. [adv 03]","timestamp":"2026-06-05T15:16:00+08:00"}
+{"event_id":"e_378","sender_hint":"product","source":"chat","text":"This proposal draft is only for discussion, no send needed. [adv 03]","timestamp":"2026-06-05T15:17:00+08:00"}
+{"event_id":"e_379","sender_hint":"product","source":"chat","text":"The string OTP appears in the hotpot note, ignore it. [adv 03]","timestamp":"2026-06-05T15:18:00+08:00"}
+{"event_id":"e_380","sender_hint":"product","source":"chat","text":"I replied to that opinion request earlier. [adv 03]","timestamp":"2026-06-05T15:19:00+08:00"}
+{"event_id":"e_381","sender_hint":"product","source":"chat","text":"The UX review says the verification code flow is confusing. [adv 04]","timestamp":"2026-06-05T15:20:00+08:00"}
+{"event_id":"e_382","sender_hint":"product","source":"chat","text":"Review the unsubscribe flow wording in the prototype. [adv 04]","timestamp":"2026-06-05T15:21:00+08:00"}
+{"event_id":"e_383","sender_hint":"product","source":"chat","text":"The proposal naming discussion is getting long. [adv 04]","timestamp":"2026-06-05T15:22:00+08:00"}
+{"event_id":"e_384","sender_hint":"product","source":"chat","text":"The hotpot restaurant name contains OTP in the menu tag. [adv 04]","timestamp":"2026-06-05T15:23:00+08:00"}
+{"event_id":"e_385","sender_hint":"product","source":"chat","text":"I already sent the revised proposal yesterday. [adv 04]","timestamp":"2026-06-05T15:24:00+08:00"}
+{"event_id":"e_386","sender_hint":"product","source":"chat","text":"Discussing OTP screen copy; no real code was sent. [adv 05]","timestamp":"2026-06-05T15:25:00+08:00"}
+{"event_id":"e_387","sender_hint":"product","source":"chat","text":"The email settings screen mentions unsubscribe as a label. [adv 05]","timestamp":"2026-06-05T15:26:00+08:00"}
+{"event_id":"e_388","sender_hint":"product","source":"chat","text":"We should rename the proposal section someday. [adv 05]","timestamp":"2026-06-05T15:27:00+08:00"}
+{"event_id":"e_389","sender_hint":"product","source":"chat","text":"Our team joked that hotpot sounds like OTP. [adv 05]","timestamp":"2026-06-05T15:28:00+08:00"}
+{"event_id":"e_390","sender_hint":"product","source":"chat","text":"Meeting happened this morning, no need to schedule. [adv 05]","timestamp":"2026-06-05T15:29:00+08:00"}
+{"event_id":"e_391","sender_hint":"product","source":"chat","text":"Can we redesign the verification code error state? [adv 06]","timestamp":"2026-06-05T15:30:00+08:00"}
+{"event_id":"e_392","sender_hint":"product","source":"chat","text":"Need copy edits for the unsubscribe preference page. [adv 06]","timestamp":"2026-06-05T15:31:00+08:00"}
+{"event_id":"e_393","sender_hint":"product","source":"chat","text":"I like proposal B more than proposal A. [adv 06]","timestamp":"2026-06-05T15:32:00+08:00"}
+{"event_id":"e_394","sender_hint":"product","source":"chat","text":"Hotpot order code word is not a login code. [adv 06]","timestamp":"2026-06-05T15:33:00+08:00"}
+{"event_id":"e_395","sender_hint":"product","source":"chat","text":"The deadline passed and the work is complete. [adv 06]","timestamp":"2026-06-05T15:34:00+08:00"}
+{"event_id":"e_396","sender_hint":"product","source":"chat","text":"The mock contains 123456 as placeholder text only. [adv 07]","timestamp":"2026-06-05T15:35:00+08:00"}
+{"event_id":"e_397","sender_hint":"product","source":"chat","text":"This is a product review, not an unsubscribe request. [adv 07]","timestamp":"2026-06-05T15:36:00+08:00"}
+{"event_id":"e_398","sender_hint":"product","source":"chat","text":"This proposal draft is only for discussion, no send needed. [adv 07]","timestamp":"2026-06-05T15:37:00+08:00"}
+{"event_id":"e_399","sender_hint":"product","source":"chat","text":"The string OTP appears in the hotpot note, ignore it. [adv 07]","timestamp":"2026-06-05T15:38:00+08:00"}
+{"event_id":"e_400","sender_hint":"product","source":"chat","text":"I replied to that opinion request earlier. [adv 07]","timestamp":"2026-06-05T15:39:00+08:00"}

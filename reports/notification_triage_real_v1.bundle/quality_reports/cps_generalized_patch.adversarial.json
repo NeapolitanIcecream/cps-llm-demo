@@ -1,0 +1,10 @@
+{
+  "events_total": 40,
+  "schema_validity": 1.0,
+  "intent_accuracy": 0.675,
+  "actionable_precision": 0.0,
+  "actionable_recall": 0.0,
+  "datetime_accuracy": 0.0,
+  "critical_miss_rate": 0.0,
+  "hard_negative_false_action_rate": 0.325
+}

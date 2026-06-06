@@ -165,6 +165,7 @@ fn operation_has_fast_path(operation: &PatchOp) -> bool {
             instr_has_fast_path(instr)
         }
         PatchOp::AddFunction { function, .. } => function.body.iter().any(instr_has_fast_path),
+        PatchOp::AddEffectPermission { .. } => false,
         PatchOp::UpdateAcceptancePolicy { .. } => false,
     }
 }

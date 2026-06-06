@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use schemars::schema_for;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::effects::{Continuation, EffectFrame, HandlerDecision};
 use crate::program::{Program, ProgramFragment, ProgramPatch};
@@ -79,6 +79,17 @@ pub fn handler_decision_schema() -> Value {
     schema_value(schema_for!(HandlerDecisionOutput))
 }
 
+pub fn handler_decision_value_schema(value_schema: Value) -> Value {
+    let mut schema = handler_decision_schema();
+    let mut value_schema = value_schema;
+    make_strict_structured_output_schema(&mut value_schema);
+    assert!(
+        replace_return_value_schema(&mut schema, &value_schema),
+        "generated HandlerDecision schema should contain a return_value branch"
+    );
+    schema
+}
+
 pub fn program_schema() -> Value {
     schema_value(schema_for!(Program))
 }
@@ -127,9 +138,47 @@ fn schema_value(schema: impl serde::Serialize) -> Value {
     value
 }
 
+fn replace_return_value_schema(schema: &mut Value, value_schema: &Value) -> bool {
+    match schema {
+        Value::Object(map) => {
+            if is_return_value_branch(map) {
+                if let Some(properties) = map.get_mut("properties").and_then(Value::as_object_mut) {
+                    properties.insert("value".to_owned(), value_schema.clone());
+                    return true;
+                }
+            }
+
+            map.values_mut()
+                .any(|value| replace_return_value_schema(value, value_schema))
+        }
+        Value::Array(items) => items
+            .iter_mut()
+            .any(|value| replace_return_value_schema(value, value_schema)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+    }
+}
+
+fn is_return_value_branch(map: &Map<String, Value>) -> bool {
+    map.get("properties")
+        .and_then(Value::as_object)
+        .and_then(|properties| properties.get("decision"))
+        .and_then(|decision| decision.get("enum"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .any(|value| value.as_str() == Some("return_value"))
+        })
+        .unwrap_or(false)
+}
+
 fn make_strict_structured_output_schema(value: &mut Value) {
     match value {
         Value::Object(map) => {
+            if map.is_empty() {
+                *value = arbitrary_json_value_schema();
+                return;
+            }
             map.remove("$schema");
             map.remove("title");
 
@@ -162,16 +211,42 @@ fn make_strict_structured_output_schema(value: &mut Value) {
                     && !has_additional_properties)
             {
                 map.insert("additionalProperties".to_owned(), Value::Bool(false));
-
-                if let Some(property_names) = property_names {
-                    map.insert(
-                        "required".to_owned(),
-                        Value::Array(property_names.into_iter().map(Value::String).collect()),
-                    );
+                if !map.contains_key("properties") {
+                    map.insert("properties".to_owned(), json!({}));
                 }
+
+                map.insert(
+                    "required".to_owned(),
+                    Value::Array(
+                        property_names
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(Value::String)
+                            .collect(),
+                    ),
+                );
+            }
+
+            if let Some(property_names) = map
+                .get("properties")
+                .and_then(Value::as_object)
+                .map(|properties| properties.keys().cloned().collect::<Vec<_>>())
+            {
+                map.insert(
+                    "required".to_owned(),
+                    Value::Array(property_names.into_iter().map(Value::String).collect()),
+                );
             }
 
             for (key, item) in map {
+                if key == "properties" || key == "$defs" {
+                    if let Some(object) = item.as_object_mut() {
+                        for property_schema in object.values_mut() {
+                            make_strict_structured_output_schema(property_schema);
+                        }
+                    }
+                    continue;
+                }
                 if key == "additionalProperties" {
                     if item.as_bool() == Some(false) {
                         continue;
@@ -190,11 +265,53 @@ fn make_strict_structured_output_schema(value: &mut Value) {
             }
         }
         Value::Bool(true) => {
-            *value = json!({});
+            *value = arbitrary_json_value_schema();
         }
         Value::Bool(false) => {
             *value = json!({ "enum": [] });
         }
         Value::Null | Value::Number(_) | Value::String(_) => {}
     }
+}
+
+fn arbitrary_json_value_schema() -> Value {
+    json!({
+        "anyOf": [
+            {
+                "type": "object",
+                "additionalProperties": true
+            },
+            {
+                "type": "array",
+                "items": {
+                    "anyOf": [
+                        { "type": "object", "additionalProperties": true },
+                        {
+                            "type": "array",
+                            "items": {
+                                "anyOf": [
+                                    { "type": "object", "additionalProperties": true },
+                                    { "type": "string" },
+                                    { "type": "number" },
+                                    { "type": "integer" },
+                                    { "type": "boolean" },
+                                    { "type": "null" }
+                                ]
+                            }
+                        },
+                        { "type": "string" },
+                        { "type": "number" },
+                        { "type": "integer" },
+                        { "type": "boolean" },
+                        { "type": "null" }
+                    ]
+                }
+            },
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "integer" },
+            { "type": "boolean" },
+            { "type": "null" }
+        ]
+    })
 }

@@ -15,6 +15,7 @@ fn client(server: &MockServer, base_path: &str) -> ResponsesClient {
     ResponsesClient::new(ResponsesClientConfig {
         base_url: Url::parse(&server.url(base_path)).unwrap(),
         api_key: SecretString::from("test-key".to_owned()),
+        runtime: None,
     })
 }
 
@@ -111,7 +112,10 @@ async fn responses_weak_model_sends_neutral_instructions_and_request_context() {
                 "handler_decision": {
                     "decision": "return_value",
                     "value": {
-                        "intent": "send_message"
+                        "event_id": "m1",
+                        "kind": "create_task",
+                        "title": "Send proposal",
+                        "datetime_hint": null
                     },
                     "confidence": 0.91,
                     "rationale": "clear request"
@@ -123,6 +127,10 @@ async fn responses_weak_model_sends_neutral_instructions_and_request_context() {
     let handler = ResponsesWeakModel::new(client(&server, "/v1"), "fake-weak");
     let decision = handler
         .handle(HandlerRequest {
+            run_id: None,
+            budget_scope_id: None,
+            workflow_id: None,
+            phase: None,
             effect: EffectCall::ModelTask {
                 strength: ModelStrength::Weak,
                 task: ModelTaskSpec {
@@ -196,7 +204,8 @@ async fn responses_weak_model_preserves_schema_shaped_user_payloads() {
                 "handler_decision": {
                     "decision": "return_value",
                     "value": {
-                        "intent": "send_message"
+                        "title": "User supplied payload",
+                        "source": "user_supplied"
                     },
                     "confidence": 0.91,
                     "rationale": "clear request"
@@ -233,6 +242,10 @@ async fn responses_weak_model_preserves_schema_shaped_user_payloads() {
     let handler = ResponsesWeakModel::new(client(&server, "/v1"), "fake-weak");
     let decision = handler
         .handle(HandlerRequest {
+            run_id: None,
+            budget_scope_id: None,
+            workflow_id: None,
+            phase: None,
             effect: EffectCall::ModelTask {
                 strength: ModelStrength::Weak,
                 task: ModelTaskSpec {
@@ -249,7 +262,7 @@ async fn responses_weak_model_preserves_schema_shaped_user_payloads() {
             observations: vec![Observation {
                 name: "user_payload_observation".to_owned(),
                 value: schema_shaped_payload,
-                source: ObservationSource::Runtime,
+                source: ObservationSource::WeakModel,
             }],
             budget: HandlerBudget {
                 effect_depth: 0,
@@ -290,6 +303,10 @@ async fn responses_weak_model_preserves_schema_shaped_user_payloads() {
     );
 
     let observation_payload = &input_context["observations"][0]["value"];
+    assert_eq!(
+        input_context["observations"][0]["source"], "model",
+        "weak handler request context should not expose model identity in observation source"
+    );
     assert!(
         observation_payload["properties"].get("source").is_some(),
         "weak handler request context should preserve observation payload source fields"

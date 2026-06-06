@@ -1,0 +1,10 @@
+{
+  "workflow_id": "notification_triage",
+  "program_id": "notification_triage",
+  "version": "v0001",
+  "created_at": "unix:1780664632",
+  "source": "fixture",
+  "parent_version": null,
+  "patch_id": null,
+  "task_hash": "0e2e0cd7b342a4a6"
+}

@@ -1,0 +1,69 @@
+{
+  "continuation_id": "4100237e-1d78-4842-9ea0-f69e99ee7829",
+  "boundary_id": "086b2fd2-c41f-4c77-8ce2-844ebf0b2b3f",
+  "program_id": "notification_triage",
+  "stack": [
+    {
+      "function": "main",
+      "pc": 0,
+      "env": {
+        "$input": {
+          "event_id": "e_048",
+          "sender_hint": "coworker",
+          "source": "chat",
+          "text": "Can someone handle the thing we discussed? [case 05]",
+          "timestamp": "2026-06-05T09:47:00+08:00"
+        },
+        "event": {
+          "event_id": "e_048",
+          "sender_hint": "coworker",
+          "source": "chat",
+          "text": "Can someone handle the thing we discussed? [case 05]",
+          "timestamp": "2026-06-05T09:47:00+08:00"
+        }
+      },
+      "return_to": null
+    }
+  ],
+  "resume_var": "draft",
+  "resume_pc": 1,
+  "expected_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "datetime_hint": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "event_id": {
+        "type": "string"
+      },
+      "kind": {
+        "enum": [
+          "ignore",
+          "create_task",
+          "create_calendar_event",
+          "draft_reply"
+        ],
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "event_id",
+      "kind",
+      "title",
+      "datetime_hint"
+    ],
+    "type": "object"
+  },
+  "fuel_remaining": 9999,
+  "effect_depth": 0
+}

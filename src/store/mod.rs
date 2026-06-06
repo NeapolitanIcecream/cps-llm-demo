@@ -1,5 +1,7 @@
+pub mod budget_store;
 pub mod continuation_store;
 pub mod metrics_store;
+pub mod model_call_store;
 pub mod patch_registry;
 pub mod profile_store;
 pub mod program_registry;

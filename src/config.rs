@@ -40,6 +40,7 @@ impl ModelConfig {
         ResponsesClient::new(ResponsesClientConfig {
             base_url: self.base_url.clone(),
             api_key: self.api_key.clone(),
+            runtime: None,
         })
     }
 }
